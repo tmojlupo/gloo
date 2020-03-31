@@ -304,7 +304,46 @@ var _ = Describe("Ssl", func() {
 				},
 				HeaderKey: "Header",
 			}))
+		})
 
+		It("should error if header is provided and filename was not", func() {
+			sdsConfig.CallCredentials.GetFileCredentialSource().TokenFileName = ""
+			_, err := configTranslator.ResolveCommonSslConfig(upstreamCfg, nil)
+			Expect(err).To(MatchError("sds: tokenFileName and header must both be present or absent"))
+		})
+		It("should error if filename is provided and header was not", func() {
+			sdsConfig.CallCredentials.GetFileCredentialSource().Header = ""
+			_, err := configTranslator.ResolveCommonSslConfig(upstreamCfg, nil)
+			Expect(err).To(MatchError("sds: tokenFileName and header must both be present or absent"))
+		})
+
+		It("should have a sds setup with cluster", func() {
+			sdsConfig.Reset()
+			sdsConfig.TargetCluster = "sds_cluster"
+			sdsConfig.CertificatesSecretName = "CertificatesSecretName"
+			sdsConfig.ValidationContextName = "ValidationContextName"
+
+			c, err := configTranslator.ResolveCommonSslConfig(upstreamCfg, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(c.TlsCertificateSdsSecretConfigs).To(HaveLen(1))
+			Expect(c.ValidationContextType).ToNot(BeNil())
+
+			vctx := c.ValidationContextType.(*envoyauth.CommonTlsContext_ValidationContextSdsSecretConfig).ValidationContextSdsSecretConfig
+			cert := c.TlsCertificateSdsSecretConfigs[0]
+			Expect(vctx.Name).To(Equal("ValidationContextName"))
+			Expect(cert.Name).To(Equal("CertificatesSecretName"))
+			// If they are no equivalent, it means that any serialization is different.
+			// see here: https://github.com/envoyproxy/go-control-plane/pull/158
+			// and here: https://github.com/envoyproxy/envoy/pull/6241
+			// this may lead to envoy updates being too frequent
+			Expect(vctx.SdsConfig).To(BeEquivalentTo(cert.SdsConfig))
+
+			getGrpcConfig := func(s *envoyauth.SdsSecretConfig) *envoycore.GrpcService_EnvoyGrpc {
+				return s.SdsConfig.ConfigSourceSpecifier.(*envoycore.ConfigSource_ApiConfigSource).ApiConfigSource.GrpcServices[0].TargetSpecifier.(*envoycore.GrpcService_EnvoyGrpc_).EnvoyGrpc
+			}
+
+			Expect(getGrpcConfig(vctx).ClusterName).To(Equal(sdsConfig.TargetCluster))
+			Expect(getGrpcConfig(cert).ClusterName).To(Equal(sdsConfig.TargetCluster))
 		})
 
 		Context("san", func() {

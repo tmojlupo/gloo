@@ -102,42 +102,53 @@ func dataSourceGenerator(inlineDataSource bool) func(s string) *envoycore.DataSo
 	}
 }
 
-func buildSds(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig {
-	config := &v2alpha.FileBasedMetadataConfig{
-		SecretData: &envoycore.DataSource{
-			Specifier: &envoycore.DataSource_Filename{
-				Filename: sslSecrets.CallCredentials.FileCredentialSource.TokenFileName,
-			},
-		},
-		HeaderKey: sslSecrets.CallCredentials.FileCredentialSource.Header,
-	}
-	any, _ := ptypes.MarshalAny(config)
+func buildSds(name string, sslSecrets *v1.SDSConfig) (*envoyauth.SdsSecretConfig, error) {
 
-	gRPCConfig := &envoycore.GrpcService_GoogleGrpc{
-		TargetUri:  sslSecrets.TargetUri,
-		StatPrefix: "sds",
-		ChannelCredentials: &envoycore.GrpcService_GoogleGrpc_ChannelCredentials{
-			CredentialSpecifier: &envoycore.GrpcService_GoogleGrpc_ChannelCredentials_LocalCredentials{
-				LocalCredentials: &envoycore.GrpcService_GoogleGrpc_GoogleLocalCredentials{},
-			},
-		},
-		CredentialsFactoryName: MetadataPluginName,
-		CallCredentials: []*envoycore.GrpcService_GoogleGrpc_CallCredentials{
-			&envoycore.GrpcService_GoogleGrpc_CallCredentials{
-				CredentialSpecifier: &envoycore.GrpcService_GoogleGrpc_CallCredentials_FromPlugin{
-					FromPlugin: &envoycore.GrpcService_GoogleGrpc_CallCredentials_MetadataCredentialsFromPlugin{
-						Name: MetadataPluginName,
-						ConfigType: &envoycore.GrpcService_GoogleGrpc_CallCredentials_MetadataCredentialsFromPlugin_TypedConfig{
-							TypedConfig: any},
+	var sdsConfig *envoycore.ConfigSource
+
+	if sslSecrets.GetTargetUri() != "" {
+		var callCredentials []*envoycore.GrpcService_GoogleGrpc_CallCredentials
+		if sslSecrets.GetCallCredentials().GetFileCredentialSource().GetTokenFileName() != "" &&
+			sslSecrets.GetCallCredentials().GetFileCredentialSource().GetHeader() != "" {
+			config := &v2alpha.FileBasedMetadataConfig{
+				SecretData: &envoycore.DataSource{
+					Specifier: &envoycore.DataSource_Filename{
+						Filename: sslSecrets.CallCredentials.FileCredentialSource.TokenFileName,
 					},
 				},
-			},
-		},
-	}
+				HeaderKey: sslSecrets.CallCredentials.FileCredentialSource.Header,
+			}
+			any, _ := ptypes.MarshalAny(config)
 
-	return &envoyauth.SdsSecretConfig{
-		Name: name,
-		SdsConfig: &envoycore.ConfigSource{
+			callCredentials = []*envoycore.GrpcService_GoogleGrpc_CallCredentials{
+				&envoycore.GrpcService_GoogleGrpc_CallCredentials{
+					CredentialSpecifier: &envoycore.GrpcService_GoogleGrpc_CallCredentials_FromPlugin{
+						FromPlugin: &envoycore.GrpcService_GoogleGrpc_CallCredentials_MetadataCredentialsFromPlugin{
+							Name: MetadataPluginName,
+							ConfigType: &envoycore.GrpcService_GoogleGrpc_CallCredentials_MetadataCredentialsFromPlugin_TypedConfig{
+								TypedConfig: any},
+						},
+					},
+				},
+			}
+		} else if (sslSecrets.GetCallCredentials().GetFileCredentialSource().GetTokenFileName() != "") !=
+			(sslSecrets.GetCallCredentials().GetFileCredentialSource().GetHeader() != "") {
+			// if one is empty and the other is not.
+			return nil, eris.Errorf("sds: tokenFileName and header must both be present or absent")
+		}
+
+		gRPCConfig := &envoycore.GrpcService_GoogleGrpc{
+			TargetUri:  sslSecrets.TargetUri,
+			StatPrefix: "sds",
+			ChannelCredentials: &envoycore.GrpcService_GoogleGrpc_ChannelCredentials{
+				CredentialSpecifier: &envoycore.GrpcService_GoogleGrpc_ChannelCredentials_LocalCredentials{
+					LocalCredentials: &envoycore.GrpcService_GoogleGrpc_GoogleLocalCredentials{},
+				},
+			},
+			CredentialsFactoryName: MetadataPluginName,
+			CallCredentials:        callCredentials,
+		}
+		sdsConfig = &envoycore.ConfigSource{
 			ConfigSourceSpecifier: &envoycore.ConfigSource_ApiConfigSource{
 				ApiConfigSource: &envoycore.ApiConfigSource{
 					ApiType: envoycore.ApiConfigSource_GRPC,
@@ -150,8 +161,32 @@ func buildSds(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig 
 					},
 				},
 			},
-		},
+		}
+	} else if sslSecrets.GetTargetCluster() != "" {
+		sdsConfig = &envoycore.ConfigSource{
+			ConfigSourceSpecifier: &envoycore.ConfigSource_ApiConfigSource{
+				ApiConfigSource: &envoycore.ApiConfigSource{
+					ApiType: envoycore.ApiConfigSource_GRPC,
+					GrpcServices: []*envoycore.GrpcService{
+						{
+							TargetSpecifier: &envoycore.GrpcService_EnvoyGrpc_{
+								EnvoyGrpc: &envoycore.GrpcService_EnvoyGrpc{
+									ClusterName: sslSecrets.GetTargetCluster(),
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	} else {
+		return nil, eris.Errorf("either targetUri or targetCluster must be present in sds config")
 	}
+
+	return &envoyauth.SdsSecretConfig{
+		Name:      name,
+		SdsConfig: sdsConfig,
+	}, nil
 }
 
 func (s *sslConfigTranslator) handleSds(sslSecrets *v1.SDSConfig, verifySan []string) (*envoyauth.CommonTlsContext, error) {
@@ -167,19 +202,31 @@ func (s *sslConfigTranslator) handleSds(sslSecrets *v1.SDSConfig, verifySan []st
 	}
 
 	if sslSecrets.CertificatesSecretName != "" {
-		tlsContext.TlsCertificateSdsSecretConfigs = []*envoyauth.SdsSecretConfig{buildSds(sslSecrets.CertificatesSecretName, sslSecrets)}
+		sds, err := buildSds(sslSecrets.CertificatesSecretName, sslSecrets)
+		if err != nil {
+			return nil, err
+		}
+		tlsContext.TlsCertificateSdsSecretConfigs = []*envoyauth.SdsSecretConfig{sds}
 	}
 
 	if sslSecrets.ValidationContextName != "" {
 		if len(verifySan) == 0 {
+			sds, err := buildSds(sslSecrets.ValidationContextName, sslSecrets)
+			if err != nil {
+				return nil, err
+			}
 			tlsContext.ValidationContextType = &envoyauth.CommonTlsContext_ValidationContextSdsSecretConfig{
-				ValidationContextSdsSecretConfig: buildSds(sslSecrets.ValidationContextName, sslSecrets),
+				ValidationContextSdsSecretConfig: sds,
 			}
 		} else {
+			sds, err := buildSds(sslSecrets.ValidationContextName, sslSecrets)
+			if err != nil {
+				return nil, err
+			}
 			tlsContext.ValidationContextType = &envoyauth.CommonTlsContext_CombinedValidationContext{
 				CombinedValidationContext: &envoyauth.CommonTlsContext_CombinedCertificateValidationContext{
 					DefaultValidationContext:         &envoyauth.CertificateValidationContext{VerifySubjectAltName: verifySan},
-					ValidationContextSdsSecretConfig: buildSds(sslSecrets.ValidationContextName, sslSecrets),
+					ValidationContextSdsSecretConfig: sds,
 				},
 			}
 		}

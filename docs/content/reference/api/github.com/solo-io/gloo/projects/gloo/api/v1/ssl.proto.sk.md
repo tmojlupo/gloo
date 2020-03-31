@@ -116,6 +116,7 @@ SslConfig contains the options necessary to configure a virtual host or listener
 
 ```yaml
 "targetUri": string
+"targetCluster": string
 "callCredentials": .gloo.solo.io.CallCredentials
 "certificatesSecretName": string
 "validationContextName": string
@@ -125,7 +126,8 @@ SslConfig contains the options necessary to configure a virtual host or listener
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
 | `targetUri` | `string` | Target uri for the sds channel. currently only a unix domain socket is supported. |  |
-| `callCredentials` | [.gloo.solo.io.CallCredentials](../ssl.proto.sk/#callcredentials) | Call credentials. |  |
+| `targetCluster` | `string` | Use secret discovery service with a static cluster. It should be configured in envoy's bootstrap config. |  |
+| `callCredentials` | [.gloo.solo.io.CallCredentials](../ssl.proto.sk/#callcredentials) | Call credentials. Used with target_uri. |  |
 | `certificatesSecretName` | `string` | The name of the secret containing the certificate. |  |
 | `validationContextName` | `string` | The name of secret containing the validation context (i.e. root ca). |  |
 

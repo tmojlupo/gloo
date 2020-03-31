@@ -1848,6 +1848,23 @@ metadata:
 					})
 				})
 
+				Describe("gateway proxy - extra clusters", func() {
+
+					It("has a proxy with tracing provider and cluster", func() {
+						prepareMakefileFromValuesFile("val_extra_cluster.yaml")
+						proxySpec := make(map[string]string)
+						proxySpec["envoy.yaml"] = confWithExtraCluster
+						cmRb := ResourceBuilder{
+							Namespace: namespace,
+							Name:      gatewayProxyConfigMapName,
+							Labels:    labels,
+							Data:      proxySpec,
+						}
+						proxy := cmRb.GetConfigMap()
+						testManifest.ExpectConfigMapWithYamlData(proxy)
+					})
+				})
+
 				Describe("gateway proxy -- readConfig config", func() {
 					It("has a listener for reading a subset of the admin api", func() {
 						prepareMakefile(namespace, helmValues{

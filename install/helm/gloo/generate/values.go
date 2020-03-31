@@ -202,6 +202,7 @@ type GatewayProxy struct {
 	ExtraInitContainersHelper   string                       `json:"extraInitContainersHelper",omitempty`
 	ExtraVolumeHelper           string                       `json:"extraVolumeHelper",omitempty`
 	ExtraListenersHelper        string                       `json:"extraListenersHelper",omitempty`
+	ExtraClusters               []interface{}                `json:"extraClusters",omitempty desc:"additional clusters to add to envoy's bootstrap config"`
 	Stats                       *Stats                       `json:"stats,omitempty" desc:"overrides for prometheus stats published by the gateway-proxy pod"`
 	ReadConfig                  bool                         `json:"readConfig" desc:"expose a read-only subset of the envoy admin api"`
 	ExtraProxyVolumeMountHelper string                       `json:"extraProxyVolumeMountHelper,omitempty" desc:"name of custom made named template allowing for extra volume mounts on the proxy container"`

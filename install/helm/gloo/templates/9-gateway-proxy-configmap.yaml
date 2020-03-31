@@ -237,6 +237,9 @@ data:
                     address: 127.0.0.1
                     port_value: 19000
 {{- end}} # if or $statsConfig.enabled ($spec.readConfig)
+{{- if $spec.extraClusters }}
+{{- toYaml $spec.extraClusters | nindent 6 }}
+{{- end }}
 
 {{- if $spec.tracing -}}
 {{- if $spec.tracing.provider }}

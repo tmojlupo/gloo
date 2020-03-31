@@ -1,0 +1,17 @@
+gatewayProxies:
+  gatewayProxy:
+    extraClusters:
+      - name: sds
+        connect_timeout: 1s
+        type: STATIC
+        respect_dns_ttl: true
+        lb_policy: round_robin
+        load_assignment:
+          cluster_name: sds
+          endpoints:
+            - lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address:
+                        address: 1.2.3.4
+                        port_value: 1234

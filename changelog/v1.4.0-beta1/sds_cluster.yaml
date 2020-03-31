@@ -1,0 +1,4 @@
+changelog:
+  - type: NEW_FEATURE
+    description: Allow specifying an a target cluster in the SDS config.
+    issueLink: https://github.com/solo-io/gloo/issues/2703

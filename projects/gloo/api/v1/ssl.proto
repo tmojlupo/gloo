@@ -67,7 +67,10 @@ message UpstreamSslConfig {
 message SDSConfig {
     // Target uri for the sds channel. currently only a unix domain socket is supported.
     string target_uri = 1;
-    // Call credentials.
+    // Use secret discovery service with a static cluster. It should be configured in envoy's
+    // bootstrap config.
+    string target_cluster = 5;
+    // Call credentials. Used with target_uri.
     CallCredentials call_credentials = 2;
     // The name of the secret containing the certificate
     string certificates_secret_name = 3;

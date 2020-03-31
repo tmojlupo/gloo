@@ -270,6 +270,10 @@ func (m *SDSConfig) Hash(hasher hash.Hash64) (uint64, error) {
 		return 0, err
 	}
 
+	if _, err = hasher.Write([]byte(m.GetTargetCluster())); err != nil {
+		return 0, err
+	}
+
 	if h, ok := interface{}(m.GetCallCredentials()).(safe_hasher.SafeHasher); ok {
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
