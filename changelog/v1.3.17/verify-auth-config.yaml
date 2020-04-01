@@ -1,0 +1,5 @@
+changelog:
+  - type: FIX
+    description: >
+      Verify auth configs in the gloo pod and set their status to an error if there is an issue.
+    issueLink: https://github.com/solo-io/gloo/issues/2623

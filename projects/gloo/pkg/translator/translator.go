@@ -74,6 +74,8 @@ func (t *translatorInstance) Translate(params plugins.Params, proxy *v1.Proxy) (
 
 	logger.Debugf("verifying upstream groups: %v", proxy.Metadata.Name)
 	t.verifyUpstreamGroups(params, reports)
+	logger.Debugf("verifying auth configs: %v", proxy.Metadata.Name)
+	t.verifyAuthConfigs(params, reports)
 
 	// endpoints and listeners are shared between listeners
 	logger.Debugf("computing envoy clusters for proxy: %v", proxy.Metadata.Name)

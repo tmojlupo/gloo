@@ -88,6 +88,7 @@ func (s *translatorSyncer) syncEnvoy(ctx context.Context, snap *v1.ApiSnapshot) 
 	allReports.Accept(snap.Upstreams.AsInputResources()...)
 	allReports.Accept(snap.UpstreamGroups.AsInputResources()...)
 	allReports.Accept(snap.Proxies.AsInputResources()...)
+	allReports.Accept(snap.AuthConfigs.AsInputResources()...)
 
 	if !s.settings.GetGloo().GetDisableProxyGarbageCollection().GetValue() {
 		allKeys := map[string]bool{

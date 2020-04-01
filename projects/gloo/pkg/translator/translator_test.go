@@ -19,6 +19,7 @@ import (
 	gloo_envoy_core "github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/api/v2/core"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
+	enterprise_gloo_solo_io "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
 	extauth "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/headers"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/pluginutils"
@@ -278,24 +279,22 @@ var _ = Describe("Translator", func() {
 		Expect(routeConfiguration.GetVirtualHosts()[0].Name).To(Equal("invalid_name"))
 	})
 
-	Context("Auth configs", func() {
-		It("will error if auth config is missing", func() {
-			proxyClone := proto.Clone(proxy).(*v1.Proxy)
-			proxyClone.GetListeners()[0].GetHttpListener().GetVirtualHosts()[0].Options =
-				&v1.VirtualHostOptions{
-					Extauth: &extauth.ExtAuthExtension{
-						Spec: &extauth.ExtAuthExtension_ConfigRef{
-							ConfigRef: &core.ResourceRef{},
-						},
+	It("will error if auth config is missing", func() {
+		proxyClone := proto.Clone(proxy).(*v1.Proxy)
+		proxyClone.GetListeners()[0].GetHttpListener().GetVirtualHosts()[0].Options =
+			&v1.VirtualHostOptions{
+				Extauth: &extauth.ExtAuthExtension{
+					Spec: &extauth.ExtAuthExtension_ConfigRef{
+						ConfigRef: &core.ResourceRef{},
 					},
-				}
+				},
+			}
 
-			_, errs, _, err := translator.Translate(params, proxyClone)
+		_, errs, _, err := translator.Translate(params, proxyClone)
 
-			Expect(err).To(BeNil())
-			Expect(errs.Validate()).To(HaveOccurred())
-			Expect(errs.Validate().Error()).To(ContainSubstring("HttpListener Error: ProcessingError. Reason: auth config not found:"))
-		})
+		Expect(err).To(BeNil())
+		Expect(errs.Validate()).To(HaveOccurred())
+		Expect(errs.Validate().Error()).To(ContainSubstring("HttpListener Error: ProcessingError. Reason: auth config not found:"))
 	})
 
 	Context("service spec", func() {
@@ -890,6 +889,32 @@ var _ = Describe("Translator", func() {
 				},
 			}
 			Expect(report).To(Equal(expectedReport))
+		})
+	})
+
+	Context("when handling auth configs", func() {
+
+		var (
+			authConfig *enterprise_gloo_solo_io.AuthConfig
+		)
+
+		BeforeEach(func() {
+			authConfig = &enterprise_gloo_solo_io.AuthConfig{
+				Metadata: core.Metadata{
+					Name:      "test2",
+					Namespace: "gloo-system",
+				},
+			}
+			params.Snapshot.AuthConfigs = append(params.Snapshot.AuthConfigs, authConfig)
+		})
+
+		It("should verify that auth configs actually contain config", func() {
+			snap, errs, report, err := translator.Translate(params, proxy)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(errs.ValidateStrict()).To(HaveOccurred())
+			Expect(errs.ValidateStrict().Error()).To(ContainSubstring("invalid resource gloo-system.test2"))
+			Expect(snap).NotTo(BeNil())
+			Expect(report).To(Equal(validationutils.MakeReport(proxy)))
 		})
 	})
 
