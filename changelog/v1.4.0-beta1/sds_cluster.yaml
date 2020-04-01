@@ -1,4 +1,4 @@
 changelog:
   - type: NEW_FEATURE
-    description: Allow specifying an a target cluster in the SDS config.
+    description: Allow specifying a target cluster in the SDS config. Istio 1.5 uses cluster for SDS, so this change allows us to support this use case.
     issueLink: https://github.com/solo-io/gloo/issues/2703
