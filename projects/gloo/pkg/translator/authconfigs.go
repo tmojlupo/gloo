@@ -22,7 +22,7 @@ func (t *translatorInstance) verifyAuthConfigs(params plugins.Params, reports re
 				}
 			case *extauthv1.AuthConfig_Config_Oauth:
 				if cfg.Oauth.GetAppUrl() == "" {
-					reports.AddError(ac, errors.Errorf("Invalid configurations for basic auth config %v", ac.Metadata.String()))
+					reports.AddError(ac, errors.Errorf("Invalid configurations for oauth config %v", ac.Metadata.String()))
 				}
 			case *extauthv1.AuthConfig_Config_ApiKeyAuth:
 				if len(cfg.ApiKeyAuth.GetLabelSelector())+len(cfg.ApiKeyAuth.GetLabelSelector()) == 0 {
