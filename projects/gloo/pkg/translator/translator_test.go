@@ -898,7 +898,7 @@ var _ = Describe("Translator", func() {
 			authConfig *enterprise_gloo_solo_io.AuthConfig
 		)
 
-		BeforeEach(func() {
+		It("should verify that auth configs actually contain config", func() {
 			authConfig = &enterprise_gloo_solo_io.AuthConfig{
 				Metadata: core.Metadata{
 					Name:      "test2",
@@ -906,13 +906,65 @@ var _ = Describe("Translator", func() {
 				},
 			}
 			params.Snapshot.AuthConfigs = append(params.Snapshot.AuthConfigs, authConfig)
-		})
-
-		It("should verify that auth configs actually contain config", func() {
 			snap, errs, report, err := translator.Translate(params, proxy)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(errs.ValidateStrict()).To(HaveOccurred())
 			Expect(errs.ValidateStrict().Error()).To(ContainSubstring("invalid resource gloo-system.test2"))
+			Expect(snap).NotTo(BeNil())
+			Expect(report).To(Equal(validationutils.MakeReport(proxy)))
+		})
+
+		It("should verify auth configs types contain sane values", func() {
+			authConfig = &enterprise_gloo_solo_io.AuthConfig{
+				Metadata: core.Metadata{
+					Name:      "test-auth",
+					Namespace: "gloo-system",
+				},
+				Configs: []*enterprise_gloo_solo_io.AuthConfig_Config{
+					&enterprise_gloo_solo_io.AuthConfig_Config{
+						AuthConfig: &enterprise_gloo_solo_io.AuthConfig_Config_BasicAuth{
+							BasicAuth: &enterprise_gloo_solo_io.BasicAuth{Realm: "", Apr: nil}},
+					},
+					&enterprise_gloo_solo_io.AuthConfig_Config{
+						AuthConfig: &enterprise_gloo_solo_io.AuthConfig_Config_Oauth{
+							Oauth: &enterprise_gloo_solo_io.OAuth{AppUrl: ""}},
+					},
+					&enterprise_gloo_solo_io.AuthConfig_Config{
+						AuthConfig: &enterprise_gloo_solo_io.AuthConfig_Config_ApiKeyAuth{
+							ApiKeyAuth: &enterprise_gloo_solo_io.ApiKeyAuth{}},
+					},
+					&enterprise_gloo_solo_io.AuthConfig_Config{
+						AuthConfig: &enterprise_gloo_solo_io.AuthConfig_Config_PluginAuth{
+							PluginAuth: &enterprise_gloo_solo_io.AuthPlugin{}},
+					},
+					&enterprise_gloo_solo_io.AuthConfig_Config{
+						AuthConfig: &enterprise_gloo_solo_io.AuthConfig_Config_OpaAuth{
+							OpaAuth: &enterprise_gloo_solo_io.OpaAuth{}},
+					},
+					&enterprise_gloo_solo_io.AuthConfig_Config{
+						AuthConfig: &enterprise_gloo_solo_io.AuthConfig_Config_Ldap{
+							Ldap: &enterprise_gloo_solo_io.Ldap{}},
+					},
+				},
+			}
+
+			params.Snapshot.AuthConfigs = append(params.Snapshot.AuthConfigs, authConfig)
+			snap, errs, report, err := translator.Translate(params, proxy)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(errs.ValidateStrict()).To(HaveOccurred())
+			errStrings := errs.ValidateStrict().Error()
+			Expect(errStrings).To(
+				ContainSubstring("Invalid configurations for basic auth config {test-auth gloo-system}"))
+			Expect(errStrings).To(
+				ContainSubstring("Invalid configurations for oauth auth config {test-auth gloo-system}"))
+			Expect(errStrings).To(
+				ContainSubstring("Invalid configurations for apikey auth config {test-auth gloo-system}"))
+			Expect(errStrings).To(
+				ContainSubstring("Invalid configurations for plugin auth config {test-auth gloo-system}"))
+			Expect(errStrings).To(
+				ContainSubstring("Invalid configurations for opa auth config {test-auth gloo-system}"))
+			Expect(errStrings).To(
+				ContainSubstring("Invalid configurations for ldap auth config {test-auth gloo-system}"))
 			Expect(snap).NotTo(BeNil())
 			Expect(report).To(Equal(validationutils.MakeReport(proxy)))
 		})

@@ -12,33 +12,36 @@ func (t *translatorInstance) verifyAuthConfigs(params plugins.Params, reports re
 	for _, ac := range authConfigs {
 		configs := ac.GetConfigs()
 		if len(configs) == 0 {
-			reports.AddError(ac, errors.Errorf("No configurations for auth config %v", ac.Metadata.String()))
+			reports.AddError(ac, errors.Errorf("No configurations for auth config %v", ac.Metadata.Ref()))
 		}
 		for _, conf := range configs {
 			switch cfg := conf.AuthConfig.(type) {
 			case *extauthv1.AuthConfig_Config_BasicAuth:
-				if cfg.BasicAuth.GetApr() == nil || cfg.BasicAuth.GetRealm() == "" {
-					reports.AddError(ac, errors.Errorf("Invalid configurations for basic auth config %v", ac.Metadata.String()))
+				if cfg.BasicAuth.GetApr() == nil {
+					reports.AddError(ac, errors.Errorf("Invalid configurations for basic auth config %v", ac.Metadata.Ref()))
 				}
 			case *extauthv1.AuthConfig_Config_Oauth:
 				if cfg.Oauth.GetAppUrl() == "" {
-					reports.AddError(ac, errors.Errorf("Invalid configurations for oauth config %v", ac.Metadata.String()))
+					reports.AddError(ac, errors.Errorf("Invalid configurations for oauth auth config %v", ac.Metadata.Ref()))
 				}
 			case *extauthv1.AuthConfig_Config_ApiKeyAuth:
-				if len(cfg.ApiKeyAuth.GetLabelSelector())+len(cfg.ApiKeyAuth.GetLabelSelector()) == 0 {
-					reports.AddError(ac, errors.Errorf("Invalid configurations for apikey auth config %v", ac.Metadata.String()))
+				if len(cfg.ApiKeyAuth.GetLabelSelector())+len(cfg.ApiKeyAuth.GetApiKeySecretRefs()) == 0 {
+					reports.AddError(ac, errors.Errorf("Invalid configurations for apikey auth config %v", ac.Metadata.Ref()))
 				}
 			case *extauthv1.AuthConfig_Config_PluginAuth:
 				if cfg.PluginAuth.GetConfig() == nil {
-					reports.AddError(ac, errors.Errorf("Invalid configurations for plugin auth config %v", ac.Metadata.String()))
+					reports.AddError(ac, errors.Errorf("Invalid configurations for plugin auth config %v", ac.Metadata.Ref()))
 				}
-			case *extauthv1.AuthConfig_Config_OpaAuth: // no way to verify this from just the config
+			case *extauthv1.AuthConfig_Config_OpaAuth:
+				if cfg.OpaAuth.GetQuery() == "" {
+					reports.AddError(ac, errors.Errorf("Invalid configurations for opa auth config %v", ac.Metadata.Ref()))
+				}
 			case *extauthv1.AuthConfig_Config_Ldap:
 				if cfg.Ldap.GetAddress() == "" {
-					reports.AddError(ac, errors.Errorf("Invalid configurations for ldap auth config %v", ac.Metadata.String()))
+					reports.AddError(ac, errors.Errorf("Invalid configurations for ldap auth config %v", ac.Metadata.Ref()))
 				}
 			default:
-				reports.AddError(ac, errors.Errorf("Unknown Auth Config type for %v", ac.Metadata.String()))
+				reports.AddError(ac, errors.Errorf("Unknown Auth Config type for %v", ac.Metadata.Ref()))
 			}
 		}
 	}
