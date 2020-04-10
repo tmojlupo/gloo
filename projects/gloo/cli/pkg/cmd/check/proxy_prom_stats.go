@@ -40,7 +40,8 @@ func checkProxyPromStats(ctx context.Context, glooNamespace string, deploymentNa
 	freePort, err := cliutil.GetFreePort()
 	if err != nil {
 		fmt.Println(errMessage)
-		return false, err
+		fmt.Println(err)
+		return true, nil
 	}
 	localPort := strconv.Itoa(freePort)
 	adminPort := strconv.Itoa(int(defaults.EnvoyAdminPort))
@@ -49,7 +50,8 @@ func checkProxyPromStats(ctx context.Context, glooNamespace string, deploymentNa
 		localPort, adminPort, false, promStatsPath)
 	if err != nil {
 		fmt.Println(errMessage)
-		return false, err
+		fmt.Println(err)
+		return true, nil
 	}
 	if portFwdCmd.Process != nil {
 		defer portFwdCmd.Process.Release()

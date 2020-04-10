@@ -1,0 +1,6 @@
+changelog:
+- type: FIX
+  description: >
+    Change the glooctl check error for out-of-sync proxies into a printed warning if the port-forward
+    didn't work.
+  issueLink: https://github.com/solo-io/gloo/issues/2771
