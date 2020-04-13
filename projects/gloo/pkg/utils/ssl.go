@@ -1,14 +1,17 @@
 package utils
 
 import (
+	"encoding/json"
+	"io/ioutil"
+	"net/http"
+
 	envoyauth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	v2alpha "github.com/envoyproxy/go-control-plane/envoy/config/grpc_credential/v2alpha"
 	gogo_types "github.com/gogo/protobuf/types"
 	"github.com/golang/protobuf/ptypes"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
-
 	"github.com/rotisserie/eris"
+	"github.com/solo-io/gloo/pkg/utils/gogoutils"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 )
@@ -79,6 +82,7 @@ type CertSource interface {
 	GetSecretRef() *core.ResourceRef
 	GetSslFiles() *v1.SSLFiles
 	GetSds() *v1.SDSConfig
+	GetConsulEndpoint() string
 	GetVerifySubjectAltName() []string
 	GetParameters() *v1.SslParameters
 	GetAlpnProtocols() []string
@@ -187,6 +191,53 @@ func (s *sslConfigTranslator) handleSds(sslSecrets *v1.SDSConfig, verifySan []st
 	return tlsContext, nil
 }
 
+// Same basic data structure as https://github.com/hashicorp/consul/blob/master/agent/structs/connect_ca.go
+type IndexedCARoots struct {
+	Roots []*CARoot
+}
+
+// CARoot represents a root CA certificate that is trusted.
+type CARoot struct {
+	// ID is a globally unique ID (UUID) representing this CA root.
+	ID string
+	// Name is a human-friendly name for this CA root. This value is
+	// opaque to Consul and is not used for anything internally.
+	Name string
+	// RootCert is the PEM-encoded public certificate.
+	RootCert string
+}
+
+func (s *sslConfigTranslator) handleConsulConnect(consulServerUrl string) (*envoyauth.CommonTlsContext, error) {
+	if consulServerUrl == "" {
+		return nil, eris.Errorf("must provide consul http API endpoint to query for /agent/connect/ca/roots.")
+	}
+	response, err := http.Get(consulServerUrl + "/v1/agent/connect/ca/roots")
+	if err != nil {
+		return nil, err
+	}
+	responseBody, _ := ioutil.ReadAll(response.Body)
+	data := IndexedCARoots{}
+	_ = json.Unmarshal(responseBody, &data)
+	rootCertInlineString := ""
+	for _, rootCert := range data.Roots {
+		rootCertInlineString += rootCert.RootCert
+	}
+
+	tlsContext := &envoyauth.CommonTlsContext{
+		ValidationContextType: &envoyauth.CommonTlsContext_ValidationContext{
+			ValidationContext: &envoyauth.CertificateValidationContext{
+				TrustedCa: &envoycore.DataSource{
+					Specifier: &envoycore.DataSource_InlineString{
+						InlineString: rootCertInlineString,
+					},
+				},
+			},
+		},
+	}
+
+	return tlsContext, nil
+}
+
 func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.SecretList) (*envoyauth.CommonTlsContext, error) {
 	var (
 		certChain, privateKey, rootCa string
@@ -206,6 +257,8 @@ func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.S
 		certChain, privateKey, rootCa = sslSecrets.TlsCert, sslSecrets.TlsKey, sslSecrets.RootCa
 	} else if sslSecrets := cs.GetSds(); sslSecrets != nil {
 		return s.handleSds(sslSecrets, cs.GetVerifySubjectAltName())
+	} else if sslSecrets := cs.GetConsulEndpoint(); sslSecrets != "" {
+		return s.handleConsulConnect(sslSecrets)
 	} else {
 		return nil, NoCertificateFoundError
 	}

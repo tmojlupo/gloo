@@ -19,6 +19,8 @@ message SslConfig {
         SSLFiles ssl_files = 2;
         // Use secret discovery service.
         SDSConfig sds = 4;
+        // Use consul
+        string consul_endpoint = 8;
     }
     // optional. the SNI domains that should be considered for TLS connections
     repeated string sni_domains = 3;
@@ -53,6 +55,8 @@ message UpstreamSslConfig {
         SSLFiles ssl_files = 2;
         // Use secret discovery service.
         SDSConfig sds = 4;
+        // Use consul
+        string consul_endpoint = 9;
     }
     // optional. the SNI domains that should be considered for TLS connections
     string sni = 3;

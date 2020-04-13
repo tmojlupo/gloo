@@ -39,6 +39,7 @@ SslConfig contains the options necessary to configure a virtual host or listener
 "secretRef": .core.solo.io.ResourceRef
 "sslFiles": .gloo.solo.io.SSLFiles
 "sds": .gloo.solo.io.SDSConfig
+"consulEndpoint": string
 "sniDomains": []string
 "verifySubjectAltName": []string
 "parameters": .gloo.solo.io.SslParameters
@@ -48,9 +49,10 @@ SslConfig contains the options necessary to configure a virtual host or listener
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `secretRef` | [.core.solo.io.ResourceRef](../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | SecretRef contains the secret ref to a gloo tls secret or a kubernetes tls secret. gloo tls secret can contain a root ca as well if verification is needed. Only one of `secretRef`, or `sds` can be set. |  |
-| `sslFiles` | [.gloo.solo.io.SSLFiles](../ssl.proto.sk/#sslfiles) | SSLFiles reference paths to certificates which are local to the proxy. Only one of `sslFiles`, or `sds` can be set. |  |
-| `sds` | [.gloo.solo.io.SDSConfig](../ssl.proto.sk/#sdsconfig) | Use secret discovery service. Only one of `sds`, or `sslFiles` can be set. |  |
+| `secretRef` | [.core.solo.io.ResourceRef](../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | SecretRef contains the secret ref to a gloo tls secret or a kubernetes tls secret. gloo tls secret can contain a root ca as well if verification is needed. Only one of `secretRef`, `sslFiles`, or `consulEndpoint` can be set. |  |
+| `sslFiles` | [.gloo.solo.io.SSLFiles](../ssl.proto.sk/#sslfiles) | SSLFiles reference paths to certificates which are local to the proxy. Only one of `sslFiles`, `secretRef`, or `consulEndpoint` can be set. |  |
+| `sds` | [.gloo.solo.io.SDSConfig](../ssl.proto.sk/#sdsconfig) | Use secret discovery service. Only one of `sds`, `secretRef`, or `consulEndpoint` can be set. |  |
+| `consulEndpoint` | `string` | Use consul. Only one of `consulEndpoint`, `secretRef`, or `sds` can be set. |  |
 | `sniDomains` | `[]string` | optional. the SNI domains that should be considered for TLS connections. |  |
 | `verifySubjectAltName` | `[]string` | Verify that the Subject Alternative Name in the peer certificate is one of the specified values. note that a root_ca must be provided if this option is used. |  |
 | `parameters` | [.gloo.solo.io.SslParameters](../ssl.proto.sk/#sslparameters) |  |  |
@@ -91,6 +93,7 @@ SslConfig contains the options necessary to configure a virtual host or listener
 "secretRef": .core.solo.io.ResourceRef
 "sslFiles": .gloo.solo.io.SSLFiles
 "sds": .gloo.solo.io.SDSConfig
+"consulEndpoint": string
 "sni": string
 "verifySubjectAltName": []string
 "parameters": .gloo.solo.io.SslParameters
@@ -100,9 +103,10 @@ SslConfig contains the options necessary to configure a virtual host or listener
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `secretRef` | [.core.solo.io.ResourceRef](../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | SecretRef contains the secret ref to a gloo tls secret or a kubernetes tls secret. gloo tls secret can contain a root ca as well if verification is needed. Only one of `secretRef`, or `sds` can be set. |  |
-| `sslFiles` | [.gloo.solo.io.SSLFiles](../ssl.proto.sk/#sslfiles) | SSLFiles reference paths to certificates which are local to the proxy. Only one of `sslFiles`, or `sds` can be set. |  |
-| `sds` | [.gloo.solo.io.SDSConfig](../ssl.proto.sk/#sdsconfig) | Use secret discovery service. Only one of `sds`, or `sslFiles` can be set. |  |
+| `secretRef` | [.core.solo.io.ResourceRef](../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | SecretRef contains the secret ref to a gloo tls secret or a kubernetes tls secret. gloo tls secret can contain a root ca as well if verification is needed. Only one of `secretRef`, `sslFiles`, or `consulEndpoint` can be set. |  |
+| `sslFiles` | [.gloo.solo.io.SSLFiles](../ssl.proto.sk/#sslfiles) | SSLFiles reference paths to certificates which are local to the proxy. Only one of `sslFiles`, `secretRef`, or `consulEndpoint` can be set. |  |
+| `sds` | [.gloo.solo.io.SDSConfig](../ssl.proto.sk/#sdsconfig) | Use secret discovery service. Only one of `sds`, `secretRef`, or `consulEndpoint` can be set. |  |
+| `consulEndpoint` | `string` | Use consul. Only one of `consulEndpoint`, `secretRef`, or `sds` can be set. |  |
 | `sni` | `string` | optional. the SNI domains that should be considered for TLS connections. |  |
 | `verifySubjectAltName` | `[]string` | Verify that the Subject Alternative Name in the peer certificate is one of the specified values. note that a root_ca must be provided if this option is used. |  |
 | `parameters` | [.gloo.solo.io.SslParameters](../ssl.proto.sk/#sslparameters) |  |  |

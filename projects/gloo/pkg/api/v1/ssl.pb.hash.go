@@ -126,6 +126,12 @@ func (m *SslConfig) Hash(hasher hash.Hash64) (uint64, error) {
 			}
 		}
 
+	case *SslConfig_ConsulEndpoint:
+
+		if _, err = hasher.Write([]byte(m.GetConsulEndpoint())); err != nil {
+			return 0, err
+		}
+
 	}
 
 	return hasher.Sum64(), nil
@@ -254,6 +260,12 @@ func (m *UpstreamSslConfig) Hash(hasher hash.Hash64) (uint64, error) {
 					return 0, err
 				}
 			}
+		}
+
+	case *UpstreamSslConfig_ConsulEndpoint:
+
+		if _, err = hasher.Write([]byte(m.GetConsulEndpoint())); err != nil {
+			return 0, err
 		}
 
 	}

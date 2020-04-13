@@ -1,17 +1,19 @@
 package utils
 
 import (
+	"io"
+	"net/http"
+
 	envoyauth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	v2alpha "github.com/envoyproxy/go-control-plane/envoy/config/grpc_credential/v2alpha"
 	"github.com/golang/protobuf/ptypes"
-	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
-	. "github.com/solo-io/go-utils/testutils"
-	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
+	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	. "github.com/solo-io/go-utils/testutils"
+	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 )
 
 var _ = Describe("Ssl", func() {
@@ -75,7 +77,7 @@ var _ = Describe("Ssl", func() {
 			})
 		})
 	})
-	Context("secret", func() {
+	Context("secret ref", func() {
 		BeforeEach(func() {
 			tlsSecret = &v1.TlsSecret{
 				CertChain:  "tlscert",
@@ -329,6 +331,42 @@ var _ = Describe("Ssl", func() {
 				vctx := c.ValidationContextType.(*envoyauth.CommonTlsContext_CombinedValidationContext).CombinedValidationContext
 				Expect(vctx.DefaultValidationContext.VerifySubjectAltName).To(Equal(upstreamCfg.VerifySubjectAltName))
 			})
+		})
+	})
+
+	Context("consul connect", func() {
+		BeforeEach(func() {
+			upstreamCfg = &v1.UpstreamSslConfig{
+				SslSecrets: &v1.UpstreamSslConfig_ConsulEndpoint{
+					ConsulEndpoint: "http://localhost:8501",
+				},
+			}
+			configTranslator = NewSslConfigTranslator()
+
+		})
+
+		It("here we go", func() {
+			rootCertInlineString := "test"
+			http.HandleFunc("/v1/agent/connect/ca/roots", func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, `
+{
+    "Roots": [
+        {
+            "RootCert": "`+rootCertInlineString+`"
+        }
+    ]
+}`)
+			})
+			server := &http.Server{Addr: ":8501"}
+			go server.ListenAndServe()
+			c, err := configTranslator.ResolveCommonSslConfig(upstreamCfg, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(c.ValidationContextType).ToNot(BeNil())
+			vctx := c.ValidationContextType.(*envoyauth.CommonTlsContext_ValidationContext).ValidationContext
+			Expect(vctx.TrustedCa).To(Equal(&envoycore.DataSource{
+				Specifier: &envoycore.DataSource_InlineString{
+					InlineString: rootCertInlineString,
+				}}))
 		})
 	})
 
