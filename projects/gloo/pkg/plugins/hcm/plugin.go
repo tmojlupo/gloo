@@ -106,6 +106,7 @@ func copyCoreHcmSettings(ctx context.Context, cfg *envoyhttp.HttpConnectionManag
 		cfg.HttpProtocolOptions = &envoycore.Http1ProtocolOptions{
 			AcceptHttp_10:         true,
 			DefaultHostForHttp_10: hcmSettings.GetDefaultHostForHttp_10(),
+			EnableTrailers:        true,
 		}
 	}
 
