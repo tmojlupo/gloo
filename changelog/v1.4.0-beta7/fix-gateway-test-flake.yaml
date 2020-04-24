@@ -1,0 +1,4 @@
+changelog:
+  - type: NON_USER_FACING
+    issueLink: https://github.com/solo-io/gloo/issues/2839
+    description: Increase the wait time for the proxy to get deleted.

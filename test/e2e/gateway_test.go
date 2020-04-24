@@ -227,7 +227,7 @@ var _ = Describe("Gateway", func() {
 						return false
 					}
 					return len(proxyList) == 0
-				}, "10s", "0.1s").Should(BeTrue())
+				}, "30s", ".1s").Should(BeTrue())
 
 				// Create a regular request
 				request, err := http.NewRequest("GET", fmt.Sprintf("http://localhost:%d", defaults.HttpPort), nil)
