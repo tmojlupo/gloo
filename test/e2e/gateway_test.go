@@ -227,7 +227,7 @@ var _ = Describe("Gateway", func() {
 						return false
 					}
 					return len(proxyList) == 0
-				}, "10s", ".1s").Should(BeTrue())
+				}, 10*time.Second, 1*time.Second).Should(BeTrue())
 
 				// Create a regular request
 				request, err := http.NewRequest("GET", fmt.Sprintf("http://localhost:%d", defaults.HttpPort), nil)
@@ -242,7 +242,7 @@ var _ = Describe("Gateway", func() {
 						return 503
 					}
 					return response.StatusCode
-				}, 20*time.Second, 500*time.Millisecond).Should(Equal(503))
+				}, 20*time.Second, 1*time.Second).Should(Equal(503))
 			})
 
 			It("should not match requests that contain a header that is excluded from match", func() {

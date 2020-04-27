@@ -190,7 +190,7 @@ func EventuallyOk(hostname string, port uint32) {
 			return errors.New(fmt.Sprintf("%v is not OK", res.StatusCode))
 		}
 		return nil
-	}, "5s", ".1s").Should(BeNil())
+	}, 5*time.Second, 1*time.Second).Should(BeNil())
 }
 
 func ConsistentlyNotRateLimited(hostname string, port uint32) {
@@ -203,7 +203,7 @@ func ConsistentlyNotRateLimited(hostname string, port uint32) {
 			return errors.New(fmt.Sprintf("%v is not OK", res.StatusCode))
 		}
 		return nil
-	}, "5s", ".1s").Should(BeNil())
+	}, 5*time.Second, 1*time.Second).Should(BeNil())
 }
 
 func EventuallyRateLimited(hostname string, port uint32) {
