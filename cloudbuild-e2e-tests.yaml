@@ -99,6 +99,11 @@ steps:
     secretEnv: ['AWS_ARN_ROLE_1']
     id: 'e2e-tests'
 
+secrets:
+  - kmsKeyName: projects/solo-public/locations/global/keyRings/build/cryptoKeys/build-key
+    secretEnv:
+      AWS_ARN_ROLE_1: CiQABlzmSTKWrIEGaH8UvsX3Wp8pz8ClQODVSjIZAiHuE9gNhM4SXACCPGSGCDSNJtdfkA0BLLmKTJLIM06XXEOV4iIooqlLfo9p7EOzOwqZaV9DFygO8/oKQqTFstc1vKgOz7YHrMaCx3GzqiHN2u//UmHRpvIwrDDfuIP5XNa0aOrj
+
 timeout: 5400s
 tags: ['gloo']
 options:
