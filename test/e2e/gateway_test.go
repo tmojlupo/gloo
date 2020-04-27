@@ -242,7 +242,7 @@ var _ = Describe("Gateway", func() {
 						return 503
 					}
 					return response.StatusCode
-				}, 20*time.Second, 500*time.Millisecond).Should(Equal(503))
+				}, 30*time.Second, 500*time.Millisecond).Should(Equal(503))
 			})
 
 			It("should not match requests that contain a header that is excluded from match", func() {
