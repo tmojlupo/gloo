@@ -90,12 +90,12 @@ mod-download:
 update-deps: mod-download
 	$(shell cd $(shell go list -f '{{ .Dir }}' -m github.com/solo-io/protoc-gen-ext); make install)
 	chmod +x $(shell go list -f '{{ .Dir }}' -m k8s.io/code-generator)/generate-groups.sh
-	GO111MODULE=off go get -u golang.org/x/tools/cmd/goimports
-	GO111MODULE=off go get -u github.com/gogo/protobuf/gogoproto
-	GO111MODULE=off go get -u github.com/gogo/protobuf/protoc-gen-gogo
-	GO111MODULE=off go get -u github.com/cratonica/2goarray
-	GO111MODULE=off go get -v -u github.com/golang/mock/gomock
-	GO111MODULE=off go install github.com/golang/mock/mockgen
+	go get -v golang.org/x/tools/cmd/goimports@v0.0.0-20200423205358-59e73619c742
+	go get -v github.com/gogo/protobuf/gogoproto@v1.3.1
+	go get -v github.com/gogo/protobuf/protoc-gen-gogo@v1.3.1
+	go get -v github.com/cratonica/2goarray@514510793eaa1ae2cc2217a9a743104312412f35
+	go get -v -u github.com/golang/mock/gomock@v1.4.3
+	go get -v github.com/golang/mock/mockgen@v1.4.3
 
 
 .PHONY: check-format
@@ -413,6 +413,7 @@ build: gloo glooctl gateway discovery envoyinit certgen ingress
 
 HELM_SYNC_DIR := $(OUTPUT_DIR)/helm
 HELM_DIR := install/helm/gloo
+HELM_BUCKET := gs://solo-public-helm
 
 # Creates Chart.yaml and values.yaml. See install/helm/README.md for more info.
 .PHONY: generate-helm-files
@@ -420,7 +421,8 @@ generate-helm-files: $(OUTPUT_DIR)/.helm-prepared
 
 HELM_PREPARED_INPUT := $(HELM_DIR)/generate.go $(wildcard $(HELM_DIR)/generate/*.go)
 $(OUTPUT_DIR)/.helm-prepared: $(HELM_PREPARED_INPUT)
-	GO111MODULE=on go run $(HELM_DIR)/generate.go --version $(VERSION) --generate-helm-docs
+	mkdir -p $(HELM_SYNC_DIR)/charts
+	go run $(HELM_DIR)/generate.go --version $(VERSION) --generate-helm-docs
 	touch $@
 
 package-chart: generate-helm-files
@@ -434,15 +436,18 @@ push-chart-to-registry: generate-helm-files
 	HELM_EXPERIMENTAL_OCI=1 helm chart save $(HELM_DIR) gcr.io/solo-public/gloo-helm:$(VERSION)
 	HELM_EXPERIMENTAL_OCI=1 helm chart push gcr.io/solo-public/gloo-helm:$(VERSION)
 
-.PHONY: fetch-helm
-fetch-helm:
-	mkdir -p './_output/helm'
-	gsutil -m rsync -r gs://solo-public-helm/ './_output/helm'
-
-.PHONY: save-helm
-save-helm:
+.PHONY: fetch-package-and-save-helm
+fetch-package-and-save-helm: generate-helm-files
 ifeq ($(RELEASE),"true")
-	gsutil -m rsync -r './_output/helm' gs://solo-public-helm/
+	until $$(GENERATION=$$(gsutil ls -a $(HELM_BUCKET)/index.yaml | tail -1 | cut -f2 -d '#') && \
+					gsutil cp -v $(HELM_BUCKET)/index.yaml $(HELM_SYNC_DIR)/index.yaml && \
+					helm package --destination $(HELM_SYNC_DIR)/charts $(HELM_DIR) >> /dev/null && \
+					helm repo index $(HELM_SYNC_DIR) --merge $(HELM_SYNC_DIR)/index.yaml && \
+					gsutil -m rsync $(HELM_SYNC_DIR)/charts $(HELM_BUCKET)/charts && \
+					gsutil -h x-goog-if-generation-match:"$$GENERATION" cp $(HELM_SYNC_DIR)/index.yaml $(HELM_BUCKET)/index.yaml); do \
+		echo "Failed to upload new helm index (updated helm index since last download?). Trying again"; \
+		sleep 2; \
+	done
 endif
 
 #----------------------------------------------------------------------------------
@@ -492,15 +497,9 @@ endif
 #----------------------------------------------------------------------------------
 # Release
 #----------------------------------------------------------------------------------
-GLOOE_CHANGELOGS_BUCKET=gloo-ee-changelogs
 
 $(OUTPUT_DIR)/gloo-enterprise-version:
 	GO111MODULE=on go run hack/find_latest_enterprise_version.go
-
-.PHONY: download-glooe-changelog
-download-glooe-changelog: $(OUTPUT_DIR)/gloo-enterprise-version
-	mkdir -p '../solo-projects/changelog'
-	gsutil -m cp -r gs://$(GLOOE_CHANGELOGS_BUCKET)/$(shell cat $(OUTPUT_DIR)/gloo-enterprise-version)/* '../solo-projects/changelog'
 
 # The code does the proper checking for a TAGGED_VERSION
 .PHONY: upload-github-release-assets

@@ -168,10 +168,15 @@ type ServiceAccount struct {
 }
 
 type GatewayValidation struct {
-	Enabled               bool   `json:"enabled" desc:"enable Gloo API Gateway validation hook (default true)"`
-	AlwaysAcceptResources *bool  `json:"alwaysAcceptResources" desc:"unless this is set this to false in order to ensure validation webhook rejects invalid resources. by default, validation webhook will only log and report metrics for invalid resource admission without rejecting them outright."`
-	SecretName            string `json:"secretName" desc:"Name of the Kubernetes Secret containing TLS certificates used by the validation webhook server. This secret will be created by the certGen Job if the certGen Job is enabled."`
-	FailurePolicy         string `json:"failurePolicy" desc:"failurePolicy defines how unrecognized errors from the Gateway validation endpoint are handled - allowed values are 'Ignore' or 'Fail'. Defaults to Ignore "`
+	Enabled               bool     `json:"enabled" desc:"enable Gloo API Gateway validation hook (default true)"`
+	AlwaysAcceptResources *bool    `json:"alwaysAcceptResources" desc:"unless this is set this to false in order to ensure validation webhook rejects invalid resources. by default, validation webhook will only log and report metrics for invalid resource admission without rejecting them outright."`
+	SecretName            string   `json:"secretName" desc:"Name of the Kubernetes Secret containing TLS certificates used by the validation webhook server. This secret will be created by the certGen Job if the certGen Job is enabled."`
+	FailurePolicy         string   `json:"failurePolicy" desc:"failurePolicy defines how unrecognized errors from the Gateway validation endpoint are handled - allowed values are 'Ignore' or 'Fail'. Defaults to Ignore "`
+	Webhook               *Webhook `json:"webhook" desc:"webhook specific configuration"`
+}
+
+type Webhook struct {
+	Enabled bool `json:"enabled" desc:"enable validation webhook (default true)"`
 }
 
 type GatewayDeployment struct {
@@ -236,7 +241,9 @@ type DaemonSetSpec struct {
 type GatewayProxyPodTemplate struct {
 	Image            *Image                `json:"image,omitempty"`
 	HttpPort         int                   `json:"httpPort,omitempty" desc:"HTTP port for the gateway service"`
+	HttpNodePort     int                   `json:"httpNodePort,omitempty" desc:"HTTP nodeport for the gateway service if using type NodePort"`
 	HttpsPort        int                   `json:"httpsPort,omitempty" desc:"HTTPS port for the gateway service"`
+	HttpsNodePort    int                   `json:"httpsNodePort,omitempty" desc:"HTTPS nodeport for the gateway service if using type NodePort"`
 	ExtraPorts       []interface{}         `json:"extraPorts,omitempty" desc:"extra ports for the gateway pod"`
 	ExtraAnnotations map[string]string     `json:"extraAnnotations,omitempty" desc:"extra annotations to add to the pod"`
 	NodeName         string                `json:"nodeName,omitempty" desc:"name of node to run on"`

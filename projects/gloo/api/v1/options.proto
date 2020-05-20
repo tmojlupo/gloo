@@ -88,6 +88,10 @@ message HttpListenerOptions {
     // Currently these extensions will only work if Gloo deployed using the helm flag, wasm.enabled=true
     // These require a special nightly version of envoy which is not deployed by default
     wasm.options.gloo.solo.io.PluginSource wasm = 7;
+    // Enterprise-only: External auth related settings
+    enterprise.gloo.solo.io.Settings extauth = 10;
+    // Enterprise-only: Settings for the rate limiting server itself
+    ratelimit.options.gloo.solo.io.Settings ratelimit_server = 11;
 
     // Gzip is an HTTP option which enables Gloo to compress
     // data returned from an upstream service upon client request.
@@ -164,6 +168,9 @@ message RouteOptions {
     fault.options.gloo.solo.io.RouteFaults faults = 2;
     // For requests matched on this route, rewrite the HTTP request path to the provided value before forwarding upstream
     google.protobuf.StringValue prefix_rewrite = 3;
+    // Specifies the upstream timeout for the route. If not specified, the default is 15s. This spans between the point
+    // at which the entire downstream request (i.e. end-of-stream) has been processed and when the upstream response has
+    // been completely processed. A value of 0 will disable the route’s timeout.
     google.protobuf.Duration timeout = 4 [(gogoproto.stdduration) = true];
     retries.options.gloo.solo.io.RetryPolicy retries = 5;
     // Extensions will be passed along from Listeners, Gateways, VirtualServices, Routes, and Route tables to the
