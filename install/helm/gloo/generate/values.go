@@ -240,10 +240,8 @@ type DaemonSetSpec struct {
 
 type GatewayProxyPodTemplate struct {
 	Image            *Image                `json:"image,omitempty"`
-	HttpPort         int                   `json:"httpPort,omitempty" desc:"HTTP port for the gateway service"`
-	HttpNodePort     int                   `json:"httpNodePort,omitempty" desc:"HTTP nodeport for the gateway service if using type NodePort"`
-	HttpsPort        int                   `json:"httpsPort,omitempty" desc:"HTTPS port for the gateway service"`
-	HttpsNodePort    int                   `json:"httpsNodePort,omitempty" desc:"HTTPS nodeport for the gateway service if using type NodePort"`
+	HttpPort         int                   `json:"httpPort,omitempty" desc:"HTTP port for the gateway service target port"`
+	HttpsPort        int                   `json:"httpsPort,omitempty" desc:"HTTPS port for the gateway service target port"`
 	ExtraPorts       []interface{}         `json:"extraPorts,omitempty" desc:"extra ports for the gateway pod"`
 	ExtraAnnotations map[string]string     `json:"extraAnnotations,omitempty" desc:"extra annotations to add to the pod"`
 	NodeName         string                `json:"nodeName,omitempty" desc:"name of node to run on"`
@@ -258,14 +256,18 @@ type GatewayProxyPodTemplate struct {
 }
 
 type GatewayProxyService struct {
-	Type                  string            "json:\"type,omitempty\" desc:\"gateway [service type](https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types). default is `LoadBalancer`\""
-	HttpPort              int               `json:"httpPort,omitempty" desc:"HTTP port for the gateway service"`
-	HttpsPort             int               `json:"httpsPort,omitempty" desc:"HTTPS port for the gateway service"`
-	ClusterIP             string            "json:\"clusterIP,omitempty\" desc:\"static clusterIP (or `None`) when `gatewayProxies[].gatewayProxy.service.type` is `ClusterIP`\""
-	ExtraAnnotations      map[string]string `json:"extraAnnotations,omitempty"`
-	ExternalTrafficPolicy string            `json:"externalTrafficPolicy,omitempty"`
-	Name                  string            `json:"name,omitempty", desc:"Custom name override for the service resource of the proxy"`
-	HttpsFirst            bool              `json:"httpsFirst", desc:"List HTTPS port before HTTP"`
+	Type                     string            "json:\"type,omitempty\" desc:\"gateway [service type](https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types). default is `LoadBalancer`\""
+	HttpPort                 int               `json:"httpPort,omitempty" desc:"HTTP port for the gateway service"`
+	HttpsPort                int               `json:"httpsPort,omitempty" desc:"HTTPS port for the gateway service"`
+	HttpNodePort             int               `json:"httpNodePort,omitempty" desc:"HTTP nodeport for the gateway service if using type NodePort"`
+	HttpsNodePort            int               `json:"httpsNodePort,omitempty" desc:"HTTPS nodeport for the gateway service if using type NodePort"`
+	ClusterIP                string            "json:\"clusterIP,omitempty\" desc:\"static clusterIP (or `None`) when `gatewayProxies[].gatewayProxy.service.type` is `ClusterIP`\""
+	ExtraAnnotations         map[string]string `json:"extraAnnotations,omitempty"`
+	ExternalTrafficPolicy    string            `json:"externalTrafficPolicy,omitempty"`
+	Name                     string            `json:"name,omitempty" desc:"Custom name override for the service resource of the proxy"`
+	HttpsFirst               bool              `json:"httpsFirst" desc:"List HTTPS port before HTTP"`
+	LoadBalancerIP           string            `json:"loadBalancerIP,omitempty" desc:"IP address of the load balancer"`
+	LoadBalancerSourceRanges []string          `json:"loadBalancerSourceRanges,omitempty" desc:"List of IP CIDR ranges that are allowed to access the load balancer"`
 }
 
 type Tracing struct {
@@ -278,6 +280,7 @@ type AccessLogger struct {
 	Port        uint   `json:"port,omitempty"`
 	ServiceName string `json:"serviceName,omitempty"`
 	Enabled     bool   `json:"enabled"`
+	Stats       *Stats `json:"stats,omitempty" desc:"overrides for prometheus stats published by the gloo pod"`
 	*DeploymentSpec
 }
 
@@ -288,7 +291,8 @@ type GatewayProxyConfigMap struct {
 type Ingress struct {
 	Enabled             *bool              `json:"enabled"`
 	Deployment          *IngressDeployment `json:"deployment,omitempty"`
-	RequireIngressClass *bool              `json:"requireIngressClass" desc:"only serve traffic for Ingress objects with the annotation 'kubernetes.io/ingress.class: gloo''"`
+	RequireIngressClass *bool              `json:"requireIngressClass" desc:"only serve traffic for Ingress objects with the Ingress Class annotation 'kubernetes.io/ingress.class'. By default the annotation value must be set to 'gloo', however this can be overriden via customIngressClass."`
+	CustomIngress       *bool              `json:"customIngressClass" desc:"Only relevant when requireIngressClass is set to true. Setting this value will cause the Gloo Ingress Controller to process only those Ingress objects which have their ingress class set to this value (e.g. 'kubernetes.io/ingress.class=SOMEVALUE')."`
 }
 
 type IngressDeployment struct {

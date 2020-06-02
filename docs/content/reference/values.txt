@@ -196,10 +196,8 @@
 |gatewayProxies.NAME.podTemplate.image.registry|string||image prefix/registry e.g. (quay.io/solo-io)|
 |gatewayProxies.NAME.podTemplate.image.pullPolicy|string||image pull policy for the container|
 |gatewayProxies.NAME.podTemplate.image.pullSecret|string||image pull policy for the container |
-|gatewayProxies.NAME.podTemplate.httpPort|int||HTTP port for the gateway service|
-|gatewayProxies.NAME.podTemplate.httpNodePort|int||HTTP nodeport for the gateway service if using type NodePort|
-|gatewayProxies.NAME.podTemplate.httpsPort|int||HTTPS port for the gateway service|
-|gatewayProxies.NAME.podTemplate.httpsNodePort|int||HTTPS nodeport for the gateway service if using type NodePort|
+|gatewayProxies.NAME.podTemplate.httpPort|int||HTTP port for the gateway service target port|
+|gatewayProxies.NAME.podTemplate.httpsPort|int||HTTPS port for the gateway service target port|
 |gatewayProxies.NAME.podTemplate.extraPorts[]|interface||extra ports for the gateway pod|
 |gatewayProxies.NAME.podTemplate.extraAnnotations.NAME|string||extra annotations to add to the pod|
 |gatewayProxies.NAME.podTemplate.nodeName|string||name of node to run on|
@@ -222,11 +220,15 @@
 |gatewayProxies.NAME.service.type|string||gateway [service type](https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types). default is `LoadBalancer`|
 |gatewayProxies.NAME.service.httpPort|int||HTTP port for the gateway service|
 |gatewayProxies.NAME.service.httpsPort|int||HTTPS port for the gateway service|
+|gatewayProxies.NAME.service.httpNodePort|int||HTTP nodeport for the gateway service if using type NodePort|
+|gatewayProxies.NAME.service.httpsNodePort|int||HTTPS nodeport for the gateway service if using type NodePort|
 |gatewayProxies.NAME.service.clusterIP|string||static clusterIP (or `None`) when `gatewayProxies[].gatewayProxy.service.type` is `ClusterIP`|
 |gatewayProxies.NAME.service.extraAnnotations.NAME|string|||
 |gatewayProxies.NAME.service.externalTrafficPolicy|string|||
-|gatewayProxies.NAME.service.name|string|||
-|gatewayProxies.NAME.service.httpsFirst|bool|||
+|gatewayProxies.NAME.service.name|string||Custom name override for the service resource of the proxy|
+|gatewayProxies.NAME.service.httpsFirst|bool||List HTTPS port before HTTP|
+|gatewayProxies.NAME.service.loadBalancerIP|string||IP address of the load balancer|
+|gatewayProxies.NAME.service.loadBalancerSourceRanges[]|string||List of IP CIDR ranges that are allowed to access the load balancer|
 |gatewayProxies.NAME.antiAffinity|bool||configure anti affinity such that pods are prefferably not co-located|
 |gatewayProxies.NAME.tracing.provider|string|||
 |gatewayProxies.NAME.tracing.cluster|string|||
@@ -283,10 +285,8 @@
 |gatewayProxies.gatewayProxy.podTemplate.image.registry|string||image prefix/registry e.g. (quay.io/solo-io)|
 |gatewayProxies.gatewayProxy.podTemplate.image.pullPolicy|string||image pull policy for the container|
 |gatewayProxies.gatewayProxy.podTemplate.image.pullSecret|string||image pull policy for the container |
-|gatewayProxies.gatewayProxy.podTemplate.httpPort|int|8080|HTTP port for the gateway service|
-|gatewayProxies.gatewayProxy.podTemplate.httpNodePort|int|0|HTTP nodeport for the gateway service if using type NodePort|
-|gatewayProxies.gatewayProxy.podTemplate.httpsPort|int|8443|HTTPS port for the gateway service|
-|gatewayProxies.gatewayProxy.podTemplate.httpsNodePort|int|0|HTTPS nodeport for the gateway service if using type NodePort|
+|gatewayProxies.gatewayProxy.podTemplate.httpPort|int|8080|HTTP port for the gateway service target port|
+|gatewayProxies.gatewayProxy.podTemplate.httpsPort|int|8443|HTTPS port for the gateway service target port|
 |gatewayProxies.gatewayProxy.podTemplate.extraPorts[]|interface||extra ports for the gateway pod|
 |gatewayProxies.gatewayProxy.podTemplate.extraAnnotations.NAME|string||extra annotations to add to the pod|
 |gatewayProxies.gatewayProxy.podTemplate.nodeName|string||name of node to run on|
@@ -309,11 +309,15 @@
 |gatewayProxies.gatewayProxy.service.type|string|LoadBalancer|gateway [service type](https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types). default is `LoadBalancer`|
 |gatewayProxies.gatewayProxy.service.httpPort|int|80|HTTP port for the gateway service|
 |gatewayProxies.gatewayProxy.service.httpsPort|int|443|HTTPS port for the gateway service|
+|gatewayProxies.gatewayProxy.service.httpNodePort|int|0|HTTP nodeport for the gateway service if using type NodePort|
+|gatewayProxies.gatewayProxy.service.httpsNodePort|int|0|HTTPS nodeport for the gateway service if using type NodePort|
 |gatewayProxies.gatewayProxy.service.clusterIP|string||static clusterIP (or `None`) when `gatewayProxies[].gatewayProxy.service.type` is `ClusterIP`|
 |gatewayProxies.gatewayProxy.service.extraAnnotations.NAME|string|||
 |gatewayProxies.gatewayProxy.service.externalTrafficPolicy|string|||
-|gatewayProxies.gatewayProxy.service.name|string|||
-|gatewayProxies.gatewayProxy.service.httpsFirst|bool|false||
+|gatewayProxies.gatewayProxy.service.name|string||Custom name override for the service resource of the proxy|
+|gatewayProxies.gatewayProxy.service.httpsFirst|bool|false|List HTTPS port before HTTP|
+|gatewayProxies.gatewayProxy.service.loadBalancerIP|string||IP address of the load balancer|
+|gatewayProxies.gatewayProxy.service.loadBalancerSourceRanges[]|string||List of IP CIDR ranges that are allowed to access the load balancer|
 |gatewayProxies.gatewayProxy.antiAffinity|bool|false|configure anti affinity such that pods are prefferably not co-located|
 |gatewayProxies.gatewayProxy.tracing.provider|string|||
 |gatewayProxies.gatewayProxy.tracing.cluster|string|||
@@ -374,7 +378,8 @@
 |ingress.deployment.resources.limits.cpu|string||amount of CPUs|
 |ingress.deployment.resources.requests.memory|string||amount of memory|
 |ingress.deployment.resources.requests.cpu|string||amount of CPUs|
-|ingress.requireIngressClass|bool||only serve traffic for Ingress objects with the annotation 'kubernetes.io/ingress.class: gloo''|
+|ingress.requireIngressClass|bool||only serve traffic for Ingress objects with the Ingress Class annotation 'kubernetes.io/ingress.class'. By default the annotation value must be set to 'gloo', however this can be overriden via customIngressClass.|
+|ingress.customIngressClass|bool||Only relevant when requireIngressClass is set to true. Setting this value will cause the Gloo Ingress Controller to process only those Ingress objects which have their ingress class set to this value (e.g. 'kubernetes.io/ingress.class=SOMEVALUE').|
 |ingressProxy.deployment.image.tag|string|<release_version, ex: 1.2.3>|tag for the container|
 |ingressProxy.deployment.image.repository|string|gloo-envoy-wrapper|image name (repository) for the container.|
 |ingressProxy.deployment.image.registry|string||image prefix/registry e.g. (quay.io/solo-io)|
@@ -421,6 +426,7 @@
 |accessLogger.port|uint|8083||
 |accessLogger.serviceName|string|AccessLog||
 |accessLogger.enabled|bool|false||
+|accessLogger.stats.enabled|bool|true|Controls whether or not prometheus stats are enabled|
 |accessLogger.replicas|int|1|number of instances to deploy|
 |accessLogger.customEnv[].name|string|||
 |accessLogger.customEnv[].value|string|||

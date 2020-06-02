@@ -457,6 +457,7 @@ var _ = Describe("Helm Test", func() {
 						dep.Spec.Template.Spec.Containers[0].Ports = []v1.ContainerPort{
 							{Name: "http", ContainerPort: 8083, Protocol: "TCP"},
 						}
+						dep.Spec.Template.Annotations = statsAnnotations
 						dep.Spec.Template.Spec.ServiceAccountName = "gateway-proxy"
 						testManifest.ExpectDeploymentAppsV1(dep)
 						testManifest.ExpectService(svc)
@@ -626,6 +627,14 @@ var _ = Describe("Helm Test", func() {
 								"gatewayProxies.gatewayProxy.service.loadBalancerIP=test-lb-ip",
 							},
 						})
+						testManifest.ExpectService(gatewayProxyService)
+					})
+
+					It("sets load balancer source ranges", func() {
+						gatewayProxyService.Spec.Type = v1.ServiceTypeLoadBalancer
+						gatewayProxyService.Spec.LoadBalancerSourceRanges = []string{"130.211.204.1/32", "130.211.204.2/32"}
+						gatewayProxyService.Annotations = map[string]string{"test": "test"}
+						prepareMakefileFromValuesFile("val_lb_source_ranges.yaml")
 						testManifest.ExpectService(gatewayProxyService)
 					})
 

@@ -304,8 +304,8 @@ github.com/emirpasic/gods v1.9.0/go.mod h1:YfzfFFoVP/catgzJb4IKIqXjX78Ha8FMSDh3y
 github.com/envoyproxy/go-control-plane v0.9.0/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/go-control-plane v0.9.1-0.20191026205805-5f8ba28d4473/go.mod h1:YTl/9mNaCwkRvm6d1a2C3ymFceY/DCBVvsKhRF0iEA4=
 github.com/envoyproxy/go-control-plane v0.9.1/go.mod h1:G1fbsNGAFpC1aaERrShZQVdUV2ZuZuv6FCl2v9JNSxQ=
-github.com/envoyproxy/go-control-plane v0.9.6-0.20200401235947-be7fefdaf0df h1:EVUwAk1TnFLNp9Eu9AThAdaKGgz6x4im5Wv2dF8kBow=
-github.com/envoyproxy/go-control-plane v0.9.6-0.20200401235947-be7fefdaf0df/go.mod h1:OXl5to++W0ctG+EHWTFUjiypVxC/Y4VLc/KFU+al13s=
+github.com/envoyproxy/go-control-plane v0.9.6-0.20200529035633-fc42e08917e9 h1:AM3AYZI9udpliFfjJTM4E2G9pR+HS5ilXrJGJTvWTJM=
+github.com/envoyproxy/go-control-plane v0.9.6-0.20200529035633-fc42e08917e9/go.mod h1:OXl5to++W0ctG+EHWTFUjiypVxC/Y4VLc/KFU+al13s=
 github.com/envoyproxy/protoc-gen-validate v0.1.0 h1:EQciDnbrYxy13PgWoY8AqoxGiPrpgBZ1R8UNe3ddc+A=
 github.com/envoyproxy/protoc-gen-validate v0.1.0/go.mod h1:iSmxcyjqTsJpI2R4NaDN7+kN2VEUnK/pcBlmesArF7c=
 github.com/euank/go-kmsg-parser v2.0.0+incompatible/go.mod h1:MhmAMZ8V4CYH4ybgdRwPr2TU5ThnS43puaKEMpja1uw=
@@ -318,6 +318,7 @@ github.com/fatih/camelcase v1.0.0/go.mod h1:yN2Sb0lFhZJUdVvtELVWefmrXpuZESvPmqwo
 github.com/fatih/color v1.6.0/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5KwzbycvMj4=
 github.com/fatih/color v1.7.0 h1:DkWD4oS2D8LGGgTQ6IvwJJXSL5Vp2ffcQg58nFV38Ys=
 github.com/fatih/color v1.7.0/go.mod h1:Zm6kSWBoL9eyXnKyktHP6abPY2pDugNf5KwzbycvMj4=
+github.com/fatih/structs v1.1.0 h1:Q7juDM0QtcnhCpeyLGQKyg4TOIghuNXrkL32pHAUMxo=
 github.com/fatih/structs v1.1.0/go.mod h1:9NiDSp5zOcgEDl+j00MP/WkGVPOlPRLejGD8Ga6PJ7M=
 github.com/fgrosse/zaptest v1.1.0 h1:sK9hP0/xBoNX5qfFo3KWFluDXfc809APomI1QXuYELA=
 github.com/fgrosse/zaptest v1.1.0/go.mod h1:vMnRSul6kW7kIUXZgnZZcDwyTn8k49ODfAULL8nmL5w=
@@ -1016,8 +1017,8 @@ github.com/solo-io/reporting-client v0.1.2/go.mod h1:FmBDzwc1zEwayCCrlP+1w7NcpM0
 github.com/solo-io/solo-kit v0.6.3/go.mod h1:oBaQ6tOwuO97u7w+s3TeI08YLHcbiWemInx0XkDfKFw=
 github.com/solo-io/solo-kit v0.12.1/go.mod h1:oNDT3CNTgdjNh5tgkr4Wj8tj+h0VtJjfT/ZaZ8e1/js=
 github.com/solo-io/solo-kit v0.12.2/go.mod h1:oNDT3CNTgdjNh5tgkr4Wj8tj+h0VtJjfT/ZaZ8e1/js=
-github.com/solo-io/solo-kit v0.13.7 h1:w/M43G0O+mC7T0isZUPCC21vHdhOHmlVznbAsrJV7zY=
-github.com/solo-io/solo-kit v0.13.7/go.mod h1:1cSoxO1Cgzn++03nnp5V1iGf0S45OLDTUmj70rD/+hY=
+github.com/solo-io/solo-kit v0.13.8 h1:3FVs2g71vQp1zjrEh9kdjAQ650MijRxRW/X2E00eghI=
+github.com/solo-io/solo-kit v0.13.8/go.mod h1:1cSoxO1Cgzn++03nnp5V1iGf0S45OLDTUmj70rD/+hY=
 github.com/solo-io/wasme v0.0.1/go.mod h1:Zb85GQMTyx7NEyEINCUiofKE9KZLjQVF6obvHOHBQE8=
 github.com/solo-io/wasme v0.0.13-rc1 h1:CcfW64lH7rL/n6+zTgC/25/nfJWAsBGXAEh4X09y6V0=
 github.com/solo-io/wasme v0.0.13-rc1/go.mod h1:JwS6dxyZcWO9P7z0NmmD2pAl5PVaxJ2ASN06Owbgpd4=
