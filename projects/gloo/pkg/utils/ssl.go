@@ -1,11 +1,11 @@
 package utils
 
 import (
-	envoyauth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	v2alpha "github.com/envoyproxy/go-control-plane/envoy/config/grpc_credential/v2alpha"
+	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoygrpccredential "github.com/envoyproxy/go-control-plane/envoy/config/grpc_credential/v3"
+	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	envoymatcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	gogo_types "github.com/gogo/protobuf/types"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/solo-io/gloo/pkg/utils/gogoutils"
 
 	"github.com/rotisserie/eris"
@@ -13,8 +13,11 @@ import (
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 )
 
+//go:generate mockgen -destination mocks/mock_ssl.go github.com/solo-io/gloo/projects/gloo/pkg/utils SslConfigTranslator
+
 const (
-	MetadataPluginName = "envoy.grpc_credentials.file_based_metadata"
+	MetadataPluginName    = "envoy.grpc_credentials.file_based_metadata"
+	defaultSdsClusterName = "gateway_proxy_sds"
 )
 
 var (
@@ -31,6 +34,10 @@ var (
 	}
 
 	NoCertificateFoundError = eris.New("no certificate information found")
+
+	MissingValidationContextError = eris.Errorf("must provide validation context name if verifying SAN")
+
+	RootCaMustBeProvidedError = eris.Errorf("a root_ca must be provided if verify_subject_alt_name is not empty")
 )
 
 type SslConfigTranslator interface {
@@ -102,15 +109,48 @@ func dataSourceGenerator(inlineDataSource bool) func(s string) *envoycore.DataSo
 }
 
 func buildSds(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig {
-	config := &v2alpha.FileBasedMetadataConfig{
-		SecretData: &envoycore.DataSource{
-			Specifier: &envoycore.DataSource_Filename{
-				Filename: sslSecrets.CallCredentials.FileCredentialSource.TokenFileName,
+	if sslSecrets.GetCallCredentials() != nil {
+		// Deprecated way of building SDS. No longer used
+		// by anything in gloo but still enabled for now
+		// as it's a public API.
+		return buildDeprecatedSDS(name, sslSecrets)
+	}
+
+	clusterName := defaultSdsClusterName
+	if sslSecrets.GetClusterName() != "" {
+		clusterName = sslSecrets.GetClusterName()
+	}
+	return &envoyauth.SdsSecretConfig{
+		Name: name,
+		SdsConfig: &envoycore.ConfigSource{
+			ConfigSourceSpecifier: &envoycore.ConfigSource_ApiConfigSource{
+				ApiConfigSource: &envoycore.ApiConfigSource{
+					ApiType: envoycore.ApiConfigSource_GRPC,
+					GrpcServices: []*envoycore.GrpcService{
+						{
+							TargetSpecifier: &envoycore.GrpcService_EnvoyGrpc_{
+								EnvoyGrpc: &envoycore.GrpcService_EnvoyGrpc{
+									ClusterName: clusterName,
+								},
+							},
+						},
+					},
+				},
 			},
 		},
-		HeaderKey: sslSecrets.CallCredentials.FileCredentialSource.Header,
 	}
-	any, _ := ptypes.MarshalAny(config)
+}
+
+func buildDeprecatedSDS(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig {
+	config := &envoygrpccredential.FileBasedMetadataConfig{
+		SecretData: &envoycore.DataSource{
+			Specifier: &envoycore.DataSource_Filename{
+				Filename: sslSecrets.GetCallCredentials().GetFileCredentialSource().GetTokenFileName(),
+			},
+		},
+		HeaderKey: sslSecrets.GetCallCredentials().GetFileCredentialSource().GetHeader(),
+	}
+	any, _ := MessageToAny(config)
 
 	gRPCConfig := &envoycore.GrpcService_GoogleGrpc{
 		TargetUri:  sslSecrets.TargetUri,
@@ -133,7 +173,6 @@ func buildSds(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig 
 			},
 		},
 	}
-
 	return &envoyauth.SdsSecretConfig{
 		Name: name,
 		SdsConfig: &envoycore.ConfigSource{
@@ -153,12 +192,12 @@ func buildSds(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig 
 	}
 }
 
-func (s *sslConfigTranslator) handleSds(sslSecrets *v1.SDSConfig, verifySan []string) (*envoyauth.CommonTlsContext, error) {
+func (s *sslConfigTranslator) handleSds(sslSecrets *v1.SDSConfig, matchSan []*envoymatcher.StringMatcher) (*envoyauth.CommonTlsContext, error) {
 	if sslSecrets.CertificatesSecretName == "" && sslSecrets.ValidationContextName == "" {
 		return nil, eris.Errorf("at least one of certificates_secret_name or validation_context_name must be provided")
 	}
-	if len(verifySan) != 0 && sslSecrets.ValidationContextName == "" {
-		return nil, eris.Errorf("must provide validation context name if verifying SAN")
+	if len(matchSan) != 0 && sslSecrets.ValidationContextName == "" {
+		return nil, MissingValidationContextError
 	}
 	tlsContext := &envoyauth.CommonTlsContext{
 		// default params
@@ -170,14 +209,14 @@ func (s *sslConfigTranslator) handleSds(sslSecrets *v1.SDSConfig, verifySan []st
 	}
 
 	if sslSecrets.ValidationContextName != "" {
-		if len(verifySan) == 0 {
+		if len(matchSan) == 0 {
 			tlsContext.ValidationContextType = &envoyauth.CommonTlsContext_ValidationContextSdsSecretConfig{
 				ValidationContextSdsSecretConfig: buildSds(sslSecrets.ValidationContextName, sslSecrets),
 			}
 		} else {
 			tlsContext.ValidationContextType = &envoyauth.CommonTlsContext_CombinedValidationContext{
 				CombinedValidationContext: &envoyauth.CommonTlsContext_CombinedCertificateValidationContext{
-					DefaultValidationContext:         &envoyauth.CertificateValidationContext{VerifySubjectAltName: verifySan},
+					DefaultValidationContext:         &envoyauth.CertificateValidationContext{MatchSubjectAltNames: matchSan},
 					ValidationContextSdsSecretConfig: buildSds(sslSecrets.ValidationContextName, sslSecrets),
 				},
 			}
@@ -205,7 +244,7 @@ func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.S
 	} else if sslSecrets := cs.GetSslFiles(); sslSecrets != nil {
 		certChain, privateKey, rootCa = sslSecrets.TlsCert, sslSecrets.TlsKey, sslSecrets.RootCa
 	} else if sslSecrets := cs.GetSds(); sslSecrets != nil {
-		return s.handleSds(sslSecrets, cs.GetVerifySubjectAltName())
+		return s.handleSds(sslSecrets, verifySanListToMatchSanList(cs.GetVerifySubjectAltName()))
 	} else {
 		if mustHaveCert {
 			return nil, NoCertificateFoundError
@@ -248,7 +287,7 @@ func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.S
 		return nil, eris.Errorf("both or none of cert chain and private key must be provided")
 	}
 
-	sanList := cs.GetVerifySubjectAltName()
+	sanList := verifySanListToMatchSanList(cs.GetVerifySubjectAltName())
 
 	if rootCaData != nil {
 		validationCtx := &envoyauth.CommonTlsContext_ValidationContext{
@@ -257,12 +296,12 @@ func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.S
 			},
 		}
 		if len(sanList) != 0 {
-			validationCtx.ValidationContext.VerifySubjectAltName = sanList
+			validationCtx.ValidationContext.MatchSubjectAltNames = sanList
 		}
 		tlsContext.ValidationContextType = validationCtx
 
 	} else if len(sanList) != 0 {
-		return nil, eris.Errorf("a root_ca must be provided if verify_subject_alt_name is not empty")
+		return nil, RootCaMustBeProvidedError
 
 	}
 
@@ -332,4 +371,15 @@ func convertVersion(v v1.SslParameters_ProtocolVersion) (envoyauth.TlsParameters
 	}
 
 	return envoyauth.TlsParameters_TLS_AUTO, TlsVersionNotFoundError(v)
+}
+
+func verifySanListToMatchSanList(sanList []string) []*envoymatcher.StringMatcher {
+	var matchSanList []*envoymatcher.StringMatcher
+	for _, san := range sanList {
+		matchSan := &envoymatcher.StringMatcher{
+			MatchPattern: &envoymatcher.StringMatcher_Exact{Exact: san},
+		}
+		matchSanList = append(matchSanList, matchSan)
+	}
+	return matchSanList
 }

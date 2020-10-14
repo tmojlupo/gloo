@@ -3,25 +3,41 @@ package tcp_test
 import (
 	"time"
 
+	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	envoytcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
+	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
+	"github.com/gogo/protobuf/types"
+	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/solo-io/gloo/pkg/utils/gogoutils"
+	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/tcp"
-	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-
+	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	. "github.com/solo-io/gloo/projects/gloo/pkg/plugins/tcp"
 	translatorutil "github.com/solo-io/gloo/projects/gloo/pkg/translator"
-
-	envoytcp "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/tcp_proxy/v2"
-	"github.com/gogo/protobuf/types"
-	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
-	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
+	mock_utils "github.com/solo-io/gloo/projects/gloo/pkg/utils/mocks"
+	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 )
 
 var _ = Describe("Plugin", func() {
 	var (
 		in *v1.Listener
+
+		ctrl          *gomock.Controller
+		sslTranslator *mock_utils.MockSslConfigTranslator
 	)
+
+	BeforeEach(func() {
+		ctrl = gomock.NewController(GinkgoT())
+
+		sslTranslator = mock_utils.NewMockSslConfigTranslator(ctrl)
+	})
+
+	AfterEach(func() {
+		ctrl.Finish()
+	})
 
 	Context("listener filter chain plugin", func() {
 		var (
@@ -102,8 +118,8 @@ var _ = Describe("Plugin", func() {
 		It("can copy over tcp plugin settings", func() {
 			tcpListener.TcpHosts = append(tcpListener.TcpHosts, &v1.TcpHost{
 				Name: "one",
-				Destination: &v1.RouteAction{
-					Destination: &v1.RouteAction_Single{
+				Destination: &v1.TcpHost_TcpAction{
+					Destination: &v1.TcpHost_TcpAction_Single{
 						Single: &v1.Destination{
 							DestinationType: &v1.Destination_Upstream{
 								Upstream: &core.ResourceRef{
@@ -114,16 +130,15 @@ var _ = Describe("Plugin", func() {
 						},
 					},
 				},
-				SslConfig: nil,
 			})
 
-			p := NewPlugin()
+			p := NewPlugin(sslTranslator)
 			filterChains, err := p.ProcessListenerFilterChain(plugins.Params{Snapshot: snap}, in)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(filterChains).To(HaveLen(1))
 
 			var cfg envoytcp.TcpProxy
-			err = translatorutil.ParseConfig(filterChains[0].Filters[0], &cfg)
+			err = translatorutil.ParseTypedConfig(filterChains[0].Filters[0], &cfg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(cfg.IdleTimeout).To(Equal(gogoutils.DurationStdToProto(tcps.IdleTimeout)))
@@ -133,8 +148,8 @@ var _ = Describe("Plugin", func() {
 		It("can transform a single destination", func() {
 			tcpListener.TcpHosts = append(tcpListener.TcpHosts, &v1.TcpHost{
 				Name: "one",
-				Destination: &v1.RouteAction{
-					Destination: &v1.RouteAction_Single{
+				Destination: &v1.TcpHost_TcpAction{
+					Destination: &v1.TcpHost_TcpAction_Single{
 						Single: &v1.Destination{
 							DestinationType: &v1.Destination_Upstream{
 								Upstream: &core.ResourceRef{
@@ -145,15 +160,14 @@ var _ = Describe("Plugin", func() {
 						},
 					},
 				},
-				SslConfig: nil,
 			})
-			p := NewPlugin()
+			p := NewPlugin(sslTranslator)
 			filterChains, err := p.ProcessListenerFilterChain(plugins.Params{Snapshot: snap}, in)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(filterChains).To(HaveLen(1))
 
 			var cfg envoytcp.TcpProxy
-			err = translatorutil.ParseConfig(filterChains[0].Filters[0], &cfg)
+			err = translatorutil.ParseTypedConfig(filterChains[0].Filters[0], &cfg)
 			Expect(err).NotTo(HaveOccurred())
 			cluster := cfg.GetCluster()
 			Expect(cluster).To(Equal(translatorutil.UpstreamToClusterName(core.ResourceRef{Namespace: ns, Name: "one"})))
@@ -161,22 +175,21 @@ var _ = Describe("Plugin", func() {
 		It("can transform a multi destination", func() {
 			tcpListener.TcpHosts = append(tcpListener.TcpHosts, &v1.TcpHost{
 				Name: "one",
-				Destination: &v1.RouteAction{
-					Destination: &v1.RouteAction_Multi{
+				Destination: &v1.TcpHost_TcpAction{
+					Destination: &v1.TcpHost_TcpAction_Multi{
 						Multi: &v1.MultiDestination{
 							Destinations: wd,
 						},
 					},
 				},
-				SslConfig: nil,
 			})
-			p := NewPlugin()
+			p := NewPlugin(sslTranslator)
 			filterChains, err := p.ProcessListenerFilterChain(plugins.Params{Snapshot: snap}, in)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(filterChains).To(HaveLen(1))
 
 			var cfg envoytcp.TcpProxy
-			err = translatorutil.ParseConfig(filterChains[0].Filters[0], &cfg)
+			err = translatorutil.ParseTypedConfig(filterChains[0].Filters[0], &cfg)
 			Expect(err).NotTo(HaveOccurred())
 			clusters := cfg.GetWeightedClusters()
 			Expect(clusters.Clusters).To(HaveLen(2))
@@ -195,23 +208,22 @@ var _ = Describe("Plugin", func() {
 			})
 			tcpListener.TcpHosts = append(tcpListener.TcpHosts, &v1.TcpHost{
 				Name: "one",
-				Destination: &v1.RouteAction{
-					Destination: &v1.RouteAction_UpstreamGroup{
+				Destination: &v1.TcpHost_TcpAction{
+					Destination: &v1.TcpHost_TcpAction_UpstreamGroup{
 						UpstreamGroup: &core.ResourceRef{
 							Namespace: ns,
 							Name:      "one",
 						},
 					},
 				},
-				SslConfig: nil,
 			})
-			p := NewPlugin()
+			p := NewPlugin(sslTranslator)
 			filterChains, err := p.ProcessListenerFilterChain(plugins.Params{Snapshot: snap}, in)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(filterChains).To(HaveLen(1))
 
 			var cfg envoytcp.TcpProxy
-			err = translatorutil.ParseConfig(filterChains[0].Filters[0], &cfg)
+			err = translatorutil.ParseTypedConfig(filterChains[0].Filters[0], &cfg)
 			Expect(err).NotTo(HaveOccurred())
 			clusters := cfg.GetWeightedClusters()
 			Expect(clusters.Clusters).To(HaveLen(2))
@@ -220,6 +232,108 @@ var _ = Describe("Plugin", func() {
 			Expect(clusters.Clusters[1].Name).To(Equal(translatorutil.UpstreamToClusterName(core.ResourceRef{Namespace: ns, Name: "two"})))
 			Expect(clusters.Clusters[1].Weight).To(Equal(uint32(1)))
 		})
+
+		It("can add the forward sni cluster name filter", func() {
+			sslConfig := &v1.SslConfig{
+				SslSecrets: &v1.SslConfig_SecretRef{
+					SecretRef: &core.ResourceRef{
+						Name:      "name",
+						Namespace: "namespace",
+					},
+				},
+				SniDomains: []string{"hello.world"},
+			}
+			tcpListener.TcpHosts = append(tcpListener.TcpHosts, &v1.TcpHost{
+				Name: "one",
+				Destination: &v1.TcpHost_TcpAction{
+					Destination: &v1.TcpHost_TcpAction_ForwardSniClusterName{
+						ForwardSniClusterName: &types.Empty{},
+					},
+				},
+				SslConfig: sslConfig,
+			})
+
+			sslTranslator.EXPECT().
+				ResolveDownstreamSslConfig(snap.Secrets, sslConfig).
+				Return(&envoyauth.DownstreamTlsContext{}, nil)
+
+			p := NewPlugin(sslTranslator)
+			filterChains, err := p.ProcessListenerFilterChain(plugins.Params{Snapshot: snap}, in)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(filterChains).To(HaveLen(1))
+			Expect(filterChains[0].Filters).To(HaveLen(2))
+			Expect(filterChains[0].Filters[0].Name).To(Equal(SniFilter))
+			Expect(filterChains[0].Filters[0].GetConfig()).To(BeNil())
+			Expect(filterChains[0].Filters[0].GetTypedConfig()).To(BeNil())
+
+			var cfg envoytcp.TcpProxy
+			err = translatorutil.ParseTypedConfig(filterChains[0].Filters[1], &cfg)
+			Expect(err).NotTo(HaveOccurred())
+			cluster, ok := cfg.GetClusterSpecifier().(*envoytcp.TcpProxy_Cluster)
+			Expect(ok).To(BeTrue(), "must be a single cluster type")
+			Expect(cluster.Cluster).To(Equal(""))
+		})
+
 	})
 
+	Context("ListenerPlugin", func() {
+		It("will not prepend the TlsInspector when ServerName match present", func() {
+			snap := &v1.ApiSnapshot{}
+			out := &envoyapi.Listener{}
+			tcpListener := &v1.TcpListener{
+				TcpHosts: []*v1.TcpHost{
+					{
+						Name: "one",
+						Destination: &v1.TcpHost_TcpAction{
+							Destination: &v1.TcpHost_TcpAction_ForwardSniClusterName{
+								ForwardSniClusterName: &types.Empty{},
+							},
+						},
+						SslConfig: &v1.SslConfig{
+							SniDomains: []string{"hello.world"},
+						},
+					},
+				},
+			}
+			listener := &v1.Listener{
+				ListenerType: &v1.Listener_TcpListener{
+					TcpListener: tcpListener,
+				},
+			}
+
+			p := NewPlugin(sslTranslator)
+			err := p.ProcessListener(plugins.Params{Snapshot: snap}, listener, out)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out.ListenerFilters).To(HaveLen(0))
+		})
+
+		It("will prepend the TlsInspector when NO ServerName match present", func() {
+			snap := &v1.ApiSnapshot{}
+			out := &envoyapi.Listener{}
+			tcpListener := &v1.TcpListener{
+				TcpHosts: []*v1.TcpHost{
+					{
+						Name: "one",
+						Destination: &v1.TcpHost_TcpAction{
+							Destination: &v1.TcpHost_TcpAction_ForwardSniClusterName{
+								ForwardSniClusterName: &types.Empty{},
+							},
+						},
+					},
+				},
+			}
+			listener := &v1.Listener{
+				ListenerType: &v1.Listener_TcpListener{
+					TcpListener: tcpListener,
+				},
+			}
+
+			p := NewPlugin(sslTranslator)
+			err := p.ProcessListener(plugins.Params{Snapshot: snap}, listener, out)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(out.ListenerFilters).To(HaveLen(1))
+			Expect(out.ListenerFilters[0].GetName()).To(Equal(wellknown.TlsInspector))
+			Expect(out.ListenerFilters[0].GetTypedConfig()).To(BeNil())
+		})
+	})
 })

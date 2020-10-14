@@ -4,7 +4,7 @@
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-    name: gloo-role-ingress
+    name: gloo-role-ingress{{ include "gloo.rbacNameSuffix" . }}
     labels:
         app: gloo
         gloo: rbac
@@ -21,8 +21,11 @@ rules:
 - apiGroups: ["gloo.solo.io", "enterprise.gloo.solo.io"]
   resources: ["settings", "upstreams","upstreamgroups", "proxies","virtualservices", "routetables", "authconfigs"]
   verbs: ["*"]
+- apiGroups: ["ratelimit.solo.io"]
+  resources: ["ratelimitconfigs","ratelimitconfigs/status"]
+  verbs: ["get", "list", "watch", "update"]
 - apiGroups: ["extensions", ""]
-  resources: ["ingresses"]
+  resources: ["ingresses", "ingresses/status"]
   verbs: ["*"]
 {{- end -}}
 

@@ -9,6 +9,7 @@ settings:
   # if this is set to false, default settings will be created by pods upon boot
   create: true
   linkerd: false
+  aws: {}
   invalidConfigPolicy:
     replaceInvalidRoutes: false
     invalidRouteResponseCode: 404
@@ -18,14 +19,17 @@ settings:
       enabled: false
       version: "0.10.0"
       proxy:
+        loopBackAddress: 127.0.0.1
         image:
           repository: gloo-envoy-wrapper
-        httpPort: 80
-        httpsPort: 443
+        httpPort: 8080
+        httpsPort: 8443
         replicas: 1
         service:
           type: LoadBalancer
           extraAnnotations: {}
+          httpPort: 80
+          httpsPort: 443
   # Namespaces that Gloo should watch. This includes watches set for pods, services, as well as CRD configuration objects.
   watchNamespaces: []
   # Gloo allows you to directly reference a Kubernetes service as a routing destination. To enable this feature,
@@ -42,17 +46,21 @@ gloo:
     image:
       repository: gloo
     xdsPort: 9977
+    restXdsPort: 9976
     validationPort: 9988
     replicas: 1
     runAsUser: 10101
+    serviceAccount: {}
 discovery:
   enabled: true
   fdsMode: WHITELIST
+  serviceAccount: {}
   deployment:
     image:
       repository: discovery
     replicas: 1
     runAsUser: 10101
+    fsGroup: 10101
 gateway:
   enabled: true
   readGatewaysFromAllNamespaces: false
@@ -61,6 +69,7 @@ gateway:
     failurePolicy: "Ignore"
     secretName: gateway-validation-certs
     alwaysAcceptResources: true
+    allowWarnings: true
     webhook:
       enabled: true
   deployment:
@@ -75,10 +84,16 @@ gateway:
     restartPolicy: OnFailure
     setTtlAfterFinished: true
     ttlSecondsAfterFinished: 60
+    runAsUser: 10101
   proxyServiceAccount: {}
+  serviceAccount: {}
 gatewayProxies:
   gatewayProxy:
     gatewaySettings: {}
+    failover:
+      enabled: false
+      port: 15443
+      secretName: failover-downstream
     kind:
       deployment:
         replicas: 1
@@ -89,7 +104,15 @@ gatewayProxies:
       httpPort: 8080
       httpsPort: 8443
       runAsUser: 10101
+      fsGroup: 10101
+      runUnprivileged: true
+      disableNetBind: true
+      gracefulShutdown:
+        enabled: false
+        sleepTimeSeconds: 25
+      customReadinessProbe: {}
     service:
+      customPorts: []
       type: LoadBalancer
       # clusterIP: None
       httpPort: 80
@@ -100,12 +123,15 @@ gatewayProxies:
     tracing:
     configMap:
       data:
+    loopBackAddress: 127.0.0.1
+    globalDownstreamMaxConnections: 250000
 accessLogger:
   enabled: false
   port: 8083
   serviceName: AccessLog
   image:
     repository: access-logger
+  runAsUser: 10101
   replicas: 1
   stats:
     enabled: true
@@ -115,16 +141,22 @@ ingress:
     image:
       repository: ingress
     replicas: 1
+    runAsUser: 10101
 ingressProxy:
+  # Set to a unique value to allow using several ingress proxy instances in the same cluster.
+  label: ingress-proxy
+  loopBackAddress: 127.0.0.1
   deployment:
     image:
       repository: gloo-envoy-wrapper
-    httpPort: 80
-    httpsPort: 443
+    httpPort: 8080
+    httpsPort: 8443
     replicas: 1
   service:
     type: LoadBalancer
     extraAnnotations: {}
+    httpPort: 80
+    httpsPort: 443
   configMap:
     data:
   tracing:
@@ -132,6 +164,7 @@ global:
   image:
     registry: quay.io/solo-io
     pullPolicy: IfNotPresent
+    extended: false
   glooRbac:
     create: true
   glooStats:
@@ -144,3 +177,5 @@ global:
     envoy:
       image:
         repository: gloo-envoy-wrapper
+  istioSDS:
+    enabled: false

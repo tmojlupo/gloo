@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	envoyauth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
+	envoycore_sk "github.com/solo-io/solo-kit/pkg/api/external/envoy/api/v2/core"
+
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	envoy_api_v2_endpoint "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
 	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
 	envoyrouteapi "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	envoytcp "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/tcp_proxy/v2"
+	envoytcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
+	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	envoy_type "github.com/envoyproxy/go-control-plane/envoy/type"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/mock/gomock"
@@ -21,8 +24,8 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
 	extauth "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
+	consul2 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/consul"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/headers"
-	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/pluginutils"
 	mock_consul "github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul/mocks"
 	validationutils "github.com/solo-io/gloo/projects/gloo/pkg/utils/validation"
 
@@ -32,7 +35,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams/kubernetes"
-	sslutils "github.com/solo-io/gloo/projects/gloo/pkg/utils"
+	glooutils "github.com/solo-io/gloo/projects/gloo/pkg/utils"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/memory"
 	skkube "github.com/solo-io/solo-kit/pkg/api/v1/resources/common/kubernetes"
@@ -48,7 +51,7 @@ import (
 	. "github.com/solo-io/gloo/projects/gloo/pkg/translator"
 
 	envoycluster "github.com/envoyproxy/go-control-plane/envoy/api/v2/cluster"
-	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
+	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	"github.com/gogo/protobuf/types"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	v1plugins "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options"
@@ -167,7 +170,7 @@ var _ = Describe("Translator", func() {
 		getPlugins := func() []plugins.Plugin {
 			return registeredPlugins
 		}
-		translator = NewTranslator(sslutils.NewSslConfigTranslator(), settings, getPlugins)
+		translator = NewTranslator(glooutils.NewSslConfigTranslator(), settings, getPlugins)
 		httpListener := &v1.Listener{
 			Name:        "http-listener",
 			BindAddress: "127.0.0.1",
@@ -190,8 +193,8 @@ var _ = Describe("Translator", func() {
 				TcpListener: &v1.TcpListener{
 					TcpHosts: []*v1.TcpHost{
 						{
-							Destination: &v1.RouteAction{
-								Destination: &v1.RouteAction_Single{
+							Destination: &v1.TcpHost_TcpAction{
+								Destination: &v1.TcpHost_TcpAction_Single{
 									Single: &v1.Destination{
 										DestinationType: &v1.Destination_Upstream{
 											Upstream: &core.ResourceRef{
@@ -245,7 +248,7 @@ var _ = Describe("Translator", func() {
 
 		hcmFilter := listener.FilterChains[0].Filters[0]
 		hcmCfg = &envoyhttp.HttpConnectionManager{}
-		err = ParseConfig(hcmFilter, hcmCfg)
+		err = ParseTypedConfig(hcmFilter, hcmCfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		routes := snap.GetResources(xds.RouteType)
@@ -637,6 +640,85 @@ var _ = Describe("Translator", func() {
 			Expect(report).To(Equal(validationutils.MakeReport(proxy)))
 		})
 
+		It("can translate health check with secret header", func() {
+			params.Snapshot.Secrets = v1.SecretList{
+				{
+					Kind: &v1.Secret_Header{
+						Header: &v1.HeaderSecret{
+							Headers: map[string]string{
+								"Authorization": "basic dXNlcjpwYXNzd29yZA==",
+							},
+						},
+					},
+					Metadata: core.Metadata{
+						Name:      "foo",
+						Namespace: "bar",
+					},
+				},
+			}
+
+			expectedResult := []*envoycore.HealthCheck{
+				{
+					Timeout:            gogoutils.DurationStdToProto(&DefaultHealthCheckTimeout),
+					Interval:           gogoutils.DurationStdToProto(&DefaultHealthCheckInterval),
+					HealthyThreshold:   gogoutils.UInt32GogoToProto(DefaultThreshold),
+					UnhealthyThreshold: gogoutils.UInt32GogoToProto(DefaultThreshold),
+					HealthChecker: &envoycore.HealthCheck_HttpHealthCheck_{
+						HttpHealthCheck: &envoycore.HealthCheck_HttpHealthCheck{
+							Host:                   "host",
+							Path:                   "path",
+							ServiceName:            "svc",
+							RequestHeadersToAdd:    []*envoycore.HeaderValueOption{},
+							RequestHeadersToRemove: []string{},
+							UseHttp2:               true,
+							ExpectedStatuses:       []*envoy_type.Int64Range{},
+						},
+					},
+				},
+			}
+
+			var err error
+			upstream.HealthChecks, err = gogoutils.ToGlooHealthCheckList(expectedResult)
+			Expect(err).NotTo(HaveOccurred())
+
+			expectedResult[0].GetHttpHealthCheck().RequestHeadersToAdd = []*envoycore.HeaderValueOption{
+				{
+					Header: &envoycore.HeaderValue{
+						Key:   "Authorization",
+						Value: "basic dXNlcjpwYXNzd29yZA==",
+					},
+					Append: &wrappers.BoolValue{
+						Value: true,
+					},
+				},
+			}
+
+			upstream.GetHealthChecks()[0].GetHttpHealthCheck().RequestHeadersToAdd = []*envoycore_sk.HeaderValueOption{
+				{
+					HeaderOption: &envoycore_sk.HeaderValueOption_HeaderSecretRef{
+						HeaderSecretRef: &core.ResourceRef{
+							Name:      "foo",
+							Namespace: "bar",
+						},
+					},
+					Append: &types.BoolValue{
+						Value: true,
+					},
+				},
+			}
+
+			snap, errs, report, err := translator.Translate(params, proxy)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(errs.Validate()).NotTo(HaveOccurred())
+			Expect(snap).NotTo(BeNil())
+			Expect(report).To(Equal(validationutils.MakeReport(proxy)))
+
+			clusters := snap.GetResources(xds.ClusterType)
+			clusterResource := clusters.Items[UpstreamToClusterName(upstream.Metadata.Ref())]
+			cluster = clusterResource.ResourceProto().(*envoyapi.Cluster)
+			Expect(cluster).NotTo(BeNil())
+			Expect(cluster.HealthChecks).To(BeEquivalentTo(expectedResult))
+		})
 	})
 
 	Context("circuit breakers", func() {
@@ -799,7 +881,9 @@ var _ = Describe("Translator", func() {
 
 			// get http filters
 			hcmFilter := listener.GetFilterChains()[0].GetFilters()[0]
-			originalHttpFilters := hcmFilter.GetConfigType().(*envoylistener.Filter_Config).Config.Fields["http_filters"].GetListValue().Values
+			typedConfig, err := glooutils.AnyToMessage(hcmFilter.GetConfigType().(*envoylistener.Filter_TypedConfig).TypedConfig)
+			Expect(err).NotTo(HaveOccurred())
+			originalHttpFilters := typedConfig.(*envoyhttp.HttpConnectionManager).HttpFilters
 
 			By("add the upstreams and compare the new version and http filters")
 
@@ -816,7 +900,9 @@ var _ = Describe("Translator", func() {
 
 			// get and compare http filters
 			hcmFilter = listener.GetFilterChains()[0].GetFilters()[0]
-			upstreamsHttpFilters := hcmFilter.GetConfigType().(*envoylistener.Filter_Config).Config.Fields["http_filters"].GetListValue().Values
+			typedConfig, err = glooutils.AnyToMessage(hcmFilter.GetConfigType().(*envoylistener.Filter_TypedConfig).TypedConfig)
+			Expect(err).NotTo(HaveOccurred())
+			upstreamsHttpFilters := typedConfig.(*envoyhttp.HttpConnectionManager).HttpFilters
 			Expect(upstreamsHttpFilters).ToNot(Equal(originalHttpFilters))
 
 			// reset modified global variables
@@ -837,7 +923,9 @@ var _ = Describe("Translator", func() {
 
 			// get and compare http filters
 			hcmFilter = listener.GetFilterChains()[0].GetFilters()[0]
-			flipOrderHttpFilters := hcmFilter.GetConfigType().(*envoylistener.Filter_Config).Config.Fields["http_filters"].GetListValue().Values
+			typedConfig, err = glooutils.AnyToMessage(hcmFilter.GetConfigType().(*envoylistener.Filter_TypedConfig).TypedConfig)
+			Expect(err).NotTo(HaveOccurred())
+			flipOrderHttpFilters := typedConfig.(*envoyhttp.HttpConnectionManager).HttpFilters
 			Expect(flipOrderHttpFilters).To(Equal(upstreamsHttpFilters))
 		})
 
@@ -1340,7 +1428,12 @@ var _ = Describe("Translator", func() {
 				Tags:        []string{dev, prod},
 			}
 			// These are the "fake" upstreams that represent the above service in the snapshot
-			fakeUsList = v1.UpstreamList{consul.ToUpstream(svc)}
+			initialUsList := consul.CreateUpstreamsFromService(svc, nil)
+			if len(initialUsList) == 1 {
+				fakeUsList = v1.UpstreamList{consul.CreateUpstreamsFromService(svc, nil)[0]}
+			} else {
+				fakeUsList = v1.UpstreamList{}
+			}
 			params.Snapshot.Upstreams = append(params.Snapshot.Upstreams, fakeUsList...)
 
 			// We need to manually add some fake endpoints for the above Consul service
@@ -1494,6 +1587,76 @@ var _ = Describe("Translator", func() {
 
 	})
 
+	Context("EndpointPlugin", func() {
+		var (
+			endpointPlugin *endpointPluginMock
+			upstreamList   v1.UpstreamList
+		)
+		BeforeEach(func() {
+			endpointPlugin = &endpointPluginMock{}
+			registeredPlugins = append(registeredPlugins, endpointPlugin)
+			upstreamList = params.Snapshot.Upstreams.Clone()
+		})
+
+		AfterEach(func() {
+			params.Snapshot.Upstreams = upstreamList
+		})
+
+		It("should call the endpoint plugin", func() {
+			additionalEndpoint := &envoy_api_v2_endpoint.LocalityLbEndpoints{
+				Locality: &envoycore.Locality{
+					Region: "region",
+					Zone:   "a",
+				},
+				Priority: 10,
+			}
+
+			endpointPlugin.ProcessEndpointFunc = func(params plugins.Params, in *v1.Upstream, out *envoyapi.ClusterLoadAssignment) error {
+				Expect(out.GetEndpoints()).To(HaveLen(1))
+				Expect(out.GetClusterName()).To(Equal(UpstreamToClusterName(upstream.Metadata.Ref())))
+				Expect(out.GetEndpoints()[0].GetLbEndpoints()).To(HaveLen(1))
+
+				out.Endpoints = append(out.Endpoints, additionalEndpoint)
+				return nil
+			}
+
+			translate()
+			endpointResource := endpoints.Items["test_gloo-system"]
+			endpoint := endpointResource.ResourceProto().(*envoyapi.ClusterLoadAssignment)
+			Expect(endpoint).NotTo(BeNil())
+			Expect(endpoint.Endpoints).To(HaveLen(2))
+			Expect(endpoint.Endpoints[1]).To(Equal(additionalEndpoint))
+		})
+
+		It("should call the endpoint plugin with an empty endpoint", func() {
+			// Create an empty consul upstream just to get EDS
+			emptyUpstream := &v1.Upstream{
+				Metadata: core.Metadata{
+					Namespace: "empty_namespace",
+					Name:      "empty_name",
+				},
+				UpstreamType: &v1.Upstream_Consul{
+					Consul: &consul2.UpstreamSpec{},
+				},
+			}
+			params.Snapshot.Upstreams = append(params.Snapshot.Upstreams, emptyUpstream)
+
+			foundEmptyUpstream := false
+
+			endpointPlugin.ProcessEndpointFunc = func(params plugins.Params, in *v1.Upstream, out *envoyapi.ClusterLoadAssignment) error {
+				if in.Metadata.Name == emptyUpstream.Metadata.Name &&
+					in.Metadata.Namespace == emptyUpstream.Metadata.Namespace {
+					foundEmptyUpstream = true
+				}
+				return nil
+			}
+
+			translate()
+			Expect(foundEmptyUpstream).To(BeTrue())
+		})
+
+	})
+
 	Context("Route option on direct response actions", func() {
 
 		BeforeEach(func() {
@@ -1565,10 +1728,10 @@ var _ = Describe("Translator", func() {
 			fc := listener.GetFilterChains()[0]
 			Expect(fc.Filters).To(HaveLen(1))
 			tcpFilter := fc.Filters[0]
-			cfg := tcpFilter.GetConfig()
+			cfg := tcpFilter.GetTypedConfig()
 			Expect(cfg).NotTo(BeNil())
 			var typedCfg envoytcp.TcpProxy
-			Expect(ParseConfig(tcpFilter, &typedCfg)).NotTo(HaveOccurred())
+			Expect(ParseTypedConfig(tcpFilter, &typedCfg)).NotTo(HaveOccurred())
 			clusterSpec := typedCfg.GetCluster()
 			Expect(clusterSpec).To(Equal("test_gloo-system"))
 		})
@@ -1612,7 +1775,7 @@ var _ = Describe("Translator", func() {
 			if fc.TransportSocket == nil {
 				return nil
 			}
-			return pluginutils.MustAnyToMessage(fc.TransportSocket.GetTypedConfig()).(*envoyauth.DownstreamTlsContext)
+			return glooutils.MustAnyToMessage(fc.TransportSocket.GetTypedConfig()).(*envoyauth.DownstreamTlsContext)
 		}
 		Context("files", func() {
 
@@ -1641,6 +1804,9 @@ var _ = Describe("Translator", func() {
 								TlsKey:  "key1",
 							},
 						},
+						SniDomains: []string{
+							"sni1",
+						},
 					},
 					{
 						SslSecrets: &v1.SslConfig_SslFiles{
@@ -1649,11 +1815,15 @@ var _ = Describe("Translator", func() {
 								TlsKey:  "key2",
 							},
 						},
+						SniDomains: []string{
+							"sni2",
+						},
 					},
 				})
 
 				Expect(listener.GetFilterChains()).To(HaveLen(2))
 			})
+
 			It("should merge 2 ssl config if they are the same", func() {
 				prep([]*v1.SslConfig{
 					{
@@ -1677,6 +1847,26 @@ var _ = Describe("Translator", func() {
 				Expect(listener.GetFilterChains()).To(HaveLen(1))
 				fc := listener.GetFilterChains()[0]
 				Expect(tlsContext(fc)).NotTo(BeNil())
+			})
+
+			It("should reject configs if different FilterChains have identical FilterChainMatches", func() {
+				filterChains := []*envoylistener.FilterChain{
+					{
+						FilterChainMatch: &envoylistener.FilterChainMatch{
+							DestinationPort: &wrappers.UInt32Value{Value: 1},
+						},
+					},
+					{
+						FilterChainMatch: &envoylistener.FilterChainMatch{
+							DestinationPort: &wrappers.UInt32Value{Value: 1},
+						},
+					},
+				}
+				report := &validation.ListenerReport{}
+				CheckForDuplicateFilterChainMatches(filterChains, report)
+				Expect(report.Errors).NotTo(BeNil())
+				Expect(report.Errors).To(HaveLen(1))
+				Expect(report.Errors[0].Type).To(Equal(validation.ListenerReport_Error_SSLConfigError))
 			})
 			It("should combine sni matches", func() {
 				prep([]*v1.SslConfig{
@@ -1918,4 +2108,16 @@ func (p *routePluginMock) Init(params plugins.InitParams) error {
 
 func (p *routePluginMock) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoyrouteapi.Route) error {
 	return p.ProcessRouteFunc(params, in, out)
+}
+
+type endpointPluginMock struct {
+	ProcessEndpointFunc func(params plugins.Params, in *v1.Upstream, out *envoyapi.ClusterLoadAssignment) error
+}
+
+func (e *endpointPluginMock) ProcessEndpoints(params plugins.Params, in *v1.Upstream, out *envoyapi.ClusterLoadAssignment) error {
+	return e.ProcessEndpointFunc(params, in, out)
+}
+
+func (e *endpointPluginMock) Init(params plugins.InitParams) error {
+	return nil
 }

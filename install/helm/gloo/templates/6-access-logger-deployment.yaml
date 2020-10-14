@@ -24,6 +24,11 @@ spec:
       labels:
         app: gloo
         gloo: gateway-proxy-access-logger
+        {{- if .Values.accessLogger.extraAccessLoggerLabels }}
+        {{- range $key, $value := .Values.accessLogger.extraAccessLoggerLabels }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
       {{- if $statsConfig.enabled }}
       annotations:
         prometheus.io/path: /metrics
@@ -32,6 +37,11 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: gateway-proxy
+      securityContext:
+        runAsNonRoot: true
+        {{- if not .Values.accessLogger.floatingUserId }}
+        runAsUser: {{ printf "%.0f" (float64 .Values.accessLogger.runAsUser) -}}
+        {{- end }}
       containers:
         - image: {{ template "gloo.image" $image }}
           imagePullPolicy: {{ $image.pullPolicy }}

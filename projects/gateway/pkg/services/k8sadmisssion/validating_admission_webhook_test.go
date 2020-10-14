@@ -5,13 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/ghodss/yaml"
+
 	"net/http"
 	"net/http/httptest"
 
+	"github.com/rotisserie/eris"
 	"github.com/solo-io/gloo/projects/gateway/pkg/validation"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	. "github.com/onsi/ginkgo"
-	"github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
 	v1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gateway/pkg/defaults"
@@ -41,29 +47,37 @@ var _ = Describe("ValidatingAdmissionWebhook", func() {
 
 	gateway := defaults.DefaultGateway("namespace")
 	vs := defaults.DefaultVirtualService("namespace", "vs")
+
+	unstructuredList := unstructured.UnstructuredList{
+		Object: map[string]interface{}{
+			"kind":    "List",
+			"version": "v1",
+		},
+	}
+
 	routeTable := &v1.RouteTable{Metadata: core.Metadata{Namespace: "namespace", Name: "rt"}}
 
 	errMsg := "didn't say the magic word"
 
-	table.DescribeTable("accepts valid admission requests, rejects bad ones", func(valid bool, resourceCrd crd.Crd, resource resources.InputResource) {
-		req, err := makeReviewRequest(srv.URL, resourceCrd, v1beta1.Create, resource)
+	DescribeTable("accepts valid admission requests, rejects bad ones", func(valid bool, crd crd.Crd, gvk schema.GroupVersionKind, resource interface{}) {
+		// not critical to these tests, but this isn't ever supposed to be null or empty.
+		wh.webhookNamespace = routeTable.Metadata.Namespace
 
 		if !valid {
-			switch resource.(type) {
-			case *v1.Gateway:
-				mv.fValidateGateway = func(ctx context.Context, gw *v1.Gateway) (validation.ProxyReports, error) {
-					return nil, fmt.Errorf(errMsg)
-				}
-			case *v1.VirtualService:
-				mv.fValidateVirtualService = func(ctx context.Context, vs *v1.VirtualService) (validation.ProxyReports, error) {
-					return nil, fmt.Errorf(errMsg)
-				}
-			case *v1.RouteTable:
-				mv.fValidateRouteTable = func(ctx context.Context, rt *v1.RouteTable) (validation.ProxyReports, error) {
-					return nil, fmt.Errorf(errMsg)
-				}
+			mv.fValidateList = func(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, error) {
+				return proxyReports(), fmt.Errorf(errMsg)
+			}
+			mv.fValidateGateway = func(ctx context.Context, gw *v1.Gateway, dryRun bool) (validation.ProxyReports, error) {
+				return proxyReports(), fmt.Errorf(errMsg)
+			}
+			mv.fValidateVirtualService = func(ctx context.Context, vs *v1.VirtualService, dryRun bool) (validation.ProxyReports, error) {
+				return proxyReports(), fmt.Errorf(errMsg)
+			}
+			mv.fValidateRouteTable = func(ctx context.Context, rt *v1.RouteTable, dryRun bool) (validation.ProxyReports, error) {
+				return proxyReports(), fmt.Errorf(errMsg)
 			}
 		}
+		req, err := makeReviewRequest(srv.URL, crd, gvk, v1beta1.Create, resource)
 
 		res, err := srv.Client().Do(req)
 		Expect(err).NotTo(HaveOccurred())
@@ -74,25 +88,63 @@ var _ = Describe("ValidatingAdmissionWebhook", func() {
 
 		if valid {
 			Expect(review.Response.Allowed).To(BeTrue())
+			Expect(review.Proxies).To(BeEmpty())
 		} else {
 			Expect(review.Response.Allowed).To(BeFalse())
 			Expect(review.Response.Result).NotTo(BeNil())
 			Expect(review.Response.Result.Message).To(ContainSubstring(errMsg))
+			Expect(review.Proxies).To(BeEmpty())
 		}
 	},
-		table.Entry("valid gateway", true, v1.GatewayCrd, gateway),
-		table.Entry("invalid gateway", false, v1.GatewayCrd, gateway),
-		table.Entry("valid virtual service", true, v1.VirtualServiceCrd, vs),
-		table.Entry("invalid virtual service", false, v1.VirtualServiceCrd, vs),
-		table.Entry("valid route table", true, v1.RouteTableCrd, routeTable),
-		table.Entry("invalid route table", false, v1.RouteTableCrd, routeTable),
+		Entry("valid gateway", true, v1.GatewayCrd, v1.GatewayCrd.GroupVersionKind(), gateway),
+		Entry("invalid gateway", false, v1.GatewayCrd, v1.GatewayCrd.GroupVersionKind(), gateway),
+		Entry("valid virtual service", true, v1.VirtualServiceCrd, v1.VirtualServiceCrd.GroupVersionKind(), vs),
+		Entry("invalid virtual service", false, v1.VirtualServiceCrd, v1.VirtualServiceCrd.GroupVersionKind(), vs),
+		Entry("valid route table", true, v1.RouteTableCrd, v1.RouteTableCrd.GroupVersionKind(), routeTable),
+		Entry("invalid route table", false, v1.RouteTableCrd, v1.RouteTableCrd.GroupVersionKind(), routeTable),
+		Entry("valid unstructured list", true, nil, ListGVK, unstructuredList),
+		Entry("invalid unstructured list", false, nil, ListGVK, unstructuredList),
 	)
 
 	Context("invalid yaml", func() {
-		It("rejects the resource even when alwaysAccept=true", func() {
-			wh.alwaysAccept = true
 
-			req, err := makeReviewRequestRaw(srv.URL, v1.RouteTableCrd, v1beta1.Create, routeTable.Metadata.Name, routeTable.Metadata.Namespace, []byte(`{"metadata": [1, 2, 3]}`))
+		invalidYamlTests := func(useYamlEncoding bool) {
+			It("rejects the resource even when alwaysAccept=true", func() {
+				wh.alwaysAccept = true
+				wh.webhookNamespace = routeTable.Metadata.Namespace
+
+				req, err := makeReviewRequestRaw(srv.URL, v1.RouteTableCrd.GroupVersionKind(), v1beta1.Create, routeTable.Metadata.Name, routeTable.Metadata.Namespace, []byte(`{"metadata": [1, 2, 3]}`), useYamlEncoding, false)
+				Expect(err).NotTo(HaveOccurred())
+
+				res, err := srv.Client().Do(req)
+				Expect(err).NotTo(HaveOccurred())
+
+				review, err := parseReviewResponse(res)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(review.Response).NotTo(BeNil())
+
+				Expect(review.Response.Allowed).To(BeFalse())
+				Expect(review.Response.Result).NotTo(BeNil())
+				Expect(review.Response.Result.Message).To(ContainSubstring("could not unmarshal raw object: unmarshalling from raw json: json: cannot unmarshal array into Go struct field Resource.metadata of type v1.ObjectMeta"))
+
+			})
+		}
+
+		Context("json encoded request to validation server", func() {
+			invalidYamlTests(false)
+		})
+		Context("yaml encoded request to validation server", func() {
+			invalidYamlTests(true)
+		})
+	})
+
+	Context("returns proxies", func() {
+		It("returns proxy if requested", func() {
+			mv.fValidateGateway = func(ctx context.Context, gw *v1.Gateway, dryRun bool) (validation.ProxyReports, error) {
+				return proxyReports(), fmt.Errorf(errMsg)
+			}
+
+			req, err := makeReviewRequestWithProxies(srv.URL, v1.GatewayCrd, gateway.GroupVersionKind(), v1beta1.Create, gateway, true)
 			Expect(err).NotTo(HaveOccurred())
 
 			res, err := srv.Client().Do(req)
@@ -103,45 +155,125 @@ var _ = Describe("ValidatingAdmissionWebhook", func() {
 			Expect(review.Response).NotTo(BeNil())
 
 			Expect(review.Response.Allowed).To(BeFalse())
-			Expect(review.Response.Result).NotTo(BeNil())
-			Expect(review.Response.Result.Message).To(ContainSubstring("could not unmarshal raw object: unmarshalling from raw json: json: cannot unmarshal array into Go struct field Resource.metadata of type v1.ObjectMeta"))
+			Expect(review.Response.Result).ToNot(BeNil())
+			Expect(review.Proxies).To(HaveLen(1))
+			Expect(review.Proxies[0]).To(ContainSubstring("listener-::-8080"))
+		})
+	})
 
+	Context("namespace scoping", func() {
+		It("does not process the resource if it's not whitelisted by watchNamespaces", func() {
+			wh.alwaysAccept = false
+			wh.watchNamespaces = []string{routeTable.Metadata.Namespace}
+			wh.webhookNamespace = routeTable.Metadata.Namespace
+
+			req, err := makeReviewRequestRawJsonEncoded(srv.URL, v1.RouteTableCrd.GroupVersionKind(), v1beta1.Create, routeTable.Metadata.Name, routeTable.Metadata.Namespace+"other", []byte(`{"metadata": [1, 2, 3]}`), false)
+			Expect(err).NotTo(HaveOccurred())
+
+			res, err := srv.Client().Do(req)
+			Expect(err).NotTo(HaveOccurred())
+
+			review, err := parseReviewResponse(res)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(review.Response).NotTo(BeNil())
+
+			Expect(review.Response.Allowed).To(BeTrue())
+			Expect(review.Response.Result).To(BeNil())
+		})
+
+		It("does not process other-namespace gateway resources if readGatewaysFromAllNamespaces is false, even if they're from whitelisted namespaces", func() {
+			otherNamespace := routeTable.Metadata.Namespace + "other"
+			wh.alwaysAccept = false
+			wh.watchNamespaces = []string{routeTable.Metadata.Namespace, otherNamespace}
+			wh.webhookNamespace = routeTable.Metadata.Namespace
+			wh.readGatewaysFromAllNamespaces = false
+
+			req, err := makeReviewRequestRawJsonEncoded(srv.URL, v1.GatewayCrd.GroupVersionKind(), v1beta1.Create, routeTable.Metadata.Name, otherNamespace, []byte(`{"metadata": [1, 2, 3]}`), false)
+			Expect(err).NotTo(HaveOccurred())
+
+			res, err := srv.Client().Do(req)
+			Expect(err).NotTo(HaveOccurred())
+
+			review, err := parseReviewResponse(res)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(review.Response).NotTo(BeNil())
+
+			Expect(review.Response.Allowed).To(BeTrue())
+			Expect(review.Response.Result).To(BeNil())
 		})
 	})
 })
 
-func makeReviewRequest(url string, crd crd.Crd, operation v1beta1.Operation, resource resources.InputResource) (*http.Request, error) {
-
-	resourceCrd := crd.KubeResource(resource)
-
-	raw, err := json.Marshal(resourceCrd)
-	if err != nil {
-		return nil, err
-	}
-
-	return makeReviewRequestRaw(url, crd, operation, resource.GetMetadata().Name, resource.GetMetadata().Namespace, raw)
+func makeReviewRequest(url string, crd crd.Crd, gvk schema.GroupVersionKind, operation v1beta1.Operation, resource interface{}) (*http.Request, error) {
+	return makeReviewRequestWithProxies(url, crd, gvk, operation, resource, false)
 }
 
-func makeReviewRequestRaw(url string, crd crd.Crd, operation v1beta1.Operation, name, namespace string, raw []byte) (*http.Request, error) {
+func makeReviewRequestWithProxies(url string, crd crd.Crd, gvk schema.GroupVersionKind, operation v1beta1.Operation, resource interface{}, returnProxies bool) (*http.Request, error) {
 
-	review := v1beta1.AdmissionReview{
-		Request: &v1beta1.AdmissionRequest{
-			UID: "1234",
-			Kind: metav1.GroupVersionKind{
-				Group:   crd.GroupVersionKind().Group,
-				Version: crd.GroupVersionKind().Version,
-				Kind:    crd.GroupVersionKind().Kind,
-			},
-			Name:      name,
-			Namespace: namespace,
-			Operation: operation,
-			Object: runtime.RawExtension{
-				Raw: raw,
-			},
-		},
+	switch typedResource := resource.(type) {
+	case unstructured.UnstructuredList:
+		jsonBytes, err := typedResource.MarshalJSON()
+		Expect(err).To(BeNil())
+		return makeReviewRequestRawJsonEncoded(url, gvk, operation, "name", "namespace", jsonBytes, returnProxies)
+	case resources.InputResource:
+		resourceCrd, err := crd.KubeResource(typedResource)
+		if err != nil {
+			return nil, err
+		}
+
+		raw, err := json.Marshal(resourceCrd)
+		if err != nil {
+			return nil, err
+		}
+		return makeReviewRequestRawJsonEncoded(url, gvk, operation, typedResource.GetMetadata().Name, typedResource.GetMetadata().Namespace, raw, returnProxies)
+	default:
+		Fail("unknown type")
 	}
 
-	body, err := json.Marshal(review)
+	return nil, eris.Errorf("unknown type")
+}
+
+func makeReviewRequestRawJsonEncoded(url string, gvk schema.GroupVersionKind, operation v1beta1.Operation, name, namespace string, raw []byte, returnProxies bool) (*http.Request, error) {
+	return makeReviewRequestRaw(url, gvk, operation, name, namespace, raw, false, returnProxies)
+}
+
+func makeReviewRequestRaw(url string, gvk schema.GroupVersionKind, operation v1beta1.Operation, name, namespace string, raw []byte, useYamlEncoding, returnProxies bool) (*http.Request, error) {
+
+	review := AdmissionReviewWithProxies{
+		AdmissionRequestWithProxies: AdmissionRequestWithProxies{
+			AdmissionReview: v1beta1.AdmissionReview{
+				Request: &v1beta1.AdmissionRequest{
+					UID: "1234",
+					Kind: metav1.GroupVersionKind{
+						Group:   gvk.Group,
+						Version: gvk.Version,
+						Kind:    gvk.Kind,
+					},
+					Name:      name,
+					Namespace: namespace,
+					Operation: operation,
+					Object: runtime.RawExtension{
+						Raw: raw,
+					},
+				},
+			},
+			ReturnProxies: returnProxies,
+		},
+		AdmissionResponseWithProxies: AdmissionResponseWithProxies{},
+	}
+
+	var (
+		contentType string
+		body        []byte
+		err         error
+	)
+	if useYamlEncoding {
+		contentType = ApplicationYaml
+		body, err = yaml.Marshal(review)
+	} else {
+		contentType = ApplicationJson
+		body, err = json.Marshal(review)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -151,13 +283,13 @@ func makeReviewRequestRaw(url string, crd crd.Crd, operation v1beta1.Operation, 
 		return nil, err
 	}
 
-	req.Header.Set("Content-type", "application/json")
+	req.Header.Set("Content-type", contentType)
 
 	return req, nil
 }
 
-func parseReviewResponse(resp *http.Response) (*v1beta1.AdmissionReview, error) {
-	var review v1beta1.AdmissionReview
+func parseReviewResponse(resp *http.Response) (*AdmissionReviewWithProxies, error) {
+	var review AdmissionReviewWithProxies
 	if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
 		return nil, err
 	}
@@ -166,11 +298,12 @@ func parseReviewResponse(resp *http.Response) (*v1beta1.AdmissionReview, error) 
 
 type mockValidator struct {
 	fSync                         func(context.Context, *v1.ApiSnapshot) error
-	fValidateGateway              func(ctx context.Context, gw *v1.Gateway) (validation.ProxyReports, error)
-	fValidateVirtualService       func(ctx context.Context, vs *v1.VirtualService) (validation.ProxyReports, error)
-	fValidateDeleteVirtualService func(ctx context.Context, vs core.ResourceRef) error
-	fValidateRouteTable           func(ctx context.Context, rt *v1.RouteTable) (validation.ProxyReports, error)
-	fValidateDeleteRouteTable     func(ctx context.Context, rt core.ResourceRef) error
+	fValidateList                 func(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, error)
+	fValidateGateway              func(ctx context.Context, gw *v1.Gateway, dryRun bool) (validation.ProxyReports, error)
+	fValidateVirtualService       func(ctx context.Context, vs *v1.VirtualService, dryRun bool) (validation.ProxyReports, error)
+	fValidateDeleteVirtualService func(ctx context.Context, vs core.ResourceRef, dryRun bool) error
+	fValidateRouteTable           func(ctx context.Context, rt *v1.RouteTable, dryRun bool) (validation.ProxyReports, error)
+	fValidateDeleteRouteTable     func(ctx context.Context, rt core.ResourceRef, dryRun bool) error
 }
 
 func (v *mockValidator) Sync(ctx context.Context, snap *v1.ApiSnapshot) error {
@@ -180,37 +313,57 @@ func (v *mockValidator) Sync(ctx context.Context, snap *v1.ApiSnapshot) error {
 	return v.fSync(ctx, snap)
 }
 
-func (v *mockValidator) ValidateGateway(ctx context.Context, gw *v1.Gateway) (validation.ProxyReports, error) {
+func (v *mockValidator) ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, error) {
+	if v.fValidateList == nil {
+		return proxyReports(), nil
+	}
+	return v.fValidateList(ctx, ul, dryRun)
+}
+
+func (v *mockValidator) ValidateGateway(ctx context.Context, gw *v1.Gateway, dryRun bool) (validation.ProxyReports, error) {
 	if v.fValidateGateway == nil {
-		return nil, nil
+		return proxyReports(), nil
 	}
-	return v.fValidateGateway(ctx, gw)
+	return v.fValidateGateway(ctx, gw, dryRun)
 }
 
-func (v *mockValidator) ValidateVirtualService(ctx context.Context, vs *v1.VirtualService) (validation.ProxyReports, error) {
+func (v *mockValidator) ValidateVirtualService(ctx context.Context, vs *v1.VirtualService, dryRun bool) (validation.ProxyReports, error) {
 	if v.fValidateVirtualService == nil {
-		return nil, nil
+		return proxyReports(), nil
 	}
-	return v.fValidateVirtualService(ctx, vs)
+	return v.fValidateVirtualService(ctx, vs, dryRun)
 }
 
-func (v *mockValidator) ValidateDeleteVirtualService(ctx context.Context, vs core.ResourceRef) error {
+func (v *mockValidator) ValidateDeleteVirtualService(ctx context.Context, vs core.ResourceRef, dryRun bool) error {
 	if v.fValidateDeleteVirtualService == nil {
 		return nil
 	}
-	return v.fValidateDeleteVirtualService(ctx, vs)
+	return v.fValidateDeleteVirtualService(ctx, vs, dryRun)
 }
 
-func (v *mockValidator) ValidateRouteTable(ctx context.Context, rt *v1.RouteTable) (validation.ProxyReports, error) {
+func (v *mockValidator) ValidateRouteTable(ctx context.Context, rt *v1.RouteTable, dryRun bool) (validation.ProxyReports, error) {
 	if v.fValidateRouteTable == nil {
-		return nil, nil
+		return proxyReports(), nil
 	}
-	return v.fValidateRouteTable(ctx, rt)
+	return v.fValidateRouteTable(ctx, rt, dryRun)
 }
 
-func (v *mockValidator) ValidateDeleteRouteTable(ctx context.Context, rt core.ResourceRef) error {
+func (v *mockValidator) ValidateDeleteRouteTable(ctx context.Context, rt core.ResourceRef, dryRun bool) error {
 	if v.fValidateDeleteRouteTable == nil {
 		return nil
 	}
-	return v.fValidateDeleteRouteTable(ctx, rt)
+	return v.fValidateDeleteRouteTable(ctx, rt, dryRun)
+}
+
+func proxyReports() validation.ProxyReports {
+	return validation.ProxyReports{
+		{
+			Metadata: core.Metadata{
+				Name:      "listener-::-8080",
+				Namespace: "gloo-system",
+			},
+		}: {
+			ListenerReports: nil,
+		},
+	}
 }

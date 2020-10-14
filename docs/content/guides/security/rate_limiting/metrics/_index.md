@@ -1,6 +1,6 @@
 ---
 title: Metrics (Enterprise)
-weight: 45
+weight: 50
 description: Use prometheus metrics to determine when requests are near or over rate-limits.
 ---
 
@@ -44,7 +44,7 @@ of this tutorial.
 
 ### Setup
 Let's start by setting up the virtual service and settings resources to match the rule priority
-[example]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/rulepriority/#test-the-example" %}}).
+[example]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/#rule-priority-and-weights" %}}).
 
 ### Triggering limits
 

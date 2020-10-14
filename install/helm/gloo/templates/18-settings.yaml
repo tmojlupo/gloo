@@ -11,15 +11,39 @@ spec:
   gloo:
 {{- if .Values.global.glooMtls.enabled }}
     xdsBindAddr: "127.0.0.1:9999"
+    restXdsBindAddr: "127.0.0.1:9998"
 {{- else }}
     xdsBindAddr: "0.0.0.0:{{ .Values.gloo.deployment.xdsPort }}"
+    restXdsBindAddr: "0.0.0.0:{{ .Values.gloo.deployment.restXdsPort }}"
 {{- end }}
-{{- if .Values.settings.invalidConfigPolicy }}
+{{- if .Values.settings.replaceInvalidRoutes }}
     invalidConfigPolicy:
 {{ toYaml .Values.settings.invalidConfigPolicy | indent 6}}
 {{- end }}
     disableKubernetesDestinations: {{ .Values.settings.disableKubernetesDestinations | default false }}
     disableProxyGarbageCollection: {{ .Values.settings.disableProxyGarbageCollection | default false }}
+{{- if .Values.settings.aws.enableServiceAccountCredentials }}
+    awsOptions:
+      serviceAccountCredentials:
+        cluster: aws_sts_cluster
+{{- if ne .Values.settings.aws.stsCredentialsRegion ""}}
+        uri: sts.{{ .Values.settings.aws.stsCredentialsRegion }}.amazonaws.com
+{{- else }}
+        uri: sts.amazonaws.com
+{{- end }}
+{{- else if .Values.settings.aws.enableCredentialsDiscovery }}
+    awsOptions:
+      enableCredentialsDiscovey: true
+{{- end }}
+
+  {{- if .Values.settings.integrations.consul }}
+  consul:
+  {{- toYaml .Values.settings.integrations.consul | nindent 4 }}
+  {{- end }}
+  {{- if .Values.settings.integrations.consulUpstreamDiscovery }}
+  consulUpstreamDiscovery:
+  {{- toYaml .Values.settings.integrations.consulUpstreamDiscovery | nindent 4 }}
+  {{- end }}
 
 {{- if .Values.settings.writeNamespace }}
   discoveryNamespace: {{ .Values.settings.writeNamespace }}
@@ -49,11 +73,8 @@ spec:
     validation:
       proxyValidationServerAddr: gloo:{{ .Values.gloo.deployment.validationPort }}
 {{- /* need to do this weird if/else because Helm cannot differentiate between 'false' and 'unset' */}}
-{{- if .Values.gateway.validation.alwaysAcceptResources }}
-      alwaysAccept: true
-{{- else }}
-      alwaysAccept: false
-{{- end }}
+      alwaysAccept: {{ .Values.gateway.validation.alwaysAcceptResources }}
+      allowWarnings: {{ .Values.gateway.validation.allowWarnings }}
 {{- end }}
 
 {{- if ne .Values.discovery.fdsMode "" }}
@@ -64,6 +85,11 @@ spec:
 {{- if .Values.settings.extensions }}
   extensions:
 {{- toYaml .Values.settings.extensions | nindent 4 }}
+{{- end }}
+
+{{- if .Values.settings.rateLimit }}
+  rateLimit:
+{{- toYaml .Values.settings.rateLimit | nindent 4 }}
 {{- end }}
 
 {{- if .Values.settings.singleNamespace }}

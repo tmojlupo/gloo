@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"text/template"
 
+	"github.com/solo-io/gloo/projects/envoyinit/cmd/utils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
 
 	"bytes"
@@ -51,6 +52,25 @@ func (ei *EnvoyInstance) buildBootstrap() string {
 	return b.String()
 }
 
+func (ei *EnvoyInstance) buildBootstrapFromConfig(configFile string) (string, error) {
+	// Will error on missing file or invalid config
+	config, err := utils.GetConfig(configFile)
+	if err != nil {
+		return "", err
+	}
+
+	addr, err := localAddr()
+	if err != nil {
+		return "", err
+	}
+	// When running envoy in docker, replace localhost
+	// loopback address with the docker routable IP.
+	if addr != "" && addr != "127.0.0.1" {
+		config = strings.ReplaceAll(config, "127.0.0.1", addr)
+	}
+	return config, nil
+}
+
 const envoyConfigTemplate = `
 node:
  cluster: ingress
@@ -59,8 +79,9 @@ node:
   role: {{.Role}}
 {{if .MetricsAddr}}
 stats_sinks:
-  - name: envoy.metrics_service
-    config:
+  - name: envoy.stat_sinks.metrics_service
+    typed_config:
+      "@type": type.googleapis.com/envoy.config.metrics.v3.MetricsServiceConfig
       grpc_service:
         envoy_grpc: {cluster_name: metrics_cluster}
 {{end}}
@@ -69,39 +90,77 @@ static_resources:
   clusters:
   - name: xds_cluster
     connect_timeout: 5.000s
-    hosts:
-    - socket_address:
-        address: {{.GlooAddr}}
-        port_value: {{.Port}}
+    load_assignment:
+      cluster_name: xds_cluster
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{.GlooAddr}}
+                    port_value: {{.Port}}
     http2_protocol_options: {}
     type: STATIC
 {{if .RatelimitAddr}}
   - name: ratelimit_cluster
     connect_timeout: 5.000s
-    hosts:
-    - socket_address:
-        address: {{.RatelimitAddr}}
-        port_value: {{.RatelimitPort}}
+    load_assignment:
+      cluster_name: ratelimit_cluster
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{.RatelimitAddr}}
+                    port_value: {{.RatelimitPort}}
     http2_protocol_options: {}
     type: STATIC
 {{end}}
 {{if .AccessLogAddr}}
   - name: access_log_cluster
     connect_timeout: 5.000s
-    hosts:
-    - socket_address:
-        address: {{.AccessLogAddr}}
-        port_value: {{.AccessLogPort}}
+    load_assignment:
+      cluster_name: access_log_cluster
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{.AccessLogAddr}}
+                    port_value: {{.AccessLogPort}}
     http2_protocol_options: {}
     type: STATIC
 {{end}}
+  - name: aws_sts_cluster
+    connect_timeout: 5.000s
+    type: LOGICAL_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: aws_sts_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                port_value: 443
+                address: sts.amazonaws.com
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: sts.amazonaws.com
 {{if .MetricsAddr}}
   - name: metrics_cluster
     connect_timeout: 5.000s
-    hosts:
-    - socket_address:
-        address: {{.MetricsAddr}}
-        port_value: {{.MetricsPort}}
+    load_assignment:
+      cluster_name: metrics_cluster
+      endpoints:
+        - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: {{.MetricsAddr}}
+                    port_value: {{.MetricsPort}}
     http2_protocol_options: {}
     type: STATIC
 {{end}}
@@ -146,20 +205,20 @@ func getEnvoyImageTag() string {
 	gomodfile := strings.TrimSpace(string(gomod))
 	projectbase, _ := filepath.Split(gomodfile)
 
-	envoyinit := filepath.Join(projectbase, "projects/envoyinit/cmd/Dockerfile.envoyinit")
-	inFile, err := os.Open(envoyinit)
+	makefile := filepath.Join(projectbase, "Makefile")
+	inFile, err := os.Open(makefile)
 	Expect(err).NotTo(HaveOccurred())
 
 	defer inFile.Close()
 
+	const prefix = "ENVOY_GLOO_IMAGE ?= quay.io/solo-io/envoy-gloo:"
+
 	scanner := bufio.NewScanner(inFile)
 	for scanner.Scan() {
 		line := scanner.Text()
-		parts := strings.Split(strings.TrimSpace(line), ":")
-		if len(parts) == 2 {
-			return parts[1]
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
 		}
-
 	}
 	return ""
 }
@@ -176,12 +235,18 @@ func NewEnvoyFactory() (*EnvoyFactory, error) {
 	}
 
 	// maybe it is in the path?!
-	envoyPath, err := exec.LookPath("envoy")
-	if err == nil {
-		log.Printf("Using envoy from PATH: %s", envoyPath)
-		return &EnvoyFactory{
-			envoypath: envoyPath,
-		}, nil
+	// only try to use local path if FETCH_ENVOY_BINARY is not set;
+	// there are two options:
+	// - you are using local envoy binary you just built and want to test (don't set the variable)
+	// - you want to use the envoy version gloo is shipped with (set the variable)
+	if os.Getenv("FETCH_ENVOY_BINARY") != "" {
+		envoyPath, err := exec.LookPath("envoy")
+		if err == nil {
+			log.Printf("Using envoy from PATH: %s", envoyPath)
+			return &EnvoyFactory{
+				envoypath: envoyPath,
+			}, nil
+		}
 	}
 
 	switch runtime.GOOS {
@@ -273,6 +338,17 @@ type EnvoyInstance struct {
 	AdminPort     uint32
 	// Path to access logs for binary run
 	AccessLogs string
+
+	DockerOptions
+}
+
+// Extra options for running in docker
+type DockerOptions struct {
+	// Extra volume arguments
+	Volumes []string
+	// Extra env arguments.
+	// see https://docs.docker.com/engine/reference/run/#env-environment-variables for more info
+	Env []string
 }
 
 func (ef *EnvoyFactory) MustEnvoyInstance() *EnvoyInstance {
@@ -311,41 +387,41 @@ func (ei *EnvoyInstance) RunWithId(id string) error {
 	ei.Role = "default~proxy"
 
 	// TODO: refactor this function to include a context.
-	return ei.runWithPort(context.TODO(), 8081)
+	return ei.runWithPort(context.TODO(), 8081, "")
 }
 
 func (ei *EnvoyInstance) Run(port int) error {
 	ei.Role = "default~proxy"
 
 	// TODO: refactor this function to include a context.
-	return ei.runWithPort(context.TODO(), uint32(port))
+	return ei.runWithPort(context.TODO(), uint32(port), "")
+}
+
+func (ei *EnvoyInstance) RunWithConfig(port int, configFile string) error {
+	ei.Role = "default~proxy"
+
+	// TODO: refactor this function to include a context.
+	return ei.runWithPort(context.TODO(), uint32(port), configFile)
 }
 func (ei *EnvoyInstance) RunWithRole(role string, port int) error {
 	ei.Role = role
 	// TODO: refactor this function to include a context.
-	return ei.runWithPort(context.TODO(), uint32(port))
+	return ei.runWithPort(context.TODO(), uint32(port), "")
 }
 
 type EnvoyInstanceConfig interface {
 	Role() string
 	Port() uint32
+
 	Context() context.Context
 }
 
 func (ei *EnvoyInstance) RunWith(eic EnvoyInstanceConfig) error {
 	ei.Role = eic.Role()
-	return ei.runWithPort(eic.Context(), eic.Port())
+	return ei.runWithPort(eic.Context(), eic.Port(), "")
 }
 
-/*
-func (ei *EnvoyInstance) DebugMode() error {
-
-	_, err := http.Get("http://localhost:19000/logging?level=debug")
-
-	return err
-}
-*/
-func (ei *EnvoyInstance) runWithPort(ctx context.Context, port uint32) error {
+func (ei *EnvoyInstance) runWithPort(ctx context.Context, port uint32, configFile string) error {
 	go func() {
 		<-ctx.Done()
 		ei.Clean()
@@ -355,7 +431,17 @@ func (ei *EnvoyInstance) runWithPort(ctx context.Context, port uint32) error {
 	}
 	ei.Port = port
 
-	ei.envoycfg = ei.buildBootstrap()
+	if configFile == "" {
+		ei.envoycfg = ei.buildBootstrap()
+	} else {
+		var err error
+		ei.envoycfg, err = ei.buildBootstrapFromConfig(configFile)
+		if err != nil {
+			return err
+		}
+
+	}
+
 	if ei.UseDocker {
 		err := ei.runContainer(ctx)
 		if err != nil {
@@ -426,11 +512,22 @@ func (ei *EnvoyInstance) runContainer(ctx context.Context) error {
 		"-p", fmt.Sprintf("%d:%d", defaults.HttpPort, defaults.HttpPort),
 		"-p", fmt.Sprintf("%d:%d", defaults.HttpsPort, defaults.HttpsPort),
 		"-p", fmt.Sprintf("%d:%d", ei.AdminPort, ei.AdminPort),
+	}
+
+	for _, volume := range ei.DockerOptions.Volumes {
+		args = append(args, "-v", volume)
+	}
+
+	for _, env := range ei.DockerOptions.Env {
+		args = append(args, "-e", env)
+	}
+
+	args = append(args,
 		"--entrypoint=envoy",
 		image,
 		"--disable-hot-restart", "--log-level", "debug",
 		"--config-yaml", ei.envoycfg,
-	}
+	)
 
 	fmt.Fprintln(ginkgo.GinkgoWriter, args)
 	cmd := exec.CommandContext(ctx, "docker", args...)

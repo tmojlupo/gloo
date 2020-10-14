@@ -3,12 +3,14 @@ package hcm_test
 import (
 	"time"
 
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	envoytracing "github.com/envoyproxy/go-control-plane/envoy/type/tracing/v3"
 
+	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/solo-io/gloo/pkg/utils/gogoutils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/protocol_upgrade"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/tracing"
-	"github.com/solo-io/solo-kit/pkg/api/v1/control-plane/util"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -18,7 +20,7 @@ import (
 
 	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
-	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
+	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	"github.com/gogo/protobuf/types"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/hcm"
@@ -72,6 +74,8 @@ var _ = Describe("Plugin", func() {
 					},
 				},
 			},
+			MaxConnectionDuration: pd(time.Hour),
+			MaxStreamDuration:     pd(time.Hour),
 		}
 		hl := &v1.HttpListener{
 			Options: &v1.HttpListenerOptions{
@@ -86,7 +90,7 @@ var _ = Describe("Plugin", func() {
 		}
 
 		filters := []*envoylistener.Filter{{
-			Name: util.HTTPConnectionManager,
+			Name: wellknown.HTTPConnectionManager,
 		}}
 
 		outl := &envoyapi.Listener{
@@ -102,7 +106,7 @@ var _ = Describe("Plugin", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		var cfg envoyhttp.HttpConnectionManager
-		err = translatorutil.ParseConfig(filters[0], &cfg)
+		err = translatorutil.ParseTypedConfig(filters[0], &cfg)
 		Expect(err).NotTo(HaveOccurred())
 
 		Expect(cfg.UseRemoteAddress).To(Equal(gogoutils.BoolGogoToProto(hcms.UseRemoteAddress)))
@@ -130,9 +134,27 @@ var _ = Describe("Plugin", func() {
 
 		Expect(cfg.CommonHttpProtocolOptions).NotTo(BeNil())
 		Expect(cfg.CommonHttpProtocolOptions.IdleTimeout).To(Equal(gogoutils.DurationStdToProto(hcms.IdleTimeout)))
+		Expect(cfg.CommonHttpProtocolOptions.GetMaxConnectionDuration()).To(Equal(gogoutils.DurationStdToProto(hcms.MaxConnectionDuration)))
+		Expect(cfg.CommonHttpProtocolOptions.GetMaxStreamDuration()).To(Equal(gogoutils.DurationStdToProto(hcms.MaxStreamDuration)))
 
 		trace := cfg.Tracing
-		Expect(trace.RequestHeadersForTags).To(ConsistOf([]string{"path", "origin"}))
+		Expect(trace.CustomTags).To(ConsistOf([]*envoytracing.CustomTag{
+			{
+				Tag: "path",
+				Type: &envoytracing.CustomTag_RequestHeader{
+					RequestHeader: &envoytracing.CustomTag_Header{
+						Name: "path",
+					},
+				},
+			},
+			{
+				Tag: "origin",
+				Type: &envoytracing.CustomTag_RequestHeader{
+					RequestHeader: &envoytracing.CustomTag_Header{
+						Name: "origin",
+					},
+				},
+			}}))
 		Expect(trace.Verbose).To(BeTrue())
 		Expect(trace.ClientSampling.Value).To(Equal(100.0))
 		Expect(trace.RandomSampling.Value).To(Equal(100.0))
@@ -179,7 +201,7 @@ var _ = Describe("Plugin", func() {
 			}
 
 			filters = []*envoylistener.Filter{{
-				Name: util.HTTPConnectionManager,
+				Name: wellknown.HTTPConnectionManager,
 			}}
 
 			outl = &envoyapi.Listener{
@@ -197,7 +219,7 @@ var _ = Describe("Plugin", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var cfg envoyhttp.HttpConnectionManager
-			err = translatorutil.ParseConfig(filters[0], &cfg)
+			err = translatorutil.ParseTypedConfig(filters[0], &cfg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(len(cfg.GetUpgradeConfigs())).To(Equal(1))
@@ -211,7 +233,7 @@ var _ = Describe("Plugin", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			var cfg envoyhttp.HttpConnectionManager
-			err = translatorutil.ParseConfig(filters[0], &cfg)
+			err = translatorutil.ParseTypedConfig(filters[0], &cfg)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(len(cfg.GetUpgradeConfigs())).To(Equal(1))

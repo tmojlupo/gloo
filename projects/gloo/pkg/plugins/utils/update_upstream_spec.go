@@ -21,6 +21,26 @@ func UpdateUpstream(original, desired *v1.Upstream) {
 	if desired.ConnectionConfig == nil {
 		desired.ConnectionConfig = original.ConnectionConfig
 	}
+	if desired.Failover == nil {
+		desired.Failover = original.Failover
+	}
+	if len(desired.HealthChecks) == 0 {
+		desired.HealthChecks = original.HealthChecks
+	}
+	if desired.OutlierDetection == nil {
+		desired.OutlierDetection = original.OutlierDetection
+	}
+	if desired.UseHttp2 == nil {
+		desired.UseHttp2 = original.UseHttp2
+	}
+
+	if desired.InitialConnectionWindowSize == nil {
+		desired.InitialConnectionWindowSize = original.InitialConnectionWindowSize
+	}
+
+	if desired.InitialStreamWindowSize == nil {
+		desired.InitialStreamWindowSize = original.InitialStreamWindowSize
+	}
 
 	if desiredSubsetMutator, ok := desired.UpstreamType.(v1.SubsetSpecMutator); ok {
 		if desiredSubsetMutator.GetSubsetSpec() == nil {

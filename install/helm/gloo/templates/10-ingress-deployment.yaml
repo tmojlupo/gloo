@@ -20,7 +20,17 @@ spec:
     metadata:
       labels:
         gloo: ingress
+        {{- if .Values.ingress.deployment.extraIngressLabels }}
+        {{- range $key, $value := .Values.ingress.deployment.extraIngressLabels }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        {{- if not .Values.ingress.deployment.floatingUserId }}
+        runAsUser: {{ printf "%.0f" (float64 .Values.ingress.deployment.runAsUser) -}}
+        {{- end }}
       containers:
       - image: {{template "gloo.image" $image}}
         imagePullPolicy: {{ $image.pullPolicy }}

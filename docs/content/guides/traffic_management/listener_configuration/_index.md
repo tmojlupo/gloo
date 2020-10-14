@@ -15,29 +15,35 @@ For demonstration purposes, let's edit the default gateways that are installed w
 
 ```bash
 kubectl get gateway --all-namespaces
+```
+
+```bash
 NAMESPACE     NAME                AGE
 gloo-system   gateway-proxy       2d
 gloo-system   gateway-proxy-ssl   2d
 ```
 
-`kubectl edit gateway -n gloo-system gateway`
+```bash
+kubectl edit gateway -n gloo-system gateway-proxy
+```
 
 ### Plugin summary
 
 The listener plugin portion of the gateway Custom Resource (CR) is shown below.
 
-{{< highlight yaml "hl_lines=7-11" >}}
+{{< highlight yaml "hl_lines=7-12" >}}
 apiVersion: gateway.solo.io/v1
 kind: Gateway
 metadata: # collapsed for brevity
 spec:
   bindAddress: '::'
   bindPort: 8080
-  options:
-    grpcWeb:
-      disable: true
-    httpConnectionManagerSettings:
-      via: reference-string
+  httpGateway:
+    options:
+      grpcWeb:
+        disable: true
+      httpConnectionManagerSettings:
+        via: reference-string
   useProxyProto: false
 status: # collapsed for brevity
 {{< /highlight >}}

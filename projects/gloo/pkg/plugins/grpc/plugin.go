@@ -5,6 +5,8 @@ import (
 	"crypto/sha1"
 	"fmt"
 
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
+
 	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams"
@@ -13,7 +15,7 @@ import (
 	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	envoyroute "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	envoytranscoder "github.com/envoyproxy/go-control-plane/envoy/config/filter/http/transcoder/v2"
+	envoytranscoder "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/grpc_json_transcoder/v3"
 	"github.com/gogo/googleapis/google/api"
 	"github.com/gogo/protobuf/proto"
 	"github.com/gogo/protobuf/protoc-gen-gogo/descriptor"
@@ -55,10 +57,6 @@ type plugin struct {
 	ctx context.Context
 }
 
-const (
-	filterName = "envoy.grpc_json_transcoder"
-)
-
 var pluginStage = plugins.BeforeStage(plugins.OutAuthStage)
 
 func (p *plugin) Init(params plugins.InitParams) error {
@@ -81,7 +79,10 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 		return nil
 	}
 	grpcSpec := grpcWrapper.Grpc
-	out.Http2ProtocolOptions = &envoycore.Http2ProtocolOptions{}
+
+	if out.Http2ProtocolOptions == nil {
+		out.Http2ProtocolOptions = &envoycore.Http2ProtocolOptions{}
+	}
 
 	if grpcSpec == nil || len(grpcSpec.GrpcServices) == 0 {
 		// no services, this just marks the upstream as a grpc one.
@@ -95,7 +96,6 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	for _, svc := range grpcSpec.GrpcServices {
 
 		// find the relevant service
-
 		err := addHttpRulesToProto(in, svc, descriptors)
 		if err != nil {
 			return errors.Wrapf(err, "failed to generate http rules for service %s in proto descriptors", svc.ServiceName)
@@ -134,6 +134,9 @@ func convertProto(encodedBytes []byte) (*descriptor.FileDescriptorSet, error) {
 	return &fileDescriptor, nil
 }
 
+// envoy needs the protobuf descriptors to convert from json to gRPC
+// gloo creates these descriptors automatically (if gRPC reflection is enabled),
+// uses its transformation filter to provide the context for the json-grpc translation.
 func (p *plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoyroute.Route) error {
 	return pluginutils.MarkPerFilterConfig(p.ctx, params.Snapshot, in, out, transformation.FilterName, func(spec *v1.Destination) (proto.Message, error) {
 		// check if it's grpc destination
@@ -287,6 +290,7 @@ func (p *plugin) HttpFilters(params plugins.Params, listener *v1.HttpListener) (
 	var filters []plugins.StagedHttpFilter
 	for _, serviceAndDescriptor := range p.upstreamServices {
 		descriptorBytes, err := proto.Marshal(serviceAndDescriptor.Descriptors)
+
 		if err != nil {
 			return nil, errors.Wrapf(err, "marshaling proto descriptor")
 		}
@@ -303,7 +307,7 @@ func (p *plugin) HttpFilters(params plugins.Params, listener *v1.HttpListener) (
 			MatchIncomingRequestRoute: true,
 		}
 
-		shf, err := plugins.NewStagedFilterWithConfig(filterName, filterConfig, pluginStage)
+		shf, err := plugins.NewStagedFilterWithConfig(wellknown.GRPCJSONTranscoder, filterConfig, pluginStage)
 		if err != nil {
 			return nil, errors.Wrapf(err, "ERROR: marshaling GrpcJsonTranscoder config")
 		}

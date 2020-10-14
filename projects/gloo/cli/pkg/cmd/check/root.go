@@ -11,17 +11,36 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/constants"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/flagutils"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/helpers"
+	ratelimit "github.com/solo-io/gloo/projects/gloo/pkg/api/external/solo/ratelimit"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	rlopts "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/ratelimit"
 	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
 	"github.com/solo-io/go-utils/cliutils"
+	"github.com/solo-io/solo-apis/pkg/api/ratelimit.solo.io/v1alpha1"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+var (
+	CrdNotFoundErr = func(crdName string) error {
+		return eris.Errorf("%s CRD has not been registered", crdName)
+	}
+)
+
+// contains method
+func doesNotContain(arr []string, str string) bool {
+	for _, a := range arr {
+		if a == str {
+			return false
+		}
+	}
+	return true
+}
 
 func RootCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.Command {
 	cmd := &cobra.Command{
@@ -40,11 +59,13 @@ func RootCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.
 			} else {
 				fmt.Printf("No problems detected.\n")
 			}
+			CheckMulticlusterResources(opts)
 			return nil
 		},
 	}
 	pflags := cmd.PersistentFlags()
 	flagutils.AddNamespaceFlag(pflags, &opts.Metadata.Namespace)
+	flagutils.AddExcludecheckFlag(pflags, &opts.Top.CheckName)
 	cliutils.ApplyOptions(cmd, optionsFunc)
 	return cmd
 }
@@ -54,14 +75,20 @@ func CheckResources(opts *options.Options) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	deployments, ok, err := getAndCheckDeployments(opts)
 	if !ok || err != nil {
 		return ok, err
 	}
-	ok, err = checkPods(opts)
-	if !ok || err != nil {
-		return ok, err
+
+	includePods := doesNotContain(opts.Top.CheckName, "pods")
+	if includePods {
+		ok, err := checkPods(opts)
+		if !ok || err != nil {
+			return ok, err
+		}
 	}
+
 	settings, err := getSettings(opts)
 	if err != nil {
 		return false, err
@@ -77,9 +104,12 @@ func CheckResources(opts *options.Options) (bool, error) {
 		return ok, err
 	}
 
-	ok, err = checkUpstreamGroups(namespaces)
-	if !ok || err != nil {
-		return ok, err
+	includeUpstreamGroup := doesNotContain(opts.Top.CheckName, "upstreamgroup")
+	if includeUpstreamGroup {
+		ok, err := checkUpstreamGroups(namespaces)
+		if !ok || err != nil {
+			return ok, err
+		}
 	}
 
 	knownAuthConfigs, ok, err := checkAuthConfigs(namespaces)
@@ -87,31 +117,44 @@ func CheckResources(opts *options.Options) (bool, error) {
 		return ok, err
 	}
 
-	ok, err = checkSecrets(namespaces)
+	knownRateLimitConfigs, ok, err := checkRateLimitConfigs(namespaces)
 	if !ok || err != nil {
 		return ok, err
 	}
 
-	ok, err = checkVirtualServices(namespaces, knownUpstreams, knownAuthConfigs)
+	includeSecrets := doesNotContain(opts.Top.CheckName, "secrets")
+	if includeSecrets {
+		ok, err := checkSecrets(namespaces)
+		if !ok || err != nil {
+			return ok, err
+		}
+	}
+
+	ok, err = checkVirtualServices(namespaces, knownUpstreams, knownAuthConfigs, knownRateLimitConfigs)
 	if !ok || err != nil {
 		return ok, err
 	}
 
-	ok, err = checkGateways(namespaces)
-	if !ok || err != nil {
-		return ok, err
+	includeGateway := doesNotContain(opts.Top.CheckName, "gateways")
+	if includeGateway {
+		ok, err := checkGateways(namespaces)
+		if !ok || err != nil {
+			return ok, err
+		}
 	}
 
-	ok, err = checkProxies(opts.Top.Ctx, namespaces, opts.Metadata.Namespace, deployments)
-	if !ok || err != nil {
-		return ok, err
+	includeProxy := doesNotContain(opts.Top.CheckName, "proxies")
+	if includeProxy {
+		ok, err := checkProxies(opts.Top.Ctx, namespaces, opts.Metadata.Namespace, deployments)
+		if !ok || err != nil {
+			return ok, err
+		}
 	}
 
 	ok, err = checkGlooePromStats(opts.Top.Ctx, opts.Metadata.Namespace, deployments)
 	if !ok || err != nil {
 		return ok, err
 	}
-
 	return true, nil
 }
 
@@ -335,7 +378,39 @@ func checkAuthConfigs(namespaces []string) ([]string, bool, error) {
 	return knownAuthConfigs, true, nil
 }
 
-func checkVirtualServices(namespaces, knownUpstreams []string, knownAuthConfigs []string) (bool, error) {
+func checkRateLimitConfigs(namespaces []string) ([]string, bool, error) {
+	fmt.Printf("Checking rate limit configs... ")
+	var knownConfigs []string
+	for _, ns := range namespaces {
+
+		rlcClient, err := helpers.RateLimitConfigClient([]string{ns})
+		if err != nil {
+			if isCrdNotFoundErr(err) {
+				// Just warn. If the CRD is required, the check would have failed on the crashing gloo/gloo-ee pod.
+				fmt.Printf("WARN: %s\n", CrdNotFoundErr(ratelimit.RateLimitConfigCrd.KindName).Error())
+				return nil, true, nil
+			}
+			return nil, false, err
+		}
+
+		configs, err := rlcClient.List(ns, clients.ListOpts{})
+		if err != nil {
+			return nil, false, err
+		}
+		for _, config := range configs {
+			if config.Status.GetState() == v1alpha1.RateLimitConfigStatus_REJECTED {
+				fmt.Printf("Found rejected rate limit config: %s\n", renderMetadata(config.GetMetadata()))
+				fmt.Printf("Reason: %s\n", config.Status.Message)
+				return nil, false, nil
+			}
+			knownConfigs = append(knownConfigs, renderMetadata(config.GetMetadata()))
+		}
+	}
+	fmt.Printf("OK\n")
+	return knownConfigs, true, nil
+}
+
+func checkVirtualServices(namespaces, knownUpstreams, knownAuthConfigs, knownRateLimitConfigs []string) (bool, error) {
 	fmt.Printf("Checking virtual services... ")
 	for _, ns := range namespaces {
 		virtualServices, err := helpers.MustNamespacedVirtualServiceClient(ns).List(ns, clients.ListOpts{})
@@ -368,12 +443,62 @@ func checkVirtualServices(namespaces, knownUpstreams []string, knownAuthConfigs 
 					}
 				}
 			}
-			acRef := virtualService.GetVirtualHost().GetOptions().GetExtauth().GetConfigRef()
-			if acRef != nil && !cliutils.Contains(knownAuthConfigs, renderRef(acRef)) {
-				fmt.Printf("Virtual service references unknown auth config:\n")
-				fmt.Printf("  Virtual service: %s\n", renderMetadata(virtualService.GetMetadata()))
-				fmt.Printf("  Auth Config: %s\n", renderRef(acRef))
+
+			// Check references to auth configs
+			isAuthConfigRefValid := func(knownConfigs []string, ref *core.ResourceRef) bool {
+				// If the virtual service points to a specific, non-existent authconfig, it is not valid.
+				if ref != nil && !cliutils.Contains(knownConfigs, renderRef(ref)) {
+					fmt.Printf("Virtual service references unknown auth config:\n")
+					fmt.Printf("  Virtual service: %s\n", renderMetadata(virtualService.GetMetadata()))
+					fmt.Printf("  Auth Config: %s\n", renderRef(ref))
+					return false
+				}
+				return true
+			}
+			// Check virtual host options
+			if !isAuthConfigRefValid(knownAuthConfigs, virtualService.GetVirtualHost().GetOptions().GetExtauth().GetConfigRef()) {
 				return false, nil
+			}
+			// Check route options
+			for _, route := range virtualService.GetVirtualHost().GetRoutes() {
+				if !isAuthConfigRefValid(knownAuthConfigs, route.GetOptions().GetExtauth().GetConfigRef()) {
+					return false, nil
+				}
+				// Check weighted destination options
+				for _, weightedDest := range route.GetRouteAction().GetMulti().GetDestinations() {
+					if !isAuthConfigRefValid(knownAuthConfigs, weightedDest.GetOptions().GetExtauth().GetConfigRef()) {
+						return false, nil
+					}
+				}
+			}
+
+			// Check references to rate limit configs
+			isRateLimitConfigRefValid := func(knownConfigs []string, ref *rlopts.RateLimitConfigRef) bool {
+				resourceRef := &core.ResourceRef{
+					Name:      ref.Name,
+					Namespace: ref.Namespace,
+				}
+				if !cliutils.Contains(knownConfigs, renderRef(resourceRef)) {
+					fmt.Printf("Virtual service references unknown rate limit config:\n")
+					fmt.Printf("  Virtual service: %s\n", renderMetadata(virtualService.GetMetadata()))
+					fmt.Printf("  Rate Limit Config: %s\n", renderRef(resourceRef))
+					return false
+				}
+				return true
+			}
+			// Check virtual host options
+			for _, ref := range virtualService.GetVirtualHost().GetOptions().GetRateLimitConfigs().GetRefs() {
+				if !isRateLimitConfigRefValid(knownRateLimitConfigs, ref) {
+					return false, nil
+				}
+			}
+			// Check route options
+			for _, route := range virtualService.GetVirtualHost().GetRoutes() {
+				for _, ref := range route.GetOptions().GetRateLimitConfigs().GetRefs() {
+					if !isRateLimitConfigRefValid(knownRateLimitConfigs, ref) {
+						return false, nil
+					}
+				}
 			}
 		}
 	}
@@ -427,7 +552,6 @@ func checkProxies(ctx context.Context, namespaces []string, glooNamespace string
 	}
 
 	return checkProxiesPromStats(ctx, glooNamespace, deployments)
-
 }
 
 func checkSecrets(namespaces []string) (bool, error) {
@@ -469,4 +593,24 @@ func checkConnection(ns string) error {
 		return eris.Wrapf(err, "Could not communicate with kubernetes cluster")
 	}
 	return nil
+}
+
+func isCrdNotFoundErr(err error) bool {
+	for {
+		if statusErr, ok := err.(*errors.StatusError); ok {
+			if errors.IsNotFound(err) &&
+				statusErr.ErrStatus.Details != nil &&
+				statusErr.ErrStatus.Details.Kind == ratelimit.RateLimitConfigCrd.Plural {
+				return true
+			}
+			return false
+		}
+
+		// This works for "github.com/pkg/errors"-based errors as well
+		if wrappedErr := eris.Unwrap(err); wrappedErr != nil {
+			err = wrappedErr
+			continue
+		}
+		return false
+	}
 }

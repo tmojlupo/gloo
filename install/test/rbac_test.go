@@ -65,7 +65,8 @@ var _ = Describe("RBAC Test", func() {
 				})
 
 				It("is all named appropriately in a non-namespaced install", func() {
-					prepareMakefile()
+					// be sure to pass these flags here so that all RBAC resources are rendered in the template
+					prepareMakefile("ingress.enabled=true", "settings.integrations.knative.enabled=true")
 					checkSuffix(namespace)
 				})
 			})
@@ -206,6 +207,11 @@ var _ = Describe("RBAC Test", func() {
 							{
 								APIGroups: []string{"gloo.solo.io", "enterprise.gloo.solo.io"},
 								Resources: []string{"upstreams", "upstreamgroups", "proxies", "authconfigs"},
+								Verbs:     []string{"get", "list", "watch", "update"},
+							},
+							{
+								APIGroups: []string{"ratelimit.solo.io"},
+								Resources: []string{"ratelimitconfigs", "ratelimitconfigs/status"},
 								Verbs:     []string{"get", "list", "watch", "update"},
 							},
 							{

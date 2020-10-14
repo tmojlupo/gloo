@@ -23,6 +23,7 @@ weight: 5
 - [FdsMode](#fdsmode)
 - [ConsulConfiguration](#consulconfiguration)
 - [ServiceDiscoveryOptions](#servicediscoveryoptions)
+- [ConsulUpstreamDiscoveryConfiguration](#consulupstreamdiscoveryconfiguration)
 - [KubernetesConfiguration](#kubernetesconfiguration)
 - [RateLimits](#ratelimits)
 - [GlooOptions](#gloooptions)
@@ -66,6 +67,7 @@ Represents global settings for all the Gloo components.
 "gloo": .gloo.solo.io.GlooOptions
 "gateway": .gloo.solo.io.GatewayOptions
 "consul": .gloo.solo.io.Settings.ConsulConfiguration
+"consulDiscovery": .gloo.solo.io.Settings.ConsulUpstreamDiscoveryConfiguration
 "kubernetes": .gloo.solo.io.Settings.KubernetesConfiguration
 "extensions": .gloo.solo.io.Extensions
 "ratelimit": .ratelimit.options.gloo.solo.io.ServiceSettings
@@ -98,6 +100,7 @@ Represents global settings for all the Gloo components.
 | `gloo` | [.gloo.solo.io.GlooOptions](../settings.proto.sk/#gloooptions) | Options for configuring `gloo`, the core Gloo controller, which serves dynamic configuration to Envoy. |  |
 | `gateway` | [.gloo.solo.io.GatewayOptions](../settings.proto.sk/#gatewayoptions) | Options for configuring `gateway`, the Gateway Gloo controller, which enables the VirtualService/Gateway API in Gloo. |  |
 | `consul` | [.gloo.solo.io.Settings.ConsulConfiguration](../settings.proto.sk/#consulconfiguration) | Options to configure Gloo's integration with [HashiCorp Consul](https://www.consul.io/). |  |
+| `consulDiscovery` | [.gloo.solo.io.Settings.ConsulUpstreamDiscoveryConfiguration](../settings.proto.sk/#consulupstreamdiscoveryconfiguration) |  |  |
 | `kubernetes` | [.gloo.solo.io.Settings.KubernetesConfiguration](../settings.proto.sk/#kubernetesconfiguration) | Options to configure Gloo's integration with [Kubernetes](https://www.kubernetes.io/). |  |
 | `extensions` | [.gloo.solo.io.Extensions](../extensions.proto.sk/#extensions) | Extensions will be passed along from Listeners, Gateways, VirtualServices, Routes, and Route tables to the underlying Proxy, making them useful for controllers, validation tools, etc. which interact with kubernetes yaml. Some sample use cases: * controllers, deployment pipelines, helm charts, etc. which wish to use extensions as a kind of opaque metadata. * In the future, Gloo may support gRPC-based plugins which communicate with the Gloo translator out-of-process. Opaque Extensions enables development of out-of-process plugins without requiring recompiling & redeploying Gloo's API. |  |
 | `ratelimit` | [.ratelimit.options.gloo.solo.io.ServiceSettings](../enterprise/options/ratelimit/ratelimit.proto.sk/#servicesettings) | Enterprise-only: Partial config for GlooE's rate-limiting service, based on Envoy's rate-limit service; supports Envoy's rate-limit service API. (reference here: https://github.com/lyft/ratelimit#configuration) Configure rate-limit *descriptors* here, which define the limits for requests based on their descriptors. Configure rate-limits (composed of *actions*, which define how request characteristics get translated into descriptors) on the VirtualHost or its routes. |  |
@@ -298,9 +301,6 @@ need to be set on the Gloo container.
 
 ```yaml
 "address": string
-"httpAddress": string
-"dnsAddress": string
-"dnsPollingInterval": .google.protobuf.Duration
 "datacenter": string
 "username": string
 "password": string
@@ -312,15 +312,15 @@ need to be set on the Gloo container.
 "insecureSkipVerify": .google.protobuf.BoolValue
 "waitTime": .google.protobuf.Duration
 "serviceDiscovery": .gloo.solo.io.Settings.ConsulConfiguration.ServiceDiscoveryOptions
+"httpAddress": string
+"dnsAddress": string
+"dnsPollingInterval": .google.protobuf.Duration
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
 | `address` | `string` | Deprecated: prefer http_address. The address of the Consul HTTP server. Used by service discovery and key-value storage (if-enabled). Defaults to the value of the standard CONSUL_HTTP_ADDR env if set, otherwise to 127.0.0.1:8500. |  |
-| `httpAddress` | `string` | The address of the Consul HTTP server. Used by service discovery and key-value storage (if-enabled). Defaults to the value of the standard CONSUL_HTTP_ADDR env if set, otherwise to 127.0.0.1:8500. |  |
-| `dnsAddress` | `string` | The address of the DNS server used to resolve hostnames in the Consul service address. Used by service discovery (required when Consul service instances are stored as DNS names). Defaults to 127.0.0.1:8600. (the default Consul DNS server). |  |
-| `dnsPollingInterval` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) | The polling interval for the DNS server. If there is a Consul service address with a hostname instead of an IP, Gloo will resolve the hostname with the configured frequency to update endpoints with any changes to DNS resolution. Defaults to 5s. |  |
 | `datacenter` | `string` | Datacenter to use. If not provided, the default agent datacenter is used. |  |
 | `username` | `string` | Username to use for HTTP Basic Authentication. |  |
 | `password` | `string` | Password to use for HTTP Basic Authentication. |  |
@@ -332,6 +332,9 @@ need to be set on the Gloo container.
 | `insecureSkipVerify` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | InsecureSkipVerify if set to true will disable TLS host verification. |  |
 | `waitTime` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) | WaitTime limits how long a watches for Consul resources will block. If not provided, the agent default values will be used. |  |
 | `serviceDiscovery` | [.gloo.solo.io.Settings.ConsulConfiguration.ServiceDiscoveryOptions](../settings.proto.sk/#servicediscoveryoptions) | Enable Service Discovery via Consul with this field set to empty struct `{}` to enable with defaults. |  |
+| `httpAddress` | `string` | The address of the Consul HTTP server. Used by service discovery and key-value storage (if-enabled). Defaults to the value of the standard CONSUL_HTTP_ADDR env if set, otherwise to 127.0.0.1:8500. |  |
+| `dnsAddress` | `string` | The address of the DNS server used to resolve hostnames in the Consul service address. Used by service discovery (required when Consul service instances are stored as DNS names). Defaults to 127.0.0.1:8600. (the default Consul DNS server). |  |
+| `dnsPollingInterval` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) | The polling interval for the DNS server. If there is a Consul service address with a hostname instead of an IP, Gloo will resolve the hostname with the configured frequency to update endpoints with any changes to DNS resolution. Defaults to 5s. |  |
 
 
 
@@ -350,6 +353,31 @@ service discovery options for Consul
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
 | `dataCenters` | `[]string` | Use this parameter to restrict the data centers that will be considered when discovering and routing to services. If not provided, Gloo will use all available data centers. |  |
+
+
+
+
+---
+### ConsulUpstreamDiscoveryConfiguration
+
+ 
+Settings related to gloo's behavior when discovering consul services and creating
+upstreams to connect to those services and their instances.
+
+```yaml
+"useTlsTagging": bool
+"tlsTagName": string
+"rootCa": .core.solo.io.ResourceRef
+"splitTlsServices": bool
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `useTlsTagging` | `bool` | If true, then gloo will add TLS to upstreams created for any consul service that has the tag specified by tlsTagName. If splitTlsServices is true, then this tag is also used to identify serviceInstances that should be tied to the TLS upstream. Requires rootCa to be set if true. |  |
+| `tlsTagName` | `string` | The tag that gloo should use to make TLS upstreams from consul services, and to partition consul serviceInstances between TLS/non-TLS upstreams. Defaults to 'glooUseTls'. |  |
+| `rootCa` | [.core.solo.io.ResourceRef](../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | The reference for the root CA resource to be used by discovered consul TLS upstreams. |  |
+| `splitTlsServices` | `bool` | If true, then create two upstreams when the tlsTagName is found on a consul service, one with tls and one without. This requires a consul service's serviceInstances be individually tagged; servicesInstances with the tlsTagName tag are directed to the TLS upstream, while those without the tlsTagName tag are sorted into the non-TLS upstream. |  |
 
 
 
@@ -408,12 +436,13 @@ Settings specific to the gloo (Envoy xDS server) controller
 "disableGrpcWeb": .google.protobuf.BoolValue
 "disableProxyGarbageCollection": .google.protobuf.BoolValue
 "regexMaxProgramSize": .google.protobuf.UInt32Value
+"restXdsBindAddr": string
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `xdsBindAddr` | `string` | Where the `gloo` xDS server should bind (should not need configuration by user). Defaults to `0.0.0.0:9977`. |  |
+| `xdsBindAddr` | `string` | Where the `gloo` xDS server should bind. Defaults to `0.0.0.0:9977`. |  |
 | `validationBindAddr` | `string` | Where the `gloo` validation server should bind. Defaults to `0.0.0.0:9988`. |  |
 | `circuitBreakers` | [.gloo.solo.io.CircuitBreakerConfig](../circuit_breaker.proto.sk/#circuitbreakerconfig) | Default circuit breaker configuration to use for upstream requests, when not provided by specific upstream. |  |
 | `endpointsWarmingTimeout` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) | Timeout to get initial snapshot of resources. If set to zero, Gloo will not wait for initial snapshot - if nonzero and gloo could not fetch it's initial snapshot before the timeout reached, gloo will panic. If unset, Gloo defaults to 5 minutes. |  |
@@ -423,6 +452,7 @@ Settings specific to the gloo (Envoy xDS server) controller
 | `disableGrpcWeb` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | Default policy for grpc-web. set to true if you do not wish grpc-web to be automatically enabled. set to false if you wish grpc-web enabled unless disabled on the listener level. If not specified, defaults to `false`. |  |
 | `disableProxyGarbageCollection` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | Set this option to determine the state of the envoy configuration when a virtual service is deleted, resulting in a proxy with no configured routes. set to true if you wish to keep envoy serving the routes from the latest valid configuration. set to false if you wish to reset the envoy configuration to a clean slate with no routes. If not specified, defaults to `false`. |  |
 | `regexMaxProgramSize` | [.google.protobuf.UInt32Value](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/u-int-32-value) | Set this option to specify the default max program size for regexes. If not specified, defaults to 100. |  |
+| `restXdsBindAddr` | `string` | (Enterprise Only): Where the `gloo` REST xDS server should bind. Used by Gloo Federation. Defaults to `0.0.0.0:9976`. |  |
 
 
 
@@ -434,12 +464,14 @@ Settings specific to the gloo (Envoy xDS server) controller
 
 ```yaml
 "enableCredentialsDiscovey": bool
+"serviceAccountCredentials": .envoy.config.filter.http.aws_lambda.v2.AWSLambdaConfig.ServiceAccountCredentials
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `enableCredentialsDiscovey` | `bool` | Enable credential discovery via IAM; when this is set, there's no need provide a secret on the upstream when running on AWS environment. Note: This should **ONLY** be enabled when running in an AWS environment, as the AWS code blocks the envoy main thread. This should be negligible when running inside AWS. |  |
+| `enableCredentialsDiscovey` | `bool` | Enable credential discovery via IAM; when this is set, there's no need provide a secret on the upstream when running on AWS environment. Note: This should **ONLY** be enabled when running in an AWS environment, as the AWS code blocks the envoy main thread. This should be negligible when running inside AWS. Only one of `enableCredentialsDiscovey` or `serviceAccountCredentials` can be set. |  |
+| `serviceAccountCredentials` | [.envoy.config.filter.http.aws_lambda.v2.AWSLambdaConfig.ServiceAccountCredentials](../../external/envoy/extensions/aws/filter.proto.sk/#serviceaccountcredentials) | Use projected service account token, and role arn to create temporary credentials with which to authenticate lambda requests. This functionality is meant to work along side EKS service account to IAM binding functionality as outlined here: https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html If the following environment values are not present in the gateway-proxy, this option cannot be used. 1. AWS_WEB_IDENTITY_TOKEN_FILE 2. AWS_ROLE_ARN The role which will be assumed by the credentials will be the one specified by AWS_ROLE_ARN, however, this can also be overwritten in the AWS Upstream spec via the role_arn field If they are not specified envoy will NACK the config update, which will show up in the logs when running OS Gloo. When running Gloo enterprise it will be reflected in the prometheus stat: "glooe.solo.io/xds/nack" In order to specify the aws sts endpoint, both the cluster and uri must be set. This is due to an envoy limitation which cannot infer the host or path from the cluster, and therefore must be explicitly specified via the uri. Only one of `serviceAccountCredentials` or `enableCredentialsDiscovey` can be set. |  |
 
 
 
@@ -460,8 +492,8 @@ Policy for how Gloo should handle invalid config
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
 | `replaceInvalidRoutes` | `bool` | if set to `true`, Gloo removes any routes from the provided configuration which point to a missing destination. Routes that are removed in this way will instead return a configurable direct response to clients. When routes are replaced, Gloo will configure Envoy with a special listener which serves direct responses. Note: enabling this option allows Gloo to accept partially valid proxy configurations. |  |
-| `invalidRouteResponseCode` | `int` | replaced routes reply to clients with this response code default is 404. |  |
-| `invalidRouteResponseBody` | `string` | replaced routes reply to clients with this response body default is 'Gloo Gateway has invalid configuration. Administrators should run `glooctl check` to find and fix config errors.'. |  |
+| `invalidRouteResponseCode` | `int` | replaced routes reply to clients with this response code. default is 404. |  |
+| `invalidRouteResponseBody` | `string` | replaced routes reply to clients with this response body. default is 'Gloo Gateway has invalid configuration. Administrators should run `glooctl check` to find and fix config errors.'. |  |
 
 
 
@@ -477,6 +509,7 @@ Settings specific to the Gateway controller
 "validation": .gloo.solo.io.GatewayOptions.ValidationOptions
 "readGatewaysFromAllNamespaces": bool
 "alwaysSortRouteTableRoutes": bool
+"compressedProxySpec": bool
 
 ```
 
@@ -486,6 +519,7 @@ Settings specific to the Gateway controller
 | `validation` | [.gloo.solo.io.GatewayOptions.ValidationOptions](../settings.proto.sk/#validationoptions) | If provided, the Gateway will perform [Dynamic Admission Control](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) of Gateways, Virtual Services, and Route Tables when running in Kubernetes. |  |
 | `readGatewaysFromAllNamespaces` | `bool` | When true, the Gateway controller will consume Gateway custom resources from all watch namespaces, rather than just the Gateway CRDs in its own namespace. |  |
 | `alwaysSortRouteTableRoutes` | `bool` | Deprecated. This setting is ignored. Maintained for backwards compatibility with settings exposed on 1.2.x branch of Gloo. |  |
+| `compressedProxySpec` | `bool` | If set, compresses proxy space. This can help make the Proxy CRD smaller to fit in etcd. This is an advanced option. Use with care. |  |
 
 
 
@@ -502,16 +536,18 @@ options for configuring admission control / validation
 "validationWebhookTlsKey": string
 "ignoreGlooValidationFailure": bool
 "alwaysAccept": .google.protobuf.BoolValue
+"allowWarnings": .google.protobuf.BoolValue
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `proxyValidationServerAddr` | `string` | Address of the `gloo` proxy validation grpc server. Defaults to `gloo:9988` This field is required in order to enable fine-grained admission control. |  |
+| `proxyValidationServerAddr` | `string` | Address of the `gloo` proxy validation grpc server. Defaults to `gloo:9988`. This field is required in order to enable fine-grained admission control. |  |
 | `validationWebhookTlsCert` | `string` | Path to TLS Certificate for Kubernetes Validating webhook. Defaults to `/etc/gateway/validation-certs/tls.crt`. |  |
 | `validationWebhookTlsKey` | `string` | Path to TLS Private Key for Kubernetes Validating webhook. Defaults to `/etc/gateway/validation-certs/tls.key`. |  |
 | `ignoreGlooValidationFailure` | `bool` | When Gateway cannot communicate with Gloo (e.g. Gloo is offline) resources will be rejected by default. Enable the `ignoreGlooValidationFailure` to prevent the Validation server from rejecting resources due to network errors. |  |
-| `alwaysAccept` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | Always accept resources even if validation produced an error Validation will still log the error and increment the validation.gateway.solo.io/resources_rejected stat Currently defaults to true - must be set to `false` to prevent writing invalid resources to storage. |  |
+| `alwaysAccept` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | Always accept resources even if validation produced an error. Validation will still log the error and increment the validation.gateway.solo.io/resources_rejected stat. Currently defaults to true - must be set to `false` to prevent writing invalid resources to storage. |  |
+| `allowWarnings` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | Accept resources if validation produced a warning (defaults to true). By settings to false, this means that validation will start rejecting resources that would result in warnings, rather than just those that would result in errors. |  |
 
 
 

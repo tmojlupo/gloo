@@ -10,12 +10,14 @@ option (extproto.hash_all) = true;
 import "solo-kit/api/v1/metadata.proto";
 import "solo-kit/api/v1/status.proto";
 import "solo-kit/api/v1/solo-kit.proto";
+import "solo-kit/api/v1/ref.proto";
 
 import "gloo/projects/gloo/api/v1/extensions.proto";
 import "gloo/projects/gloo/api/v1/enterprise/options/ratelimit/ratelimit.proto";
 import "gloo/projects/gloo/api/v1/enterprise/options/extauth/v1/extauth.proto";
 import "gloo/projects/gloo/api/v1/enterprise/options/rbac/rbac.proto";
 import "gloo/projects/gloo/api/v1/circuit_breaker.proto";
+import "gloo/projects/gloo/api/external/envoy/extensions/aws/filter.proto";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/wrappers.proto";
@@ -198,22 +200,6 @@ message Settings {
         // Defaults to the value of the standard CONSUL_HTTP_ADDR env if set, otherwise to 127.0.0.1:8500.
         string address = 1 [deprecated=true];
 
-        // The address of the Consul HTTP server.
-        // Used by service discovery and key-value storage (if-enabled).
-        // Defaults to the value of the standard CONSUL_HTTP_ADDR env if set, otherwise to 127.0.0.1:8500.
-        string http_address = 13;
-
-        // The address of the DNS server used to resolve hostnames in the Consul service address.
-        // Used by service discovery (required when Consul service instances are stored as DNS names).
-        // Defaults to 127.0.0.1:8600. (the default Consul DNS server)
-        string dns_address = 14;
-
-        // The polling interval for the DNS server.
-        // If there is a Consul service address with a hostname instead of an IP, Gloo will resolve the
-        // hostname with the configured frequency to update endpoints with any changes to DNS resolution.
-        // Defaults to 5s.
-        google.protobuf.Duration dns_polling_interval = 15;
-
         // Datacenter to use. If not provided, the default agent datacenter is used.
         string datacenter = 2;
 
@@ -261,11 +247,50 @@ message Settings {
         // set to empty struct `{}` to enable with defaults
         ServiceDiscoveryOptions service_discovery = 12;
 
+        // The address of the Consul HTTP server.
+        // Used by service discovery and key-value storage (if-enabled).
+        // Defaults to the value of the standard CONSUL_HTTP_ADDR env if set, otherwise to 127.0.0.1:8500.
+        string http_address = 13;
 
+        // The address of the DNS server used to resolve hostnames in the Consul service address.
+        // Used by service discovery (required when Consul service instances are stored as DNS names).
+        // Defaults to 127.0.0.1:8600. (the default Consul DNS server)
+        string dns_address = 14;
+
+        // The polling interval for the DNS server.
+        // If there is a Consul service address with a hostname instead of an IP, Gloo will resolve the
+        // hostname with the configured frequency to update endpoints with any changes to DNS resolution.
+        // Defaults to 5s.
+        google.protobuf.Duration dns_polling_interval = 15;
     }
 
     // Options to configure Gloo's integration with [HashiCorp Consul](https://www.consul.io/).
     ConsulConfiguration consul = 20;
+
+    // Settings related to gloo's behavior when discovering consul services and creating
+    // upstreams to connect to those services and their instances.
+    message ConsulUpstreamDiscoveryConfiguration {
+         // If true, then gloo will add TLS to upstreams created for any consul service that has the tag specified by
+         // tlsTagName. If splitTlsServices is true, then this tag is also used to identify serviceInstances that
+         // should be tied to the TLS upstream. Requires rootCa to be set if true.
+         bool useTlsTagging = 16;
+
+         // The tag that gloo should use to make TLS upstreams from consul services, and to partition consul
+         // serviceInstances between TLS/non-TLS upstreams. Defaults to 'glooUseTls'
+         string tlsTagName = 17;
+
+         // The reference for the root CA resource to be used by discovered consul TLS upstreams.
+         core.solo.io.ResourceRef rootCa = 18;
+
+         // If true, then create two upstreams when the tlsTagName is found on a consul service,
+         // one with tls and one without. This requires a consul service's serviceInstances
+         // be individually tagged; servicesInstances with the tlsTagName tag are directed to the TLS upstream, while those
+         // without the tlsTagName tag are sorted into the non-TLS upstream.
+         bool splitTlsServices = 19;
+    }
+
+    ConsulUpstreamDiscoveryConfiguration consulDiscovery = 30;
+
 
     // Provides overrides for the default configuration parameters used to interact with Kubernetes.
     message KubernetesConfiguration {
@@ -319,7 +344,7 @@ message Settings {
 
 // Settings specific to the gloo (Envoy xDS server) controller
 message GlooOptions {
-    // Where the `gloo` xDS server should bind (should not need configuration by user). Defaults to `0.0.0.0:9977`
+    // Where the `gloo` xDS server should bind. Defaults to `0.0.0.0:9977`
     string xds_bind_addr = 1;
 
     // Where the `gloo` validation server should bind. Defaults to `0.0.0.0:9988`
@@ -335,12 +360,36 @@ message GlooOptions {
     google.protobuf.Duration endpoints_warming_timeout = 4;
 
     message AWSOptions {
-        // Enable credential discovery via IAM; when this is set, there's no need provide a secret
-        // on the upstream when running on AWS environment.
-        //
-        // Note: This should **ONLY** be enabled when running in an AWS environment, as the AWS
-        // code blocks the envoy main thread. This should be negligible when running inside AWS.
-        bool enable_credentials_discovey = 1;
+
+        oneof credentials_fetcher {
+            // Enable credential discovery via IAM; when this is set, there's no need provide a secret
+            // on the upstream when running on AWS environment.
+            //
+            // Note: This should **ONLY** be enabled when running in an AWS environment, as the AWS
+            // code blocks the envoy main thread. This should be negligible when running inside AWS.
+            bool enable_credentials_discovey = 1;
+
+            // Use projected service account token, and role arn to create temporary
+            // credentials with which to authenticate lambda requests.
+            // This functionality is meant to work along side EKS service account to IAM
+            // binding functionality as outlined here:
+            // https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+            //
+            // If the following environment values are not present in the gateway-proxy, this option cannot be used.
+            //   1. AWS_WEB_IDENTITY_TOKEN_FILE
+            //   2. AWS_ROLE_ARN
+            //
+            // The role which will be assumed by the credentials will be the one specified by AWS_ROLE_ARN, however, this
+            // can also be overwritten in the AWS Upstream spec via the role_arn field
+            //
+            // If they are not specified envoy will NACK the config update, which will show up in the logs when running OS Gloo.
+            // When running Gloo enterprise it will be reflected in the prometheus stat: "glooe.solo.io/xds/nack"
+            //
+            // In order to specify the aws sts endpoint, both the cluster and uri must be set.
+            // This is due to an envoy limitation which cannot infer the host or path from the cluster,
+            // and therefore must be explicitly specified via the uri
+            envoy.config.filter.http.aws_lambda.v2.AWSLambdaConfig.ServiceAccountCredentials service_account_credentials = 2;
+        }
     }
 
     AWSOptions aws_options = 5;
@@ -353,14 +402,14 @@ message GlooOptions {
         // will instead return a configurable direct response to clients. When routes are replaced,
         // Gloo will configure Envoy with a special listener which serves direct responses.
         //
-        // Note: enabling this option allows Gloo to accept partially valid proxy configurations
+        // Note: enabling this option allows Gloo to accept partially valid proxy configurations.
         bool replace_invalid_routes = 1;
 
-        // replaced routes reply to clients with this response code
-        // default is 404
+        // replaced routes reply to clients with this response code.
+        // default is 404.
         uint32 invalid_route_response_code = 2;
 
-        // replaced routes reply to clients with this response body
+        // replaced routes reply to clients with this response body.
         // default is 'Gloo Gateway has invalid configuration. Administrators should run `glooctl check` to find and fix config errors.'
         string invalid_route_response_body = 3;
     }
@@ -390,35 +439,44 @@ message GlooOptions {
     // Set this option to specify the default max program size for regexes. If not specified, 
     // defaults to 100.
     google.protobuf.UInt32Value regex_max_program_size = 10;
+
+    // (Enterprise Only): Where the `gloo` REST xDS server should bind. Used by Gloo Federation.
+    // Defaults to `0.0.0.0:9976`
+    string rest_xds_bind_addr = 11;
 }
 
 // Settings specific to the Gateway controller
 message GatewayOptions {
-    // Address of the `gloo` config validation server. Defaults to `gloo:9988`
+    // Address of the `gloo` config validation server. Defaults to `gloo:9988`.
     string validation_server_addr = 1;
 
     // options for configuring admission control / validation
     message ValidationOptions {
-        // Address of the `gloo` proxy validation grpc server. Defaults to `gloo:9988`
-        // This field is required in order to enable fine-grained admission control
+        // Address of the `gloo` proxy validation grpc server. Defaults to `gloo:9988`.
+        // This field is required in order to enable fine-grained admission control.
         string proxy_validation_server_addr = 2;
 
-        // Path to TLS Certificate for Kubernetes Validating webhook. Defaults to `/etc/gateway/validation-certs/tls.crt`
+        // Path to TLS Certificate for Kubernetes Validating webhook. Defaults to `/etc/gateway/validation-certs/tls.crt`.
         string validation_webhook_tls_cert = 3;
 
-        // Path to TLS Private Key for Kubernetes Validating webhook. Defaults to `/etc/gateway/validation-certs/tls.key`
+        // Path to TLS Private Key for Kubernetes Validating webhook. Defaults to `/etc/gateway/validation-certs/tls.key`.
         string validation_webhook_tls_key = 4;
 
         // When Gateway cannot communicate with Gloo (e.g. Gloo is offline)
         // resources will be rejected by default.
         // Enable the `ignoreGlooValidationFailure` to prevent the Validation server from rejecting
-        // resources due to network errors
+        // resources due to network errors.
         bool ignore_gloo_validation_failure = 5;
 
-        // Always accept resources even if validation produced an error
-        // Validation will still log the error and increment the validation.gateway.solo.io/resources_rejected stat
-        // Currently defaults to true - must be set to `false` to prevent writing invalid resources to storage
+        // Always accept resources even if validation produced an error.
+        // Validation will still log the error and increment the validation.gateway.solo.io/resources_rejected stat.
+        // Currently defaults to true - must be set to `false` to prevent writing invalid resources to storage.
         google.protobuf.BoolValue always_accept = 6;
+
+        // Accept resources if validation produced a warning (defaults to true).
+        // By settings to false, this means that validation will start rejecting resources that would result
+        // in warnings, rather than just those that would result in errors.
+        google.protobuf.BoolValue allow_warnings = 7;
     }
 
     // If provided, the Gateway will perform [Dynamic Admission Control](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/)
@@ -426,10 +484,14 @@ message GatewayOptions {
     ValidationOptions validation = 3;
 
     // When true, the Gateway controller will consume Gateway custom resources from all watch namespaces, rather
-    // than just the Gateway CRDs in its own namespace
+    // than just the Gateway CRDs in its own namespace.
     bool read_gateways_from_all_namespaces = 4;
 
     // Deprecated.
     // This setting is ignored. Maintained for backwards compatibility with settings exposed on 1.2.x branch of Gloo.
     bool always_sort_route_table_routes = 5 [deprecated=true];
+
+    // If set, compresses proxy space. This can help make the Proxy CRD smaller to fit in etcd.
+    // This is an advanced option. Use with care.
+    bool compressed_proxy_spec = 6;
 }

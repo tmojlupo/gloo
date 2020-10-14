@@ -25,15 +25,22 @@ weight: 5
 - [Apr](#apr)
 - [SaltedHashedPassword](#saltedhashedpassword)
 - [OAuth](#oauth)
+- [OAuth2](#oauth2)
+- [OidcAuthorizationCode](#oidcauthorizationcode)
+- [AccessTokenValidation](#accesstokenvalidation)
 - [OauthSecret](#oauthsecret)
 - [ApiKeyAuth](#apikeyauth)
+- [SecretKey](#secretkey)
 - [ApiKeySecret](#apikeysecret)
 - [OpaAuth](#opaauth)
 - [Ldap](#ldap)
 - [ConnectionPool](#connectionpool)
 - [ExtAuthConfig](#extauthconfig)
 - [OAuthConfig](#oauthconfig)
+- [OidcAuthorizationCodeConfig](#oidcauthorizationcodeconfig)
+- [OAuth2Config](#oauth2config)
 - [ApiKeyAuthConfig](#apikeyauthconfig)
+- [KeyMetadata](#keymetadata)
 - [OpaAuthConfig](#opaauthconfig)
 - [Config](#config)
   
@@ -58,6 +65,7 @@ format that will be included in the extauth snapshot.
 "status": .core.solo.io.Status
 "metadata": .core.solo.io.Metadata
 "configs": []enterprise.gloo.solo.io.AuthConfig.Config
+"booleanExpr": .google.protobuf.StringValue
 
 ```
 
@@ -65,7 +73,8 @@ format that will be included in the extauth snapshot.
 | ----- | ---- | ----------- |----------- | 
 | `status` | [.core.solo.io.Status](../../../../../../../../../../solo-kit/api/v1/status.proto.sk/#status) | Status indicates the validation status of this resource. Status is read-only by clients, and set by gloo during validation. |  |
 | `metadata` | [.core.solo.io.Metadata](../../../../../../../../../../solo-kit/api/v1/metadata.proto.sk/#metadata) | Metadata contains the object metadata for this resource. |  |
-| `configs` | [[]enterprise.gloo.solo.io.AuthConfig.Config](../extauth.proto.sk/#config) |  |  |
+| `configs` | [[]enterprise.gloo.solo.io.AuthConfig.Config](../extauth.proto.sk/#config) | List of auth configs to be checked for requests on a route referencing this auth config, By default, every config must be authorized for the entire request to be authorized. This behavior can be changed by defining names for each config and defining `boolean_expr` below. State is shared between successful requests on the chain, i.e., the headers returned from each successful auth service get appended into the final auth response. |  |
+| `booleanExpr` | [.google.protobuf.StringValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/string-value) | How to handle processing of named configs within an auth config chain. An example config might be: ( basic1 || basic2 || (oidc1 && !oidc2) ) The boolean expression is evaluated left to right but honors parenthesis and short-circuiting. |  |
 
 
 
@@ -76,8 +85,10 @@ format that will be included in the extauth snapshot.
 
 
 ```yaml
+"name": .google.protobuf.StringValue
 "basicAuth": .enterprise.gloo.solo.io.BasicAuth
 "oauth": .enterprise.gloo.solo.io.OAuth
+"oauth2": .enterprise.gloo.solo.io.OAuth2
 "apiKeyAuth": .enterprise.gloo.solo.io.ApiKeyAuth
 "pluginAuth": .enterprise.gloo.solo.io.AuthPlugin
 "opaAuth": .enterprise.gloo.solo.io.OpaAuth
@@ -87,12 +98,14 @@ format that will be included in the extauth snapshot.
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `basicAuth` | [.enterprise.gloo.solo.io.BasicAuth](../extauth.proto.sk/#basicauth) |  Only one of `basicAuth`, `oauth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
-| `oauth` | [.enterprise.gloo.solo.io.OAuth](../extauth.proto.sk/#oauth) |  Only one of `oauth`, `basicAuth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
-| `apiKeyAuth` | [.enterprise.gloo.solo.io.ApiKeyAuth](../extauth.proto.sk/#apikeyauth) |  Only one of `apiKeyAuth`, `basicAuth`, `oauth`, `pluginAuth`, or `ldap` can be set. |  |
-| `pluginAuth` | [.enterprise.gloo.solo.io.AuthPlugin](../extauth.proto.sk/#authplugin) |  Only one of `pluginAuth`, `basicAuth`, `oauth`, `apiKeyAuth`, or `ldap` can be set. |  |
-| `opaAuth` | [.enterprise.gloo.solo.io.OpaAuth](../extauth.proto.sk/#opaauth) |  Only one of `opaAuth`, `basicAuth`, `oauth`, `apiKeyAuth`, or `ldap` can be set. |  |
-| `ldap` | [.enterprise.gloo.solo.io.Ldap](../extauth.proto.sk/#ldap) |  Only one of `ldap`, `basicAuth`, `oauth`, `apiKeyAuth`, or `opaAuth` can be set. |  |
+| `name` | [.google.protobuf.StringValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/string-value) | optional: used when defining complex boolean logic, if `boolean_expr` is defined below. Also used in logging. If omitted, an automatically generated name will be used (e.g. config_0, of the pattern 'config_$INDEX_IN_CHAIN'). In the case of plugin auth, this field is ignored in favor of the name assigned on the plugin config itself. |  |
+| `basicAuth` | [.enterprise.gloo.solo.io.BasicAuth](../extauth.proto.sk/#basicauth) |  Only one of `basicAuth`, `oauth`, `oauth2`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `oauth` | [.enterprise.gloo.solo.io.OAuth](../extauth.proto.sk/#oauth) |  Only one of `oauth`, `basicAuth`, `oauth2`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `oauth2` | [.enterprise.gloo.solo.io.OAuth2](../extauth.proto.sk/#oauth2) |  Only one of `oauth2`, `basicAuth`, `oauth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `apiKeyAuth` | [.enterprise.gloo.solo.io.ApiKeyAuth](../extauth.proto.sk/#apikeyauth) |  Only one of `apiKeyAuth`, `basicAuth`, `oauth`, `oauth2`, `pluginAuth`, or `ldap` can be set. |  |
+| `pluginAuth` | [.enterprise.gloo.solo.io.AuthPlugin](../extauth.proto.sk/#authplugin) |  Only one of `pluginAuth`, `basicAuth`, `oauth`, `oauth2`, `apiKeyAuth`, or `ldap` can be set. |  |
+| `opaAuth` | [.enterprise.gloo.solo.io.OpaAuth](../extauth.proto.sk/#opaauth) |  Only one of `opaAuth`, `basicAuth`, `oauth`, `oauth2`, `apiKeyAuth`, or `ldap` can be set. |  |
+| `ldap` | [.enterprise.gloo.solo.io.Ldap](../extauth.proto.sk/#ldap) |  Only one of `ldap`, `basicAuth`, `oauth`, `oauth2`, `apiKeyAuth`, or `opaAuth` can be set. |  |
 
 
 
@@ -330,6 +343,55 @@ This is used with custom auth servers.
 ---
 ### OAuth
 
+ 
+Deprecated: Prefer OAuth2
+
+```yaml
+"clientId": string
+"clientSecretRef": .core.solo.io.ResourceRef
+"issuerUrl": string
+"authEndpointQueryParams": map<string, string>
+"appUrl": string
+"callbackPath": string
+"scopes": []string
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `clientId` | `string` | your client id as registered with the issuer. |  |
+| `clientSecretRef` | [.core.solo.io.ResourceRef](../../../../../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | your client secret as registered with the issuer. |  |
+| `issuerUrl` | `string` | The url of the issuer. We will look for OIDC information in issuerUrl+ ".well-known/openid-configuration". |  |
+| `authEndpointQueryParams` | `map<string, string>` | extra query parameters to apply to the Ext-Auth service's authorization request to the identity provider. |  |
+| `appUrl` | `string` | we to redirect after successful auth, if we can't determine the original url this should be your publicly available app url. |  |
+| `callbackPath` | `string` | a callback path relative to app url that will be used for OIDC callbacks. needs to not be used by the application. |  |
+| `scopes` | `[]string` | Scopes to request in addition to openid scope. |  |
+
+
+
+
+---
+### OAuth2
+
+
+
+```yaml
+"oidcAuthorizationCode": .enterprise.gloo.solo.io.OidcAuthorizationCode
+"accessTokenValidation": .enterprise.gloo.solo.io.AccessTokenValidation
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `oidcAuthorizationCode` | [.enterprise.gloo.solo.io.OidcAuthorizationCode](../extauth.proto.sk/#oidcauthorizationcode) | provide issuer location and let gloo handle OIDC flow for you. requests authorized by validating the contents of ID token. can also authorize the access token if configured. Only one of `oidcAuthorizationCode` or `accessTokenValidation` can be set. |  |
+| `accessTokenValidation` | [.enterprise.gloo.solo.io.AccessTokenValidation](../extauth.proto.sk/#accesstokenvalidation) | provide the access token on the request and let gloo handle authorization. according to https://tools.ietf.org/html/rfc6750 you can pass tokens through: - form-encoded body parameter. recommended, more likely to appear. e.g.: Authorization: Bearer mytoken123 - URI query parameter e.g. access_token=mytoken123 - and (preferably) secure cookies. Only one of `accessTokenValidation` or `oidcAuthorizationCode` can be set. |  |
+
+
+
+
+---
+### OidcAuthorizationCode
+
 
 
 ```yaml
@@ -352,6 +414,27 @@ This is used with custom auth servers.
 | `appUrl` | `string` | we to redirect after successful auth, if we can't determine the original url this should be your publicly available app url. |  |
 | `callbackPath` | `string` | a callback path relative to app url that will be used for OIDC callbacks. needs to not be used by the application. |  |
 | `scopes` | `[]string` | Scopes to request in addition to openid scope. |  |
+
+
+
+
+---
+### AccessTokenValidation
+
+
+
+```yaml
+"introspectionUrl": string
+"userinfoUrl": string
+"cacheTimeout": .google.protobuf.Duration
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `introspectionUrl` | `string` | the url for the OAuth2.0 access token introspection endpoint. if provided, the (opaque) access token provided or received from the oauth authorization endpoint will be validated against this endpoint, or locally cached responses for this access token. |  |
+| `userinfoUrl` | `string` | the url for the OIDC userinfo endpoint. if provided, the (opaque) access token provided or received from the oauth endpoint will be queried and the userinfo response (or cached response) will be put in the `AuthorizationRequest` state. this can be useful to leverage the userinfo response in, for example, an extauth server plugin. |  |
+| `cacheTimeout` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) | how long the token introspection and userinfo endpoint response for a specific access token should be kept in the in-memory cache. the result will be invalidated at this timeout, or at "exp" time from the introspection result, whichever comes sooner. if omitted, defaults to 10 minutes. if zero, then no caching will be done. |  |
 
 
 
@@ -381,13 +464,36 @@ This is used with custom auth servers.
 ```yaml
 "labelSelector": map<string, string>
 "apiKeySecretRefs": []core.solo.io.ResourceRef
+"headerName": string
+"headersFromMetadata": map<string, .enterprise.gloo.solo.io.ApiKeyAuth.SecretKey>
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `labelSelector` | `map<string, string>` | identify all valid apikey secrets using the provided label selector.<br/> apikey secrets must be in gloo's watch namespaces for gloo to locate them.<br/> **These are labels on the apikey secret's metadata, not the 'labels' field of the `ApiKeySecret`**. |  |
-| `apiKeySecretRefs` | [[]core.solo.io.ResourceRef](../../../../../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | a way to reference apikey secrets individually (good for testing); prefer apikey groups via label selector. |  |
+| `labelSelector` | `map<string, string>` | Identify all valid API key secrets that match the provided label selector.<br/> API key secrets must be in one of the watch namespaces for gloo to locate them. |  |
+| `apiKeySecretRefs` | [[]core.solo.io.ResourceRef](../../../../../../../../../../solo-kit/api/v1/ref.proto.sk/#resourceref) | A way to directly reference API key secrets. This configuration can be useful for testing, but in general the more flexible label selector should be preferred. |  |
+| `headerName` | `string` | When receiving a request, the Gloo Enterprise external auth server will look for an API key in a header with this name. This field is optional; if not provided it defaults to `api-key`. |  |
+| `headersFromMetadata` | `map<string, .enterprise.gloo.solo.io.ApiKeyAuth.SecretKey>` | API key secrets might contain additional data (e.g. the ID of the user that the API key belongs to) in the form of extra keys included in the secret's `data` field. This configuration can be used to add this data to the headers of successfully authenticated requests. Each key in the map represents the name of header to be added; the corresponding value determines the key in the secret data that will be inspected to determine the value for the header. |  |
+
+
+
+
+---
+### SecretKey
+
+
+
+```yaml
+"name": string
+"required": bool
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `name` | `string` | (Required) The key of the secret data entry to inspect. |  |
+| `required` | `bool` | If this field is set to `true`, Gloo will reject an API key secret that does not contain the given key. Defaults to `false`. In this case, if a secret does not contain the requested data, no header will be added to the request. |  |
 
 
 
@@ -401,14 +507,16 @@ This is used with custom auth servers.
 "generateApiKey": bool
 "apiKey": string
 "labels": []string
+"metadata": map<string, string>
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `generateApiKey` | `bool` | if true, generate an apikey. |  |
-| `apiKey` | `string` | if present, use the provided apikey. |  |
-| `labels` | `[]string` | a list of labels (key=value) for the apikey secret.<br/> These labels are used when creating an ApiKeySecret via `glooctl` and then are copied to the metadata of the created secret. |  |
+| `generateApiKey` | `bool` | If true, generate an API key. This field is deprecated as it was used only internally by `glooctl` and is not actually part of the secret API. |  |
+| `apiKey` | `string` | The value of the API key. |  |
+| `labels` | `[]string` | A list of labels (key=value) for the apikey secret.<br/> These labels are used when creating an ApiKeySecret via `glooctl` and then are copied to the metadata of the created secret. This field is deprecated as it was used only internally by `glooctl` and is not actually part of the secret API. |  |
+| `metadata` | `map<string, string>` | If the secret data contains entries in addition to the API key one, they will be copied to this field. |  |
 
 
 
@@ -492,19 +600,51 @@ is requested (meaning that all the polled connections are in use), the connectio
 ```yaml
 "authConfigRefName": string
 "configs": []enterprise.gloo.solo.io.ExtAuthConfig.Config
+"booleanExpr": .google.protobuf.StringValue
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
 | `authConfigRefName` | `string` |  |  |
-| `configs` | [[]enterprise.gloo.solo.io.ExtAuthConfig.Config](../extauth.proto.sk/#config) |  |  |
+| `configs` | [[]enterprise.gloo.solo.io.ExtAuthConfig.Config](../extauth.proto.sk/#config) | List of auth configs to be checked for requests on a route referencing this auth config, By default, every config must be authorized for the entire request to be authorized. This behavior can be changed by defining names for each config and defining `boolean_expr` below. State is shared between successful requests on the chain, i.e., the headers returned from each successful auth service get appended into the final auth response. |  |
+| `booleanExpr` | [.google.protobuf.StringValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/string-value) | How to handle processing of named configs within an auth config chain. An example config might be: ( basic1 || basic2 || (oidc1 && !oidc2) ) The boolean expression is evaluated left to right but honors parenthesis and short-circuiting. |  |
 
 
 
 
 ---
 ### OAuthConfig
+
+ 
+Deprecated, prefer OAuth2Config
+
+```yaml
+"clientId": string
+"clientSecret": string
+"issuerUrl": string
+"authEndpointQueryParams": map<string, string>
+"appUrl": string
+"callbackPath": string
+"scopes": []string
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `clientId` | `string` | your client id as registered with the issuer. |  |
+| `clientSecret` | `string` | your client secret as registered with the issuer. |  |
+| `issuerUrl` | `string` | The url of the issuer. We will look for OIDC information in issuerUrl+ ".well-known/openid-configuration". |  |
+| `authEndpointQueryParams` | `map<string, string>` | extra query parameters to apply to the Ext-Auth service's authorization request to the identity provider. |  |
+| `appUrl` | `string` | we to redirect after successful auth, if we can't determine the original url this should be your publicly available app url. |  |
+| `callbackPath` | `string` | a callback path relative to app url that will be used for OIDC callbacks. needs to not be used by the application. |  |
+| `scopes` | `[]string` | scopes to request in addition to the openid scope. |  |
+
+
+
+
+---
+### OidcAuthorizationCodeConfig
 
 
 
@@ -533,19 +673,61 @@ is requested (meaning that all the polled connections are in use), the connectio
 
 
 ---
+### OAuth2Config
+
+
+
+```yaml
+"oidcAuthorizationCode": .enterprise.gloo.solo.io.ExtAuthConfig.OidcAuthorizationCodeConfig
+"accessTokenValidation": .enterprise.gloo.solo.io.AccessTokenValidation
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `oidcAuthorizationCode` | [.enterprise.gloo.solo.io.ExtAuthConfig.OidcAuthorizationCodeConfig](../extauth.proto.sk/#oidcauthorizationcodeconfig) | provide issuer location and let gloo handle OIDC flow for you. requests authorized by validating the contents of ID token. can also authorize the access token if configured. Only one of `oidcAuthorizationCode` or `accessTokenValidation` can be set. |  |
+| `accessTokenValidation` | [.enterprise.gloo.solo.io.AccessTokenValidation](../extauth.proto.sk/#accesstokenvalidation) | provide the access token on the request and let gloo handle authorization. according to https://tools.ietf.org/html/rfc6750 you can pass tokens through: - form-encoded body parameter. recommended, more likely to appear. e.g.: Authorization: Bearer mytoken123 - URI query parameter e.g. access_token=mytoken123 - and (preferably) secure cookies. Only one of `accessTokenValidation` or `oidcAuthorizationCode` can be set. |  |
+
+
+
+
+---
 ### ApiKeyAuthConfig
 
  
 **NOTE: This configuration is not user-facing and will be auto generated**
 
 ```yaml
-"validApiKeyAndUser": map<string, string>
+"validApiKeys": map<string, .enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.KeyMetadata>
+"headerName": string
+"headersFromKeyMetadata": map<string, string>
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `validApiKeyAndUser` | `map<string, string>` | A mapping of valid apikeys to their associated plaintext users. This map is automatically populated with the relevant `ApiKeySecret`s. The user is mapped as the name of `Secret` which contains the `ApiKeySecret`. |  |
+| `validApiKeys` | `map<string, .enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.KeyMetadata>` | A mapping of valid API keys to their associated metadata. This map is automatically populated with the information from the relevant `ApiKeySecret`s. |  |
+| `headerName` | `string` | (Optional) When receiving a request, the Gloo Enterprise external auth server will look for an API key in a header with this name. This field is optional; if not provided it defaults to `api-key`. |  |
+| `headersFromKeyMetadata` | `map<string, string>` | Determines the key metadata that will be included as headers on the upstream request. Each entry represents a header to add: the key is the name of the header, and the value is the key that will be used to look up the data entry in the key metadata. |  |
+
+
+
+
+---
+### KeyMetadata
+
+
+
+```yaml
+"username": string
+"metadata": map<string, string>
+
+```
+
+| Field | Type | Description | Default |
+| ----- | ---- | ----------- |----------- | 
+| `username` | `string` | The user is mapped as the name of `Secret` which contains the `ApiKeySecret`. |  |
+| `metadata` | `map<string, string>` | The metadata present on the `ApiKeySecret`. |  |
 
 
 
@@ -575,7 +757,9 @@ is requested (meaning that all the polled connections are in use), the connectio
 
 
 ```yaml
+"name": .google.protobuf.StringValue
 "oauth": .enterprise.gloo.solo.io.ExtAuthConfig.OAuthConfig
+"oauth2": .enterprise.gloo.solo.io.ExtAuthConfig.OAuth2Config
 "basicAuth": .enterprise.gloo.solo.io.BasicAuth
 "apiKeyAuth": .enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig
 "pluginAuth": .enterprise.gloo.solo.io.AuthPlugin
@@ -586,12 +770,14 @@ is requested (meaning that all the polled connections are in use), the connectio
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
-| `oauth` | [.enterprise.gloo.solo.io.ExtAuthConfig.OAuthConfig](../extauth.proto.sk/#oauthconfig) |  Only one of `oauth`, `basicAuth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
-| `basicAuth` | [.enterprise.gloo.solo.io.BasicAuth](../extauth.proto.sk/#basicauth) |  Only one of `basicAuth`, `oauth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
-| `apiKeyAuth` | [.enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig](../extauth.proto.sk/#apikeyauthconfig) |  Only one of `apiKeyAuth`, `oauth`, `basicAuth`, `pluginAuth`, or `ldap` can be set. |  |
-| `pluginAuth` | [.enterprise.gloo.solo.io.AuthPlugin](../extauth.proto.sk/#authplugin) |  Only one of `pluginAuth`, `oauth`, `basicAuth`, `apiKeyAuth`, or `ldap` can be set. |  |
-| `opaAuth` | [.enterprise.gloo.solo.io.ExtAuthConfig.OpaAuthConfig](../extauth.proto.sk/#opaauthconfig) |  Only one of `opaAuth`, `oauth`, `basicAuth`, `apiKeyAuth`, or `ldap` can be set. |  |
-| `ldap` | [.enterprise.gloo.solo.io.Ldap](../extauth.proto.sk/#ldap) |  Only one of `ldap`, `oauth`, `basicAuth`, `apiKeyAuth`, or `opaAuth` can be set. |  |
+| `name` | [.google.protobuf.StringValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/string-value) | optional: used when defining complex boolean logic, if `boolean_expr` is defined below. Also used in logging. If omitted, an automatically generated name will be used (e.g. config_0, of the pattern 'config_$INDEX_IN_CHAIN'). In the case of plugin auth, this field is ignored in favor of the name assigned on the plugin config itself. |  |
+| `oauth` | [.enterprise.gloo.solo.io.ExtAuthConfig.OAuthConfig](../extauth.proto.sk/#oauthconfig) |  Only one of `oauth`, `oauth2`, `basicAuth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `oauth2` | [.enterprise.gloo.solo.io.ExtAuthConfig.OAuth2Config](../extauth.proto.sk/#oauth2config) |  Only one of `oauth2`, `oauth`, `basicAuth`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `basicAuth` | [.enterprise.gloo.solo.io.BasicAuth](../extauth.proto.sk/#basicauth) |  Only one of `basicAuth`, `oauth`, `oauth2`, `apiKeyAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `apiKeyAuth` | [.enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig](../extauth.proto.sk/#apikeyauthconfig) |  Only one of `apiKeyAuth`, `oauth`, `oauth2`, `basicAuth`, `pluginAuth`, or `ldap` can be set. |  |
+| `pluginAuth` | [.enterprise.gloo.solo.io.AuthPlugin](../extauth.proto.sk/#authplugin) |  Only one of `pluginAuth`, `oauth`, `oauth2`, `basicAuth`, `apiKeyAuth`, or `ldap` can be set. |  |
+| `opaAuth` | [.enterprise.gloo.solo.io.ExtAuthConfig.OpaAuthConfig](../extauth.proto.sk/#opaauthconfig) |  Only one of `opaAuth`, `oauth`, `oauth2`, `basicAuth`, `apiKeyAuth`, or `ldap` can be set. |  |
+| `ldap` | [.enterprise.gloo.solo.io.Ldap](../extauth.proto.sk/#ldap) |  Only one of `ldap`, `oauth`, `oauth2`, `basicAuth`, `apiKeyAuth`, or `opaAuth` can be set. |  |
 
 
 

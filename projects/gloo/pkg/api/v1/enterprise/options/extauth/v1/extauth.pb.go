@@ -42,11 +42,21 @@ type AuthConfig struct {
 	// Status is read-only by clients, and set by gloo during validation
 	Status core.Status `protobuf:"bytes,1,opt,name=status,proto3" json:"status" testdiff:"ignore"`
 	// Metadata contains the object metadata for this resource
-	Metadata             core.Metadata        `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata"`
-	Configs              []*AuthConfig_Config `protobuf:"bytes,3,rep,name=configs,proto3" json:"configs,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}             `json:"-"`
-	XXX_unrecognized     []byte               `json:"-"`
-	XXX_sizecache        int32                `json:"-"`
+	Metadata core.Metadata `protobuf:"bytes,2,opt,name=metadata,proto3" json:"metadata"`
+	// List of auth configs to be checked for requests on a route referencing this auth config,
+	// By default, every config must be authorized for the entire request to be authorized. This
+	// behavior can be changed by defining names for each config and defining `boolean_expr` below.
+	//
+	// State is shared between successful requests on the chain, i.e., the headers returned from each
+	// successful auth service get appended into the final auth response.
+	Configs []*AuthConfig_Config `protobuf:"bytes,3,rep,name=configs,proto3" json:"configs,omitempty"`
+	// How to handle processing of named configs within an auth config chain.
+	// An example config might be: ( basic1 || basic2 || (oidc1 && !oidc2) )
+	// The boolean expression is evaluated left to right but honors parenthesis and short-circuiting.
+	BooleanExpr          *types.StringValue `protobuf:"bytes,10,opt,name=boolean_expr,json=booleanExpr,proto3" json:"boolean_expr,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}           `json:"-"`
+	XXX_unrecognized     []byte             `json:"-"`
+	XXX_sizecache        int32              `json:"-"`
 }
 
 func (m *AuthConfig) Reset()         { *m = AuthConfig{} }
@@ -94,10 +104,23 @@ func (m *AuthConfig) GetConfigs() []*AuthConfig_Config {
 	return nil
 }
 
+func (m *AuthConfig) GetBooleanExpr() *types.StringValue {
+	if m != nil {
+		return m.BooleanExpr
+	}
+	return nil
+}
+
 type AuthConfig_Config struct {
+	// optional: used when defining complex boolean logic, if `boolean_expr` is defined below. Also used
+	// in logging. If omitted, an automatically generated name will be used (e.g. config_0, of the
+	// pattern 'config_$INDEX_IN_CHAIN'). In the case of plugin auth, this field is ignored in favor of
+	// the name assigned on the plugin config itself.
+	Name *types.StringValue `protobuf:"bytes,9,opt,name=name,proto3" json:"name,omitempty"`
 	// Types that are valid to be assigned to AuthConfig:
 	//	*AuthConfig_Config_BasicAuth
 	//	*AuthConfig_Config_Oauth
+	//	*AuthConfig_Config_Oauth2
 	//	*AuthConfig_Config_ApiKeyAuth
 	//	*AuthConfig_Config_PluginAuth
 	//	*AuthConfig_Config_OpaAuth
@@ -143,6 +166,9 @@ type AuthConfig_Config_BasicAuth struct {
 type AuthConfig_Config_Oauth struct {
 	Oauth *OAuth `protobuf:"bytes,2,opt,name=oauth,proto3,oneof" json:"oauth,omitempty"`
 }
+type AuthConfig_Config_Oauth2 struct {
+	Oauth2 *OAuth2 `protobuf:"bytes,8,opt,name=oauth2,proto3,oneof" json:"oauth2,omitempty"`
+}
 type AuthConfig_Config_ApiKeyAuth struct {
 	ApiKeyAuth *ApiKeyAuth `protobuf:"bytes,4,opt,name=api_key_auth,json=apiKeyAuth,proto3,oneof" json:"api_key_auth,omitempty"`
 }
@@ -158,6 +184,7 @@ type AuthConfig_Config_Ldap struct {
 
 func (*AuthConfig_Config_BasicAuth) isAuthConfig_Config_AuthConfig()  {}
 func (*AuthConfig_Config_Oauth) isAuthConfig_Config_AuthConfig()      {}
+func (*AuthConfig_Config_Oauth2) isAuthConfig_Config_AuthConfig()     {}
 func (*AuthConfig_Config_ApiKeyAuth) isAuthConfig_Config_AuthConfig() {}
 func (*AuthConfig_Config_PluginAuth) isAuthConfig_Config_AuthConfig() {}
 func (*AuthConfig_Config_OpaAuth) isAuthConfig_Config_AuthConfig()    {}
@@ -170,6 +197,13 @@ func (m *AuthConfig_Config) GetAuthConfig() isAuthConfig_Config_AuthConfig {
 	return nil
 }
 
+func (m *AuthConfig_Config) GetName() *types.StringValue {
+	if m != nil {
+		return m.Name
+	}
+	return nil
+}
+
 func (m *AuthConfig_Config) GetBasicAuth() *BasicAuth {
 	if x, ok := m.GetAuthConfig().(*AuthConfig_Config_BasicAuth); ok {
 		return x.BasicAuth
@@ -177,9 +211,17 @@ func (m *AuthConfig_Config) GetBasicAuth() *BasicAuth {
 	return nil
 }
 
+// Deprecated: Do not use.
 func (m *AuthConfig_Config) GetOauth() *OAuth {
 	if x, ok := m.GetAuthConfig().(*AuthConfig_Config_Oauth); ok {
 		return x.Oauth
+	}
+	return nil
+}
+
+func (m *AuthConfig_Config) GetOauth2() *OAuth2 {
+	if x, ok := m.GetAuthConfig().(*AuthConfig_Config_Oauth2); ok {
+		return x.Oauth2
 	}
 	return nil
 }
@@ -217,6 +259,7 @@ func (*AuthConfig_Config) XXX_OneofWrappers() []interface{} {
 	return []interface{}{
 		(*AuthConfig_Config_BasicAuth)(nil),
 		(*AuthConfig_Config_Oauth)(nil),
+		(*AuthConfig_Config_Oauth2)(nil),
 		(*AuthConfig_Config_ApiKeyAuth)(nil),
 		(*AuthConfig_Config_PluginAuth)(nil),
 		(*AuthConfig_Config_OpaAuth)(nil),
@@ -896,24 +939,25 @@ func (m *BasicAuth_Apr_SaltedHashedPassword) GetHashedPassword() string {
 	return ""
 }
 
+// Deprecated: Prefer OAuth2
 type OAuth struct {
 	// your client id as registered with the issuer
-	ClientId string `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	ClientId string `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"` // Deprecated: Do not use.
 	// your client secret as registered with the issuer
-	ClientSecretRef *core.ResourceRef `protobuf:"bytes,2,opt,name=client_secret_ref,json=clientSecretRef,proto3" json:"client_secret_ref,omitempty"`
+	ClientSecretRef *core.ResourceRef `protobuf:"bytes,2,opt,name=client_secret_ref,json=clientSecretRef,proto3" json:"client_secret_ref,omitempty"` // Deprecated: Do not use.
 	// The url of the issuer. We will look for OIDC information in issuerUrl+
 	// ".well-known/openid-configuration"
-	IssuerUrl string `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"`
+	IssuerUrl string `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"` // Deprecated: Do not use.
 	// extra query parameters to apply to the Ext-Auth service's authorization request to the identity provider.
-	AuthEndpointQueryParams map[string]string `protobuf:"bytes,7,rep,name=auth_endpoint_query_params,json=authEndpointQueryParams,proto3" json:"auth_endpoint_query_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	AuthEndpointQueryParams map[string]string `protobuf:"bytes,7,rep,name=auth_endpoint_query_params,json=authEndpointQueryParams,proto3" json:"auth_endpoint_query_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"` // Deprecated: Do not use.
 	// we to redirect after successful auth, if we can't determine the original
 	// url this should be your publicly available app url.
-	AppUrl string `protobuf:"bytes,4,opt,name=app_url,json=appUrl,proto3" json:"app_url,omitempty"`
+	AppUrl string `protobuf:"bytes,4,opt,name=app_url,json=appUrl,proto3" json:"app_url,omitempty"` // Deprecated: Do not use.
 	// a callback path relative to app url that will be used for OIDC callbacks.
 	// needs to not be used by the application
-	CallbackPath string `protobuf:"bytes,5,opt,name=callback_path,json=callbackPath,proto3" json:"callback_path,omitempty"`
+	CallbackPath string `protobuf:"bytes,5,opt,name=callback_path,json=callbackPath,proto3" json:"callback_path,omitempty"` // Deprecated: Do not use.
 	// Scopes to request in addition to openid scope.
-	Scopes               []string `protobuf:"bytes,6,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	Scopes               []string `protobuf:"bytes,6,rep,name=scopes,proto3" json:"scopes,omitempty"` // Deprecated: Do not use.
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -943,6 +987,7 @@ func (m *OAuth) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_OAuth proto.InternalMessageInfo
 
+// Deprecated: Do not use.
 func (m *OAuth) GetClientId() string {
 	if m != nil {
 		return m.ClientId
@@ -950,6 +995,7 @@ func (m *OAuth) GetClientId() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *OAuth) GetClientSecretRef() *core.ResourceRef {
 	if m != nil {
 		return m.ClientSecretRef
@@ -957,6 +1003,7 @@ func (m *OAuth) GetClientSecretRef() *core.ResourceRef {
 	return nil
 }
 
+// Deprecated: Do not use.
 func (m *OAuth) GetIssuerUrl() string {
 	if m != nil {
 		return m.IssuerUrl
@@ -964,6 +1011,7 @@ func (m *OAuth) GetIssuerUrl() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *OAuth) GetAuthEndpointQueryParams() map[string]string {
 	if m != nil {
 		return m.AuthEndpointQueryParams
@@ -971,6 +1019,7 @@ func (m *OAuth) GetAuthEndpointQueryParams() map[string]string {
 	return nil
 }
 
+// Deprecated: Do not use.
 func (m *OAuth) GetAppUrl() string {
 	if m != nil {
 		return m.AppUrl
@@ -978,6 +1027,7 @@ func (m *OAuth) GetAppUrl() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *OAuth) GetCallbackPath() string {
 	if m != nil {
 		return m.CallbackPath
@@ -985,11 +1035,274 @@ func (m *OAuth) GetCallbackPath() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *OAuth) GetScopes() []string {
 	if m != nil {
 		return m.Scopes
 	}
 	return nil
+}
+
+type OAuth2 struct {
+	// Types that are valid to be assigned to OauthType:
+	//	*OAuth2_OidcAuthorizationCode
+	//	*OAuth2_AccessTokenValidation
+	OauthType            isOAuth2_OauthType `protobuf_oneof:"oauth_type"`
+	XXX_NoUnkeyedLiteral struct{}           `json:"-"`
+	XXX_unrecognized     []byte             `json:"-"`
+	XXX_sizecache        int32              `json:"-"`
+}
+
+func (m *OAuth2) Reset()         { *m = OAuth2{} }
+func (m *OAuth2) String() string { return proto.CompactTextString(m) }
+func (*OAuth2) ProtoMessage()    {}
+func (*OAuth2) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{9}
+}
+func (m *OAuth2) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_OAuth2.Unmarshal(m, b)
+}
+func (m *OAuth2) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_OAuth2.Marshal(b, m, deterministic)
+}
+func (m *OAuth2) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_OAuth2.Merge(m, src)
+}
+func (m *OAuth2) XXX_Size() int {
+	return xxx_messageInfo_OAuth2.Size(m)
+}
+func (m *OAuth2) XXX_DiscardUnknown() {
+	xxx_messageInfo_OAuth2.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_OAuth2 proto.InternalMessageInfo
+
+type isOAuth2_OauthType interface {
+	isOAuth2_OauthType()
+	Equal(interface{}) bool
+}
+
+type OAuth2_OidcAuthorizationCode struct {
+	OidcAuthorizationCode *OidcAuthorizationCode `protobuf:"bytes,1,opt,name=oidc_authorization_code,json=oidcAuthorizationCode,proto3,oneof" json:"oidc_authorization_code,omitempty"`
+}
+type OAuth2_AccessTokenValidation struct {
+	AccessTokenValidation *AccessTokenValidation `protobuf:"bytes,2,opt,name=access_token_validation,json=accessTokenValidation,proto3,oneof" json:"access_token_validation,omitempty"`
+}
+
+func (*OAuth2_OidcAuthorizationCode) isOAuth2_OauthType() {}
+func (*OAuth2_AccessTokenValidation) isOAuth2_OauthType() {}
+
+func (m *OAuth2) GetOauthType() isOAuth2_OauthType {
+	if m != nil {
+		return m.OauthType
+	}
+	return nil
+}
+
+func (m *OAuth2) GetOidcAuthorizationCode() *OidcAuthorizationCode {
+	if x, ok := m.GetOauthType().(*OAuth2_OidcAuthorizationCode); ok {
+		return x.OidcAuthorizationCode
+	}
+	return nil
+}
+
+func (m *OAuth2) GetAccessTokenValidation() *AccessTokenValidation {
+	if x, ok := m.GetOauthType().(*OAuth2_AccessTokenValidation); ok {
+		return x.AccessTokenValidation
+	}
+	return nil
+}
+
+// XXX_OneofWrappers is for the internal use of the proto package.
+func (*OAuth2) XXX_OneofWrappers() []interface{} {
+	return []interface{}{
+		(*OAuth2_OidcAuthorizationCode)(nil),
+		(*OAuth2_AccessTokenValidation)(nil),
+	}
+}
+
+type OidcAuthorizationCode struct {
+	// your client id as registered with the issuer
+	ClientId string `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	// your client secret as registered with the issuer
+	ClientSecretRef *core.ResourceRef `protobuf:"bytes,2,opt,name=client_secret_ref,json=clientSecretRef,proto3" json:"client_secret_ref,omitempty"`
+	// The url of the issuer. We will look for OIDC information in issuerUrl+
+	// ".well-known/openid-configuration"
+	IssuerUrl string `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"`
+	// extra query parameters to apply to the Ext-Auth service's authorization request to the identity provider.
+	AuthEndpointQueryParams map[string]string `protobuf:"bytes,4,rep,name=auth_endpoint_query_params,json=authEndpointQueryParams,proto3" json:"auth_endpoint_query_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	// we to redirect after successful auth, if we can't determine the original
+	// url this should be your publicly available app url.
+	AppUrl string `protobuf:"bytes,5,opt,name=app_url,json=appUrl,proto3" json:"app_url,omitempty"`
+	// a callback path relative to app url that will be used for OIDC callbacks.
+	// needs to not be used by the application
+	CallbackPath string `protobuf:"bytes,6,opt,name=callback_path,json=callbackPath,proto3" json:"callback_path,omitempty"`
+	// Scopes to request in addition to openid scope.
+	Scopes               []string `protobuf:"bytes,7,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *OidcAuthorizationCode) Reset()         { *m = OidcAuthorizationCode{} }
+func (m *OidcAuthorizationCode) String() string { return proto.CompactTextString(m) }
+func (*OidcAuthorizationCode) ProtoMessage()    {}
+func (*OidcAuthorizationCode) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{10}
+}
+func (m *OidcAuthorizationCode) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_OidcAuthorizationCode.Unmarshal(m, b)
+}
+func (m *OidcAuthorizationCode) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_OidcAuthorizationCode.Marshal(b, m, deterministic)
+}
+func (m *OidcAuthorizationCode) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_OidcAuthorizationCode.Merge(m, src)
+}
+func (m *OidcAuthorizationCode) XXX_Size() int {
+	return xxx_messageInfo_OidcAuthorizationCode.Size(m)
+}
+func (m *OidcAuthorizationCode) XXX_DiscardUnknown() {
+	xxx_messageInfo_OidcAuthorizationCode.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_OidcAuthorizationCode proto.InternalMessageInfo
+
+func (m *OidcAuthorizationCode) GetClientId() string {
+	if m != nil {
+		return m.ClientId
+	}
+	return ""
+}
+
+func (m *OidcAuthorizationCode) GetClientSecretRef() *core.ResourceRef {
+	if m != nil {
+		return m.ClientSecretRef
+	}
+	return nil
+}
+
+func (m *OidcAuthorizationCode) GetIssuerUrl() string {
+	if m != nil {
+		return m.IssuerUrl
+	}
+	return ""
+}
+
+func (m *OidcAuthorizationCode) GetAuthEndpointQueryParams() map[string]string {
+	if m != nil {
+		return m.AuthEndpointQueryParams
+	}
+	return nil
+}
+
+func (m *OidcAuthorizationCode) GetAppUrl() string {
+	if m != nil {
+		return m.AppUrl
+	}
+	return ""
+}
+
+func (m *OidcAuthorizationCode) GetCallbackPath() string {
+	if m != nil {
+		return m.CallbackPath
+	}
+	return ""
+}
+
+func (m *OidcAuthorizationCode) GetScopes() []string {
+	if m != nil {
+		return m.Scopes
+	}
+	return nil
+}
+
+type AccessTokenValidation struct {
+	// Types that are valid to be assigned to ValidationType:
+	//	*AccessTokenValidation_IntrospectionUrl
+	ValidationType isAccessTokenValidation_ValidationType `protobuf_oneof:"validation_type"`
+	// the url for the OIDC userinfo endpoint.
+	// if provided, the (opaque) access token provided or received from the oauth endpoint
+	// will be queried and the userinfo response (or cached response) will be put in the `AuthorizationRequest` state.
+	// this can be useful to leverage the userinfo response in, for example, an extauth server plugin.
+	UserinfoUrl string `protobuf:"bytes,4,opt,name=userinfo_url,json=userinfoUrl,proto3" json:"userinfo_url,omitempty"`
+	// how long the token introspection and userinfo endpoint response for a specific access token should be kept
+	// in the in-memory cache. the result will be invalidated at this timeout, or at "exp" time from the introspection
+	// result, whichever comes sooner. if omitted, defaults to 10 minutes. if zero, then no caching will be done.
+	CacheTimeout         *time.Duration `protobuf:"bytes,5,opt,name=cache_timeout,json=cacheTimeout,proto3,stdduration" json:"cache_timeout,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}       `json:"-"`
+	XXX_unrecognized     []byte         `json:"-"`
+	XXX_sizecache        int32          `json:"-"`
+}
+
+func (m *AccessTokenValidation) Reset()         { *m = AccessTokenValidation{} }
+func (m *AccessTokenValidation) String() string { return proto.CompactTextString(m) }
+func (*AccessTokenValidation) ProtoMessage()    {}
+func (*AccessTokenValidation) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{11}
+}
+func (m *AccessTokenValidation) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_AccessTokenValidation.Unmarshal(m, b)
+}
+func (m *AccessTokenValidation) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_AccessTokenValidation.Marshal(b, m, deterministic)
+}
+func (m *AccessTokenValidation) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_AccessTokenValidation.Merge(m, src)
+}
+func (m *AccessTokenValidation) XXX_Size() int {
+	return xxx_messageInfo_AccessTokenValidation.Size(m)
+}
+func (m *AccessTokenValidation) XXX_DiscardUnknown() {
+	xxx_messageInfo_AccessTokenValidation.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_AccessTokenValidation proto.InternalMessageInfo
+
+type isAccessTokenValidation_ValidationType interface {
+	isAccessTokenValidation_ValidationType()
+	Equal(interface{}) bool
+}
+
+type AccessTokenValidation_IntrospectionUrl struct {
+	IntrospectionUrl string `protobuf:"bytes,1,opt,name=introspection_url,json=introspectionUrl,proto3,oneof" json:"introspection_url,omitempty"`
+}
+
+func (*AccessTokenValidation_IntrospectionUrl) isAccessTokenValidation_ValidationType() {}
+
+func (m *AccessTokenValidation) GetValidationType() isAccessTokenValidation_ValidationType {
+	if m != nil {
+		return m.ValidationType
+	}
+	return nil
+}
+
+func (m *AccessTokenValidation) GetIntrospectionUrl() string {
+	if x, ok := m.GetValidationType().(*AccessTokenValidation_IntrospectionUrl); ok {
+		return x.IntrospectionUrl
+	}
+	return ""
+}
+
+func (m *AccessTokenValidation) GetUserinfoUrl() string {
+	if m != nil {
+		return m.UserinfoUrl
+	}
+	return ""
+}
+
+func (m *AccessTokenValidation) GetCacheTimeout() *time.Duration {
+	if m != nil {
+		return m.CacheTimeout
+	}
+	return nil
+}
+
+// XXX_OneofWrappers is for the internal use of the proto package.
+func (*AccessTokenValidation) XXX_OneofWrappers() []interface{} {
+	return []interface{}{
+		(*AccessTokenValidation_IntrospectionUrl)(nil),
+	}
 }
 
 type OauthSecret struct {
@@ -1003,7 +1316,7 @@ func (m *OauthSecret) Reset()         { *m = OauthSecret{} }
 func (m *OauthSecret) String() string { return proto.CompactTextString(m) }
 func (*OauthSecret) ProtoMessage()    {}
 func (*OauthSecret) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{9}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{12}
 }
 func (m *OauthSecret) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_OauthSecret.Unmarshal(m, b)
@@ -1031,22 +1344,31 @@ func (m *OauthSecret) GetClientSecret() string {
 }
 
 type ApiKeyAuth struct {
-	// identify all valid apikey secrets using the provided label selector.<br/>
-	// apikey secrets must be in gloo's watch namespaces for gloo to locate them.<br/>
-	// **These are labels on the apikey secret's metadata, not the 'labels' field of the `ApiKeySecret`**
+	// Identify all valid API key secrets that match the provided label selector.<br/>
+	// API key secrets must be in one of the watch namespaces for gloo to locate them.
 	LabelSelector map[string]string `protobuf:"bytes,1,rep,name=label_selector,json=labelSelector,proto3" json:"label_selector,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	// a way to reference apikey secrets individually (good for testing); prefer apikey groups via label selector
-	ApiKeySecretRefs     []*core.ResourceRef `protobuf:"bytes,2,rep,name=api_key_secret_refs,json=apiKeySecretRefs,proto3" json:"api_key_secret_refs,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}            `json:"-"`
-	XXX_unrecognized     []byte              `json:"-"`
-	XXX_sizecache        int32               `json:"-"`
+	// A way to directly reference API key secrets. This configuration can be useful for testing,
+	// but in general the more flexible label selector should be preferred.
+	ApiKeySecretRefs []*core.ResourceRef `protobuf:"bytes,2,rep,name=api_key_secret_refs,json=apiKeySecretRefs,proto3" json:"api_key_secret_refs,omitempty"`
+	// When receiving a request, the Gloo Enterprise external auth server will look for an API key in a header
+	// with this name. This field is optional; if not provided it defaults to `api-key`.
+	HeaderName string `protobuf:"bytes,3,opt,name=header_name,json=headerName,proto3" json:"header_name,omitempty"`
+	// API key secrets might contain additional data (e.g. the ID of the user that the API key belongs to)
+	// in the form of extra keys included in the secret's `data` field.
+	// This configuration can be used to add this data to the headers of successfully authenticated requests.
+	// Each key in the map represents the name of header to be added; the corresponding value determines the key
+	// in the secret data that will be inspected to determine the value for the header.
+	HeadersFromMetadata  map[string]*ApiKeyAuth_SecretKey `protobuf:"bytes,4,rep,name=headers_from_metadata,json=headersFromMetadata,proto3" json:"headers_from_metadata,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	XXX_NoUnkeyedLiteral struct{}                         `json:"-"`
+	XXX_unrecognized     []byte                           `json:"-"`
+	XXX_sizecache        int32                            `json:"-"`
 }
 
 func (m *ApiKeyAuth) Reset()         { *m = ApiKeyAuth{} }
 func (m *ApiKeyAuth) String() string { return proto.CompactTextString(m) }
 func (*ApiKeyAuth) ProtoMessage()    {}
 func (*ApiKeyAuth) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{10}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{13}
 }
 func (m *ApiKeyAuth) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ApiKeyAuth.Unmarshal(m, b)
@@ -1080,25 +1402,92 @@ func (m *ApiKeyAuth) GetApiKeySecretRefs() []*core.ResourceRef {
 	return nil
 }
 
-type ApiKeySecret struct {
-	// if true, generate an apikey
-	GenerateApiKey bool `protobuf:"varint,1,opt,name=generate_api_key,json=generateApiKey,proto3" json:"generate_api_key,omitempty"`
-	// if present, use the provided apikey
-	ApiKey string `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
-	// a list of labels (key=value) for the apikey secret.<br/>
-	// These labels are used when creating an ApiKeySecret via `glooctl` and then are copied to the metadata
-	// of the created secret.
-	Labels               []string `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty"`
+func (m *ApiKeyAuth) GetHeaderName() string {
+	if m != nil {
+		return m.HeaderName
+	}
+	return ""
+}
+
+func (m *ApiKeyAuth) GetHeadersFromMetadata() map[string]*ApiKeyAuth_SecretKey {
+	if m != nil {
+		return m.HeadersFromMetadata
+	}
+	return nil
+}
+
+type ApiKeyAuth_SecretKey struct {
+	// (Required) The key of the secret data entry to inspect.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// If this field is set to `true`, Gloo will reject an API key secret that does not contain the given key.
+	// Defaults to `false`. In this case, if a secret does not contain the requested data, no header will be added
+	// to the request.
+	Required             bool     `protobuf:"varint,2,opt,name=required,proto3" json:"required,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *ApiKeyAuth_SecretKey) Reset()         { *m = ApiKeyAuth_SecretKey{} }
+func (m *ApiKeyAuth_SecretKey) String() string { return proto.CompactTextString(m) }
+func (*ApiKeyAuth_SecretKey) ProtoMessage()    {}
+func (*ApiKeyAuth_SecretKey) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{13, 2}
+}
+func (m *ApiKeyAuth_SecretKey) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_ApiKeyAuth_SecretKey.Unmarshal(m, b)
+}
+func (m *ApiKeyAuth_SecretKey) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_ApiKeyAuth_SecretKey.Marshal(b, m, deterministic)
+}
+func (m *ApiKeyAuth_SecretKey) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ApiKeyAuth_SecretKey.Merge(m, src)
+}
+func (m *ApiKeyAuth_SecretKey) XXX_Size() int {
+	return xxx_messageInfo_ApiKeyAuth_SecretKey.Size(m)
+}
+func (m *ApiKeyAuth_SecretKey) XXX_DiscardUnknown() {
+	xxx_messageInfo_ApiKeyAuth_SecretKey.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ApiKeyAuth_SecretKey proto.InternalMessageInfo
+
+func (m *ApiKeyAuth_SecretKey) GetName() string {
+	if m != nil {
+		return m.Name
+	}
+	return ""
+}
+
+func (m *ApiKeyAuth_SecretKey) GetRequired() bool {
+	if m != nil {
+		return m.Required
+	}
+	return false
+}
+
+type ApiKeySecret struct {
+	// If true, generate an API key.
+	// This field is deprecated as it was used only internally by `glooctl` and is not actually part of the secret API.
+	GenerateApiKey bool `protobuf:"varint,1,opt,name=generate_api_key,json=generateApiKey,proto3" json:"generate_api_key,omitempty"` // Deprecated: Do not use.
+	// The value of the API key.
+	ApiKey string `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	// A list of labels (key=value) for the apikey secret.<br/>
+	// These labels are used when creating an ApiKeySecret via `glooctl` and then are copied to the metadata of the created secret.
+	// This field is deprecated as it was used only internally by `glooctl` and is not actually part of the secret API.
+	Labels []string `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty"` // Deprecated: Do not use.
+	// If the secret data contains entries in addition to the API key one, they will be copied to this field.
+	Metadata             map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	XXX_NoUnkeyedLiteral struct{}          `json:"-"`
+	XXX_unrecognized     []byte            `json:"-"`
+	XXX_sizecache        int32             `json:"-"`
 }
 
 func (m *ApiKeySecret) Reset()         { *m = ApiKeySecret{} }
 func (m *ApiKeySecret) String() string { return proto.CompactTextString(m) }
 func (*ApiKeySecret) ProtoMessage()    {}
 func (*ApiKeySecret) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{11}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{14}
 }
 func (m *ApiKeySecret) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ApiKeySecret.Unmarshal(m, b)
@@ -1118,6 +1507,7 @@ func (m *ApiKeySecret) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_ApiKeySecret proto.InternalMessageInfo
 
+// Deprecated: Do not use.
 func (m *ApiKeySecret) GetGenerateApiKey() bool {
 	if m != nil {
 		return m.GenerateApiKey
@@ -1132,9 +1522,17 @@ func (m *ApiKeySecret) GetApiKey() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *ApiKeySecret) GetLabels() []string {
 	if m != nil {
 		return m.Labels
+	}
+	return nil
+}
+
+func (m *ApiKeySecret) GetMetadata() map[string]string {
+	if m != nil {
+		return m.Metadata
 	}
 	return nil
 }
@@ -1155,7 +1553,7 @@ func (m *OpaAuth) Reset()         { *m = OpaAuth{} }
 func (m *OpaAuth) String() string { return proto.CompactTextString(m) }
 func (*OpaAuth) ProtoMessage()    {}
 func (*OpaAuth) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{12}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{15}
 }
 func (m *OpaAuth) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_OpaAuth.Unmarshal(m, b)
@@ -1220,7 +1618,7 @@ func (m *Ldap) Reset()         { *m = Ldap{} }
 func (m *Ldap) String() string { return proto.CompactTextString(m) }
 func (*Ldap) ProtoMessage()    {}
 func (*Ldap) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{13}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{16}
 }
 func (m *Ldap) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_Ldap.Unmarshal(m, b)
@@ -1291,7 +1689,7 @@ func (m *Ldap_ConnectionPool) Reset()         { *m = Ldap_ConnectionPool{} }
 func (m *Ldap_ConnectionPool) String() string { return proto.CompactTextString(m) }
 func (*Ldap_ConnectionPool) ProtoMessage()    {}
 func (*Ldap_ConnectionPool) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{13, 0}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{16, 0}
 }
 func (m *Ldap_ConnectionPool) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_Ldap_ConnectionPool.Unmarshal(m, b)
@@ -1333,18 +1731,28 @@ type ExtAuthConfig struct {
 	// This is the identifier of the AuthConfig resource that this configuration is associated with.
 	// Any request to the external auth server includes an identifier that is matched against this field to determine
 	// which AuthConfig should be applied to it.
-	AuthConfigRefName    string                  `protobuf:"bytes,1,opt,name=auth_config_ref_name,json=authConfigRefName,proto3" json:"auth_config_ref_name,omitempty"`
-	Configs              []*ExtAuthConfig_Config `protobuf:"bytes,8,rep,name=configs,proto3" json:"configs,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}                `json:"-"`
-	XXX_unrecognized     []byte                  `json:"-"`
-	XXX_sizecache        int32                   `json:"-"`
+	AuthConfigRefName string `protobuf:"bytes,1,opt,name=auth_config_ref_name,json=authConfigRefName,proto3" json:"auth_config_ref_name,omitempty"`
+	// List of auth configs to be checked for requests on a route referencing this auth config,
+	// By default, every config must be authorized for the entire request to be authorized. This
+	// behavior can be changed by defining names for each config and defining `boolean_expr` below.
+	//
+	// State is shared between successful requests on the chain, i.e., the headers returned from each
+	// successful auth service get appended into the final auth response.
+	Configs []*ExtAuthConfig_Config `protobuf:"bytes,8,rep,name=configs,proto3" json:"configs,omitempty"`
+	// How to handle processing of named configs within an auth config chain.
+	// An example config might be: ( basic1 || basic2 || (oidc1 && !oidc2) )
+	// The boolean expression is evaluated left to right but honors parenthesis and short-circuiting.
+	BooleanExpr          *types.StringValue `protobuf:"bytes,10,opt,name=boolean_expr,json=booleanExpr,proto3" json:"boolean_expr,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}           `json:"-"`
+	XXX_unrecognized     []byte             `json:"-"`
+	XXX_sizecache        int32              `json:"-"`
 }
 
 func (m *ExtAuthConfig) Reset()         { *m = ExtAuthConfig{} }
 func (m *ExtAuthConfig) String() string { return proto.CompactTextString(m) }
 func (*ExtAuthConfig) ProtoMessage()    {}
 func (*ExtAuthConfig) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{14}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17}
 }
 func (m *ExtAuthConfig) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ExtAuthConfig.Unmarshal(m, b)
@@ -1378,24 +1786,32 @@ func (m *ExtAuthConfig) GetConfigs() []*ExtAuthConfig_Config {
 	return nil
 }
 
+func (m *ExtAuthConfig) GetBooleanExpr() *types.StringValue {
+	if m != nil {
+		return m.BooleanExpr
+	}
+	return nil
+}
+
+// Deprecated, prefer OAuth2Config
 type ExtAuthConfig_OAuthConfig struct {
 	// your client id as registered with the issuer
-	ClientId string `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	ClientId string `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"` // Deprecated: Do not use.
 	// your client secret as registered with the issuer
-	ClientSecret string `protobuf:"bytes,2,opt,name=client_secret,json=clientSecret,proto3" json:"client_secret,omitempty"`
+	ClientSecret string `protobuf:"bytes,2,opt,name=client_secret,json=clientSecret,proto3" json:"client_secret,omitempty" logging:"redact"` // Deprecated: Do not use.
 	// The url of the issuer. We will look for OIDC information in issuerUrl+
 	// ".well-known/openid-configuration"
-	IssuerUrl string `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"`
+	IssuerUrl string `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"` // Deprecated: Do not use.
 	// extra query parameters to apply to the Ext-Auth service's authorization request to the identity provider.
-	AuthEndpointQueryParams map[string]string `protobuf:"bytes,7,rep,name=auth_endpoint_query_params,json=authEndpointQueryParams,proto3" json:"auth_endpoint_query_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	AuthEndpointQueryParams map[string]string `protobuf:"bytes,7,rep,name=auth_endpoint_query_params,json=authEndpointQueryParams,proto3" json:"auth_endpoint_query_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"` // Deprecated: Do not use.
 	// we to redirect after successful auth, if we can't determine the original
 	// url this should be your publicly available app url.
-	AppUrl string `protobuf:"bytes,4,opt,name=app_url,json=appUrl,proto3" json:"app_url,omitempty"`
+	AppUrl string `protobuf:"bytes,4,opt,name=app_url,json=appUrl,proto3" json:"app_url,omitempty"` // Deprecated: Do not use.
 	// a callback path relative to app url that will be used for OIDC callbacks.
 	// needs to not be used by the application
-	CallbackPath string `protobuf:"bytes,5,opt,name=callback_path,json=callbackPath,proto3" json:"callback_path,omitempty"`
+	CallbackPath string `protobuf:"bytes,5,opt,name=callback_path,json=callbackPath,proto3" json:"callback_path,omitempty"` // Deprecated: Do not use.
 	// scopes to request in addition to the openid scope.
-	Scopes               []string `protobuf:"bytes,6,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	Scopes               []string `protobuf:"bytes,6,rep,name=scopes,proto3" json:"scopes,omitempty"` // Deprecated: Do not use.
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -1405,7 +1821,7 @@ func (m *ExtAuthConfig_OAuthConfig) Reset()         { *m = ExtAuthConfig_OAuthCo
 func (m *ExtAuthConfig_OAuthConfig) String() string { return proto.CompactTextString(m) }
 func (*ExtAuthConfig_OAuthConfig) ProtoMessage()    {}
 func (*ExtAuthConfig_OAuthConfig) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{14, 0}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 0}
 }
 func (m *ExtAuthConfig_OAuthConfig) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ExtAuthConfig_OAuthConfig.Unmarshal(m, b)
@@ -1425,6 +1841,7 @@ func (m *ExtAuthConfig_OAuthConfig) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_ExtAuthConfig_OAuthConfig proto.InternalMessageInfo
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetClientId() string {
 	if m != nil {
 		return m.ClientId
@@ -1432,6 +1849,7 @@ func (m *ExtAuthConfig_OAuthConfig) GetClientId() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetClientSecret() string {
 	if m != nil {
 		return m.ClientSecret
@@ -1439,6 +1857,7 @@ func (m *ExtAuthConfig_OAuthConfig) GetClientSecret() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetIssuerUrl() string {
 	if m != nil {
 		return m.IssuerUrl
@@ -1446,6 +1865,7 @@ func (m *ExtAuthConfig_OAuthConfig) GetIssuerUrl() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetAuthEndpointQueryParams() map[string]string {
 	if m != nil {
 		return m.AuthEndpointQueryParams
@@ -1453,6 +1873,7 @@ func (m *ExtAuthConfig_OAuthConfig) GetAuthEndpointQueryParams() map[string]stri
 	return nil
 }
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetAppUrl() string {
 	if m != nil {
 		return m.AppUrl
@@ -1460,6 +1881,7 @@ func (m *ExtAuthConfig_OAuthConfig) GetAppUrl() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetCallbackPath() string {
 	if m != nil {
 		return m.CallbackPath
@@ -1467,6 +1889,7 @@ func (m *ExtAuthConfig_OAuthConfig) GetCallbackPath() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_OAuthConfig) GetScopes() []string {
 	if m != nil {
 		return m.Scopes
@@ -1474,22 +1897,206 @@ func (m *ExtAuthConfig_OAuthConfig) GetScopes() []string {
 	return nil
 }
 
+type ExtAuthConfig_OidcAuthorizationCodeConfig struct {
+	// your client id as registered with the issuer
+	ClientId string `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	// your client secret as registered with the issuer
+	ClientSecret string `protobuf:"bytes,2,opt,name=client_secret,json=clientSecret,proto3" json:"client_secret,omitempty" logging:"redact"`
+	// The url of the issuer. We will look for OIDC information in issuerUrl+
+	// ".well-known/openid-configuration"
+	IssuerUrl string `protobuf:"bytes,3,opt,name=issuer_url,json=issuerUrl,proto3" json:"issuer_url,omitempty"`
+	// extra query parameters to apply to the Ext-Auth service's authorization request to the identity provider.
+	AuthEndpointQueryParams map[string]string `protobuf:"bytes,4,rep,name=auth_endpoint_query_params,json=authEndpointQueryParams,proto3" json:"auth_endpoint_query_params,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	// we to redirect after successful auth, if we can't determine the original
+	// url this should be your publicly available app url.
+	AppUrl string `protobuf:"bytes,5,opt,name=app_url,json=appUrl,proto3" json:"app_url,omitempty"`
+	// a callback path relative to app url that will be used for OIDC callbacks.
+	// needs to not be used by the application
+	CallbackPath string `protobuf:"bytes,6,opt,name=callback_path,json=callbackPath,proto3" json:"callback_path,omitempty"`
+	// scopes to request in addition to the openid scope.
+	Scopes               []string `protobuf:"bytes,7,rep,name=scopes,proto3" json:"scopes,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) Reset() {
+	*m = ExtAuthConfig_OidcAuthorizationCodeConfig{}
+}
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) String() string {
+	return proto.CompactTextString(m)
+}
+func (*ExtAuthConfig_OidcAuthorizationCodeConfig) ProtoMessage() {}
+func (*ExtAuthConfig_OidcAuthorizationCodeConfig) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 1}
+}
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_ExtAuthConfig_OidcAuthorizationCodeConfig.Unmarshal(m, b)
+}
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_ExtAuthConfig_OidcAuthorizationCodeConfig.Marshal(b, m, deterministic)
+}
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ExtAuthConfig_OidcAuthorizationCodeConfig.Merge(m, src)
+}
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) XXX_Size() int {
+	return xxx_messageInfo_ExtAuthConfig_OidcAuthorizationCodeConfig.Size(m)
+}
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) XXX_DiscardUnknown() {
+	xxx_messageInfo_ExtAuthConfig_OidcAuthorizationCodeConfig.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ExtAuthConfig_OidcAuthorizationCodeConfig proto.InternalMessageInfo
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetClientId() string {
+	if m != nil {
+		return m.ClientId
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetClientSecret() string {
+	if m != nil {
+		return m.ClientSecret
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetIssuerUrl() string {
+	if m != nil {
+		return m.IssuerUrl
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetAuthEndpointQueryParams() map[string]string {
+	if m != nil {
+		return m.AuthEndpointQueryParams
+	}
+	return nil
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetAppUrl() string {
+	if m != nil {
+		return m.AppUrl
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetCallbackPath() string {
+	if m != nil {
+		return m.CallbackPath
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_OidcAuthorizationCodeConfig) GetScopes() []string {
+	if m != nil {
+		return m.Scopes
+	}
+	return nil
+}
+
+type ExtAuthConfig_OAuth2Config struct {
+	// Types that are valid to be assigned to OauthType:
+	//	*ExtAuthConfig_OAuth2Config_OidcAuthorizationCode
+	//	*ExtAuthConfig_OAuth2Config_AccessTokenValidation
+	OauthType            isExtAuthConfig_OAuth2Config_OauthType `protobuf_oneof:"oauth_type"`
+	XXX_NoUnkeyedLiteral struct{}                               `json:"-"`
+	XXX_unrecognized     []byte                                 `json:"-"`
+	XXX_sizecache        int32                                  `json:"-"`
+}
+
+func (m *ExtAuthConfig_OAuth2Config) Reset()         { *m = ExtAuthConfig_OAuth2Config{} }
+func (m *ExtAuthConfig_OAuth2Config) String() string { return proto.CompactTextString(m) }
+func (*ExtAuthConfig_OAuth2Config) ProtoMessage()    {}
+func (*ExtAuthConfig_OAuth2Config) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 2}
+}
+func (m *ExtAuthConfig_OAuth2Config) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_ExtAuthConfig_OAuth2Config.Unmarshal(m, b)
+}
+func (m *ExtAuthConfig_OAuth2Config) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_ExtAuthConfig_OAuth2Config.Marshal(b, m, deterministic)
+}
+func (m *ExtAuthConfig_OAuth2Config) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ExtAuthConfig_OAuth2Config.Merge(m, src)
+}
+func (m *ExtAuthConfig_OAuth2Config) XXX_Size() int {
+	return xxx_messageInfo_ExtAuthConfig_OAuth2Config.Size(m)
+}
+func (m *ExtAuthConfig_OAuth2Config) XXX_DiscardUnknown() {
+	xxx_messageInfo_ExtAuthConfig_OAuth2Config.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ExtAuthConfig_OAuth2Config proto.InternalMessageInfo
+
+type isExtAuthConfig_OAuth2Config_OauthType interface {
+	isExtAuthConfig_OAuth2Config_OauthType()
+	Equal(interface{}) bool
+}
+
+type ExtAuthConfig_OAuth2Config_OidcAuthorizationCode struct {
+	OidcAuthorizationCode *ExtAuthConfig_OidcAuthorizationCodeConfig `protobuf:"bytes,1,opt,name=oidc_authorization_code,json=oidcAuthorizationCode,proto3,oneof" json:"oidc_authorization_code,omitempty"`
+}
+type ExtAuthConfig_OAuth2Config_AccessTokenValidation struct {
+	AccessTokenValidation *AccessTokenValidation `protobuf:"bytes,2,opt,name=access_token_validation,json=accessTokenValidation,proto3,oneof" json:"access_token_validation,omitempty"`
+}
+
+func (*ExtAuthConfig_OAuth2Config_OidcAuthorizationCode) isExtAuthConfig_OAuth2Config_OauthType() {}
+func (*ExtAuthConfig_OAuth2Config_AccessTokenValidation) isExtAuthConfig_OAuth2Config_OauthType() {}
+
+func (m *ExtAuthConfig_OAuth2Config) GetOauthType() isExtAuthConfig_OAuth2Config_OauthType {
+	if m != nil {
+		return m.OauthType
+	}
+	return nil
+}
+
+func (m *ExtAuthConfig_OAuth2Config) GetOidcAuthorizationCode() *ExtAuthConfig_OidcAuthorizationCodeConfig {
+	if x, ok := m.GetOauthType().(*ExtAuthConfig_OAuth2Config_OidcAuthorizationCode); ok {
+		return x.OidcAuthorizationCode
+	}
+	return nil
+}
+
+func (m *ExtAuthConfig_OAuth2Config) GetAccessTokenValidation() *AccessTokenValidation {
+	if x, ok := m.GetOauthType().(*ExtAuthConfig_OAuth2Config_AccessTokenValidation); ok {
+		return x.AccessTokenValidation
+	}
+	return nil
+}
+
+// XXX_OneofWrappers is for the internal use of the proto package.
+func (*ExtAuthConfig_OAuth2Config) XXX_OneofWrappers() []interface{} {
+	return []interface{}{
+		(*ExtAuthConfig_OAuth2Config_OidcAuthorizationCode)(nil),
+		(*ExtAuthConfig_OAuth2Config_AccessTokenValidation)(nil),
+	}
+}
+
 // **NOTE: This configuration is not user-facing and will be auto generated**
 type ExtAuthConfig_ApiKeyAuthConfig struct {
-	// A mapping of valid apikeys to their associated plaintext users.
-	// This map is automatically populated with the relevant `ApiKeySecret`s.
-	// The user is mapped as the name of `Secret` which contains the `ApiKeySecret`
-	ValidApiKeyAndUser   map[string]string `protobuf:"bytes,1,rep,name=valid_api_key_and_user,json=validApiKeyAndUser,proto3" json:"valid_api_key_and_user,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
-	XXX_NoUnkeyedLiteral struct{}          `json:"-"`
-	XXX_unrecognized     []byte            `json:"-"`
-	XXX_sizecache        int32             `json:"-"`
+	// A mapping of valid API keys to their associated metadata.
+	// This map is automatically populated with the information from the relevant `ApiKeySecret`s.
+	ValidApiKeys map[string]*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata `protobuf:"bytes,1,rep,name=valid_api_keys,json=validApiKeys,proto3" json:"valid_api_keys,omitempty" logging:"redact" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	// (Optional) When receiving a request, the Gloo Enterprise external auth server will look for an API key
+	// in a header with this name. This field is optional; if not provided it defaults to `api-key`.
+	HeaderName string `protobuf:"bytes,2,opt,name=header_name,json=headerName,proto3" json:"header_name,omitempty"`
+	// Determines the key metadata that will be included as headers on the upstream request.
+	// Each entry represents a header to add: the key is the name of the header, and the
+	// value is the key that will be used to look up the data entry in the key metadata.
+	HeadersFromKeyMetadata map[string]string `protobuf:"bytes,3,rep,name=headers_from_key_metadata,json=headersFromKeyMetadata,proto3" json:"headers_from_key_metadata,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	XXX_NoUnkeyedLiteral   struct{}          `json:"-"`
+	XXX_unrecognized       []byte            `json:"-"`
+	XXX_sizecache          int32             `json:"-"`
 }
 
 func (m *ExtAuthConfig_ApiKeyAuthConfig) Reset()         { *m = ExtAuthConfig_ApiKeyAuthConfig{} }
 func (m *ExtAuthConfig_ApiKeyAuthConfig) String() string { return proto.CompactTextString(m) }
 func (*ExtAuthConfig_ApiKeyAuthConfig) ProtoMessage()    {}
 func (*ExtAuthConfig_ApiKeyAuthConfig) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{14, 1}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 3}
 }
 func (m *ExtAuthConfig_ApiKeyAuthConfig) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig.Unmarshal(m, b)
@@ -1509,9 +2116,75 @@ func (m *ExtAuthConfig_ApiKeyAuthConfig) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig proto.InternalMessageInfo
 
-func (m *ExtAuthConfig_ApiKeyAuthConfig) GetValidApiKeyAndUser() map[string]string {
+func (m *ExtAuthConfig_ApiKeyAuthConfig) GetValidApiKeys() map[string]*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata {
 	if m != nil {
-		return m.ValidApiKeyAndUser
+		return m.ValidApiKeys
+	}
+	return nil
+}
+
+func (m *ExtAuthConfig_ApiKeyAuthConfig) GetHeaderName() string {
+	if m != nil {
+		return m.HeaderName
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_ApiKeyAuthConfig) GetHeadersFromKeyMetadata() map[string]string {
+	if m != nil {
+		return m.HeadersFromKeyMetadata
+	}
+	return nil
+}
+
+type ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata struct {
+	// The user is mapped as the name of `Secret` which contains the `ApiKeySecret`
+	Username string `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	// The metadata present on the `ApiKeySecret`.
+	Metadata             map[string]string `protobuf:"bytes,2,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+	XXX_NoUnkeyedLiteral struct{}          `json:"-"`
+	XXX_unrecognized     []byte            `json:"-"`
+	XXX_sizecache        int32             `json:"-"`
+}
+
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) Reset() {
+	*m = ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata{}
+}
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) String() string {
+	return proto.CompactTextString(m)
+}
+func (*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) ProtoMessage() {}
+func (*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) Descriptor() ([]byte, []int) {
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 3, 0}
+}
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata.Unmarshal(m, b)
+}
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata.Marshal(b, m, deterministic)
+}
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata.Merge(m, src)
+}
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) XXX_Size() int {
+	return xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata.Size(m)
+}
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) XXX_DiscardUnknown() {
+	xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata proto.InternalMessageInfo
+
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) GetUsername() string {
+	if m != nil {
+		return m.Username
+	}
+	return ""
+}
+
+func (m *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) GetMetadata() map[string]string {
+	if m != nil {
+		return m.Metadata
 	}
 	return nil
 }
@@ -1532,7 +2205,7 @@ func (m *ExtAuthConfig_OpaAuthConfig) Reset()         { *m = ExtAuthConfig_OpaAu
 func (m *ExtAuthConfig_OpaAuthConfig) String() string { return proto.CompactTextString(m) }
 func (*ExtAuthConfig_OpaAuthConfig) ProtoMessage()    {}
 func (*ExtAuthConfig_OpaAuthConfig) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{14, 2}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 4}
 }
 func (m *ExtAuthConfig_OpaAuthConfig) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ExtAuthConfig_OpaAuthConfig.Unmarshal(m, b)
@@ -1567,8 +2240,14 @@ func (m *ExtAuthConfig_OpaAuthConfig) GetQuery() string {
 }
 
 type ExtAuthConfig_Config struct {
+	// optional: used when defining complex boolean logic, if `boolean_expr` is defined below. Also used
+	// in logging. If omitted, an automatically generated name will be used (e.g. config_0, of the
+	// pattern 'config_$INDEX_IN_CHAIN'). In the case of plugin auth, this field is ignored in favor of
+	// the name assigned on the plugin config itself.
+	Name *types.StringValue `protobuf:"bytes,11,opt,name=name,proto3" json:"name,omitempty"`
 	// Types that are valid to be assigned to AuthConfig:
 	//	*ExtAuthConfig_Config_Oauth
+	//	*ExtAuthConfig_Config_Oauth2
 	//	*ExtAuthConfig_Config_BasicAuth
 	//	*ExtAuthConfig_Config_ApiKeyAuth
 	//	*ExtAuthConfig_Config_PluginAuth
@@ -1584,7 +2263,7 @@ func (m *ExtAuthConfig_Config) Reset()         { *m = ExtAuthConfig_Config{} }
 func (m *ExtAuthConfig_Config) String() string { return proto.CompactTextString(m) }
 func (*ExtAuthConfig_Config) ProtoMessage()    {}
 func (*ExtAuthConfig_Config) Descriptor() ([]byte, []int) {
-	return fileDescriptor_043e68ecbb4b7f5e, []int{14, 3}
+	return fileDescriptor_043e68ecbb4b7f5e, []int{17, 5}
 }
 func (m *ExtAuthConfig_Config) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_ExtAuthConfig_Config.Unmarshal(m, b)
@@ -1612,6 +2291,9 @@ type isExtAuthConfig_Config_AuthConfig interface {
 type ExtAuthConfig_Config_Oauth struct {
 	Oauth *ExtAuthConfig_OAuthConfig `protobuf:"bytes,3,opt,name=oauth,proto3,oneof" json:"oauth,omitempty"`
 }
+type ExtAuthConfig_Config_Oauth2 struct {
+	Oauth2 *ExtAuthConfig_OAuth2Config `protobuf:"bytes,9,opt,name=oauth2,proto3,oneof" json:"oauth2,omitempty"`
+}
 type ExtAuthConfig_Config_BasicAuth struct {
 	BasicAuth *BasicAuth `protobuf:"bytes,4,opt,name=basic_auth,json=basicAuth,proto3,oneof" json:"basic_auth,omitempty"`
 }
@@ -1629,6 +2311,7 @@ type ExtAuthConfig_Config_Ldap struct {
 }
 
 func (*ExtAuthConfig_Config_Oauth) isExtAuthConfig_Config_AuthConfig()      {}
+func (*ExtAuthConfig_Config_Oauth2) isExtAuthConfig_Config_AuthConfig()     {}
 func (*ExtAuthConfig_Config_BasicAuth) isExtAuthConfig_Config_AuthConfig()  {}
 func (*ExtAuthConfig_Config_ApiKeyAuth) isExtAuthConfig_Config_AuthConfig() {}
 func (*ExtAuthConfig_Config_PluginAuth) isExtAuthConfig_Config_AuthConfig() {}
@@ -1642,9 +2325,24 @@ func (m *ExtAuthConfig_Config) GetAuthConfig() isExtAuthConfig_Config_AuthConfig
 	return nil
 }
 
+func (m *ExtAuthConfig_Config) GetName() *types.StringValue {
+	if m != nil {
+		return m.Name
+	}
+	return nil
+}
+
+// Deprecated: Do not use.
 func (m *ExtAuthConfig_Config) GetOauth() *ExtAuthConfig_OAuthConfig {
 	if x, ok := m.GetAuthConfig().(*ExtAuthConfig_Config_Oauth); ok {
 		return x.Oauth
+	}
+	return nil
+}
+
+func (m *ExtAuthConfig_Config) GetOauth2() *ExtAuthConfig_OAuth2Config {
+	if x, ok := m.GetAuthConfig().(*ExtAuthConfig_Config_Oauth2); ok {
+		return x.Oauth2
 	}
 	return nil
 }
@@ -1688,6 +2386,7 @@ func (m *ExtAuthConfig_Config) GetLdap() *Ldap {
 func (*ExtAuthConfig_Config) XXX_OneofWrappers() []interface{} {
 	return []interface{}{
 		(*ExtAuthConfig_Config_Oauth)(nil),
+		(*ExtAuthConfig_Config_Oauth2)(nil),
 		(*ExtAuthConfig_Config_BasicAuth)(nil),
 		(*ExtAuthConfig_Config_ApiKeyAuth)(nil),
 		(*ExtAuthConfig_Config_PluginAuth)(nil),
@@ -1715,18 +2414,31 @@ func init() {
 	proto.RegisterType((*BasicAuth_Apr_SaltedHashedPassword)(nil), "enterprise.gloo.solo.io.BasicAuth.Apr.SaltedHashedPassword")
 	proto.RegisterType((*OAuth)(nil), "enterprise.gloo.solo.io.OAuth")
 	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.OAuth.AuthEndpointQueryParamsEntry")
+	proto.RegisterType((*OAuth2)(nil), "enterprise.gloo.solo.io.OAuth2")
+	proto.RegisterType((*OidcAuthorizationCode)(nil), "enterprise.gloo.solo.io.OidcAuthorizationCode")
+	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.OidcAuthorizationCode.AuthEndpointQueryParamsEntry")
+	proto.RegisterType((*AccessTokenValidation)(nil), "enterprise.gloo.solo.io.AccessTokenValidation")
 	proto.RegisterType((*OauthSecret)(nil), "enterprise.gloo.solo.io.OauthSecret")
 	proto.RegisterType((*ApiKeyAuth)(nil), "enterprise.gloo.solo.io.ApiKeyAuth")
+	proto.RegisterMapType((map[string]*ApiKeyAuth_SecretKey)(nil), "enterprise.gloo.solo.io.ApiKeyAuth.HeadersFromMetadataEntry")
 	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ApiKeyAuth.LabelSelectorEntry")
+	proto.RegisterType((*ApiKeyAuth_SecretKey)(nil), "enterprise.gloo.solo.io.ApiKeyAuth.SecretKey")
 	proto.RegisterType((*ApiKeySecret)(nil), "enterprise.gloo.solo.io.ApiKeySecret")
+	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ApiKeySecret.MetadataEntry")
 	proto.RegisterType((*OpaAuth)(nil), "enterprise.gloo.solo.io.OpaAuth")
 	proto.RegisterType((*Ldap)(nil), "enterprise.gloo.solo.io.Ldap")
 	proto.RegisterType((*Ldap_ConnectionPool)(nil), "enterprise.gloo.solo.io.Ldap.ConnectionPool")
 	proto.RegisterType((*ExtAuthConfig)(nil), "enterprise.gloo.solo.io.ExtAuthConfig")
 	proto.RegisterType((*ExtAuthConfig_OAuthConfig)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OAuthConfig")
 	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OAuthConfig.AuthEndpointQueryParamsEntry")
+	proto.RegisterType((*ExtAuthConfig_OidcAuthorizationCodeConfig)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OidcAuthorizationCodeConfig")
+	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OidcAuthorizationCodeConfig.AuthEndpointQueryParamsEntry")
+	proto.RegisterType((*ExtAuthConfig_OAuth2Config)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OAuth2Config")
 	proto.RegisterType((*ExtAuthConfig_ApiKeyAuthConfig)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig")
-	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.ValidApiKeyAndUserEntry")
+	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.HeadersFromKeyMetadataEntry")
+	proto.RegisterMapType((map[string]*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.ValidApiKeysEntry")
+	proto.RegisterType((*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.KeyMetadata")
+	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.ApiKeyAuthConfig.KeyMetadata.MetadataEntry")
 	proto.RegisterType((*ExtAuthConfig_OpaAuthConfig)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OpaAuthConfig")
 	proto.RegisterMapType((map[string]string)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.OpaAuthConfig.ModulesEntry")
 	proto.RegisterType((*ExtAuthConfig_Config)(nil), "enterprise.gloo.solo.io.ExtAuthConfig.Config")
@@ -1737,144 +2449,183 @@ func init() {
 }
 
 var fileDescriptor_043e68ecbb4b7f5e = []byte{
-	// 2184 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xdc, 0x59, 0xcd, 0x6f, 0x1b, 0xc7,
-	0x15, 0x37, 0x29, 0x4a, 0xa4, 0x1e, 0x25, 0x59, 0x1a, 0xab, 0x92, 0xcc, 0x24, 0xb6, 0xc1, 0x18,
-	0x8e, 0x10, 0x38, 0xcb, 0x44, 0x0e, 0x5c, 0x43, 0x41, 0xd3, 0x48, 0x96, 0x2c, 0xd9, 0x8d, 0x23,
-	0x79, 0x69, 0x07, 0x41, 0xd3, 0x62, 0x31, 0xdc, 0x7d, 0x24, 0xb7, 0x5e, 0xee, 0x6c, 0x66, 0x66,
-	0x65, 0xd2, 0x40, 0x2f, 0xee, 0xa5, 0x87, 0xf6, 0xd4, 0x4b, 0xd3, 0x4b, 0x6f, 0x41, 0x2f, 0xbd,
-	0x17, 0x05, 0xda, 0x73, 0xef, 0x45, 0x0f, 0x05, 0xda, 0x04, 0x28, 0xfa, 0x0f, 0xa4, 0x40, 0xd0,
-	0x1e, 0x8b, 0xf9, 0x58, 0x7e, 0x48, 0xa6, 0x4c, 0x19, 0x3d, 0xf5, 0x24, 0xce, 0x7b, 0xef, 0xf7,
-	0xe6, 0x7d, 0xed, 0x9b, 0x37, 0x23, 0xf8, 0xa4, 0x15, 0xca, 0x76, 0xda, 0x70, 0x7c, 0xd6, 0xa9,
-	0x09, 0x16, 0xb1, 0xb7, 0x42, 0x56, 0x6b, 0x45, 0x8c, 0xd5, 0x12, 0xce, 0x7e, 0x84, 0xbe, 0x14,
-	0x66, 0x45, 0x93, 0xb0, 0x76, 0xf4, 0x4e, 0x0d, 0x63, 0x89, 0x3c, 0xe1, 0xa1, 0xc0, 0x1a, 0x4b,
-	0x64, 0xc8, 0x62, 0x51, 0xc3, 0xae, 0xa4, 0xa9, 0x6c, 0x6b, 0xae, 0xf9, 0xe9, 0x24, 0x9c, 0x49,
-	0x46, 0x56, 0x07, 0xc2, 0x8e, 0xd2, 0xe1, 0x28, 0xf5, 0x4e, 0xc8, 0x2a, 0x17, 0xf5, 0x3e, 0x8f,
-	0x43, 0x99, 0x69, 0xe5, 0xd8, 0x34, 0x98, 0xca, 0x72, 0x8b, 0xb5, 0x98, 0xfe, 0x59, 0x53, 0xbf,
-	0x2c, 0x95, 0x60, 0x57, 0x1a, 0x22, 0x76, 0xa5, 0xa5, 0x5d, 0x3a, 0xae, 0xa4, 0x83, 0x92, 0x06,
-	0x54, 0x52, 0xcb, 0x7f, 0xf5, 0x38, 0x5f, 0x48, 0x2a, 0x53, 0x31, 0x0e, 0x9d, 0xad, 0x33, 0x34,
-	0xc6, 0x47, 0xac, 0x67, 0x98, 0x1b, 0xb5, 0x20, 0x14, 0x3e, 0x3b, 0x42, 0xde, 0xcb, 0xb8, 0x2d,
-	0xc6, 0x5a, 0x11, 0x6a, 0x36, 0x8d, 0x63, 0x26, 0xa9, 0x0e, 0x45, 0xa6, 0xdb, 0x72, 0xf5, 0xaa,
-	0x91, 0x36, 0x6b, 0x41, 0xca, 0xb5, 0xc0, 0x31, 0x74, 0x9f, 0x2f, 0x24, 0x4f, 0x7d, 0x39, 0x0e,
-	0xfd, 0x84, 0xd3, 0x24, 0x41, 0x6e, 0xb5, 0x57, 0x7f, 0x3e, 0x0d, 0xb0, 0x95, 0xca, 0xf6, 0x6d,
-	0x16, 0x37, 0xc3, 0x16, 0xd9, 0x83, 0x19, 0xe3, 0xd8, 0x5a, 0xee, 0x4a, 0x6e, 0xbd, 0xbc, 0xb1,
-	0xec, 0xf8, 0x8c, 0x63, 0x16, 0x6a, 0xa7, 0xae, 0x79, 0xdb, 0x17, 0xff, 0xf4, 0xe5, 0xe5, 0x73,
-	0xff, 0xfa, 0xf2, 0xf2, 0x92, 0x44, 0x21, 0x83, 0xb0, 0xd9, 0xdc, 0xac, 0x86, 0xad, 0x98, 0x71,
-	0xac, 0xba, 0x16, 0x4e, 0x6e, 0x41, 0x29, 0x8b, 0xe0, 0x5a, 0x5e, 0xab, 0x5a, 0x19, 0x55, 0x75,
-	0xdf, 0x72, 0xb7, 0x0b, 0x4a, 0x99, 0xdb, 0x97, 0x26, 0x3b, 0x50, 0xf4, 0xb5, 0x31, 0x62, 0x6d,
-	0xea, 0xca, 0xd4, 0x7a, 0x79, 0xe3, 0x4d, 0x67, 0x4c, 0xe6, 0x9d, 0x81, 0xe1, 0x8e, 0xf9, 0xe3,
-	0x66, 0xd0, 0xca, 0xe7, 0x53, 0x30, 0x63, 0x7d, 0xba, 0x0d, 0xd0, 0xa0, 0x22, 0xf4, 0x3d, 0x55,
-	0x4c, 0xd6, 0xaf, 0xea, 0x58, 0x9d, 0xdb, 0x4a, 0x54, 0x29, 0xde, 0x3f, 0xe7, 0xce, 0x36, 0xb2,
-	0x05, 0xb9, 0x09, 0xd3, 0x4c, 0xe3, 0x8d, 0x33, 0x97, 0xc6, 0xe2, 0x0f, 0x2c, 0xd6, 0x88, 0x93,
-	0x3d, 0x98, 0xa3, 0x49, 0xe8, 0x3d, 0xc6, 0x9e, 0xd9, 0xbe, 0xa0, 0xe1, 0xaf, 0x8f, 0x77, 0x29,
-	0x09, 0xbf, 0x87, 0x3d, 0xab, 0x03, 0x68, 0x7f, 0x45, 0xee, 0x40, 0x39, 0x89, 0xd2, 0x56, 0x18,
-	0x1b, 0x3d, 0xd3, 0x2f, 0xd2, 0x93, 0xca, 0xf6, 0xa1, 0x96, 0x57, 0x7a, 0x0c, 0x52, 0xeb, 0xf9,
-	0x0e, 0x94, 0x58, 0x42, 0x8d, 0x92, 0x19, 0xad, 0xe4, 0xca, 0x78, 0x5f, 0x12, 0x6a, 0x2d, 0x29,
-	0x32, 0xf3, 0x93, 0xdc, 0x80, 0x42, 0x14, 0xd0, 0x64, 0xad, 0xa8, 0xa1, 0xaf, 0x8d, 0x85, 0x7e,
-	0x18, 0xd0, 0x64, 0xff, 0x9c, 0xab, 0x85, 0xb7, 0xe7, 0xa1, 0xac, 0xf6, 0xf3, 0x4c, 0x72, 0x36,
-	0x2b, 0xcf, 0xbe, 0x2e, 0x14, 0x20, 0x4f, 0xfd, 0x67, 0x5f, 0x17, 0x16, 0xc8, 0xdc, 0x10, 0x4b,
-	0x54, 0x7f, 0x9f, 0x83, 0xc5, 0xdd, 0xae, 0x54, 0x7b, 0xed, 0x76, 0x25, 0xc6, 0x22, 0x64, 0x31,
-	0xa9, 0x40, 0x31, 0x08, 0x05, 0x6d, 0x44, 0xa8, 0xd3, 0x57, 0x52, 0x06, 0x59, 0x02, 0xd9, 0x04,
-	0x30, 0x58, 0x8f, 0x63, 0xd3, 0x66, 0xe7, 0xe2, 0x68, 0xa9, 0xb9, 0x28, 0x58, 0xca, 0x7d, 0x74,
-	0xb1, 0xa9, 0x92, 0x6a, 0xc4, 0x5d, 0x6c, 0xaa, 0x98, 0xfa, 0xa9, 0x90, 0xac, 0x63, 0xc2, 0x31,
-	0xf5, 0x82, 0x98, 0xde, 0xd6, 0xb2, 0x59, 0x6e, 0xfc, 0xfe, 0x6a, 0x7b, 0x06, 0x0a, 0x22, 0x41,
-	0xbf, 0xfa, 0xb7, 0x29, 0x28, 0xd5, 0x51, 0xca, 0x30, 0x6e, 0x09, 0x72, 0x17, 0x2e, 0xd8, 0x06,
-	0xf6, 0xd4, 0x13, 0xc8, 0x8f, 0x90, 0x6b, 0x0b, 0x73, 0x2f, 0xb0, 0xd0, 0x5d, 0xca, 0x50, 0x75,
-	0x0d, 0x52, 0x76, 0xee, 0xc1, 0x5c, 0x5b, 0xca, 0x44, 0xab, 0x09, 0x7d, 0xb4, 0x5e, 0x5e, 0x1d,
-	0x6b, 0xe8, 0xbe, 0x94, 0x49, 0xdd, 0xc8, 0xba, 0xe5, 0xf6, 0x60, 0x41, 0xae, 0xc2, 0x42, 0x2a,
-	0x90, 0x7b, 0x61, 0xe0, 0xb5, 0x91, 0x06, 0xc8, 0xb5, 0xcf, 0xb3, 0xee, 0x9c, 0xa2, 0xde, 0x0d,
-	0xf6, 0x35, 0x8d, 0xec, 0xc3, 0x79, 0x8e, 0x9f, 0xa5, 0x28, 0xa4, 0x27, 0xc3, 0x0e, 0xb2, 0x54,
-	0xda, 0xb2, 0xbd, 0xe8, 0x98, 0x6e, 0xe2, 0x64, 0xdd, 0xc4, 0xd9, 0xb1, 0xbd, 0x68, 0xbb, 0xf0,
-	0xcb, 0xaf, 0x2e, 0xe7, 0xdc, 0x05, 0x8b, 0x7b, 0x68, 0x60, 0xe4, 0x3a, 0x90, 0x26, 0x0d, 0xa3,
-	0x94, 0xa3, 0xd7, 0x61, 0x01, 0x7a, 0x34, 0x8a, 0xd8, 0x13, 0x5d, 0xbb, 0x25, 0x77, 0xd1, 0x72,
-	0xee, 0xb3, 0x00, 0xb7, 0x14, 0x9d, 0xdc, 0x83, 0xb9, 0x6c, 0xdf, 0x06, 0x0b, 0x7a, 0xb6, 0x3c,
-	0xdf, 0x18, 0xff, 0xa9, 0xa6, 0xcd, 0x26, 0xf2, 0x2c, 0xe0, 0x6e, 0xd9, 0x82, 0xb7, 0x59, 0xd0,
-	0x23, 0x6f, 0xc2, 0x92, 0x1f, 0x21, 0xe5, 0x1e, 0x67, 0xa9, 0x44, 0xcf, 0xa7, 0x7e, 0x1b, 0x75,
-	0xd1, 0x96, 0xdc, 0xf3, 0x9a, 0xe1, 0x2a, 0xfa, 0x6d, 0x45, 0x26, 0xd7, 0xe0, 0xbc, 0xe9, 0x5a,
-	0x1e, 0x8b, 0x3d, 0xe4, 0x9c, 0xf1, 0xb5, 0xd2, 0x95, 0xdc, 0xfa, 0xbc, 0x3b, 0x6f, 0xc8, 0x07,
-	0xf1, 0xae, 0x22, 0x56, 0x3f, 0x2f, 0x40, 0x79, 0x28, 0xb4, 0xe4, 0x32, 0x94, 0x13, 0x2a, 0xdb,
-	0x5e, 0xc2, 0xb1, 0x19, 0x76, 0x75, 0x66, 0x67, 0x5d, 0x50, 0xa4, 0x43, 0x4d, 0x21, 0x77, 0xa0,
-	0x68, 0x6d, 0xb2, 0x29, 0xbb, 0x3e, 0x49, 0xca, 0x1c, 0xd7, 0x60, 0xdc, 0x0c, 0x4c, 0xee, 0x42,
-	0x89, 0xa3, 0x48, 0x58, 0x2c, 0xd0, 0x16, 0xe9, 0x5b, 0x13, 0x2a, 0x32, 0x20, 0xb7, 0x0f, 0xaf,
-	0xfc, 0x35, 0x07, 0x45, 0xab, 0x9f, 0xbc, 0x01, 0xe7, 0x75, 0x42, 0x30, 0xab, 0x06, 0xd5, 0xf5,
-	0xa7, 0xd6, 0x67, 0xdd, 0x05, 0x4b, 0x36, 0xf5, 0x20, 0x48, 0x00, 0x0b, 0x56, 0xc0, 0x93, 0xcc,
-	0xa3, 0x41, 0xb0, 0x96, 0xd7, 0x9d, 0xf9, 0xfd, 0xb3, 0xb8, 0xe3, 0x58, 0x6d, 0x0f, 0xd9, 0x56,
-	0x10, 0xec, 0xc6, 0x92, 0xf7, 0xdc, 0xb9, 0xf6, 0x10, 0xa9, 0xf2, 0x5d, 0x58, 0x3a, 0x21, 0x42,
-	0x16, 0x61, 0xea, 0x31, 0xf6, 0x6c, 0x6c, 0xd5, 0x4f, 0xb2, 0x0c, 0xd3, 0x47, 0x34, 0x4a, 0xcd,
-	0x57, 0x30, 0xeb, 0x9a, 0xc5, 0x66, 0xfe, 0x56, 0xae, 0xf2, 0x14, 0x4a, 0x99, 0xc7, 0xe4, 0x16,
-	0xac, 0x65, 0xbe, 0xa5, 0x89, 0x90, 0x1c, 0x69, 0xe7, 0x98, 0x93, 0x2b, 0x96, 0xff, 0xc8, 0xb2,
-	0x33, 0x67, 0xdf, 0x85, 0x8c, 0xe3, 0xf9, 0x51, 0x88, 0xb1, 0xec, 0xe3, 0xf2, 0x1a, 0xb7, 0x6c,
-	0xb9, 0xb7, 0x35, 0xd3, 0xa2, 0xaa, 0x09, 0x2c, 0x8c, 0x96, 0xa3, 0xaa, 0xc0, 0x0e, 0xed, 0x7a,
-	0xfd, 0x8a, 0xee, 0x49, 0x34, 0xa7, 0xea, 0xbc, 0x7b, 0xbe, 0x43, 0xbb, 0x36, 0x2a, 0xdb, 0x8a,
-	0x4c, 0x36, 0xe0, 0x5b, 0x5a, 0xab, 0x97, 0x50, 0x2e, 0x43, 0x1a, 0x79, 0x1d, 0x14, 0x82, 0xb6,
-	0x8c, 0x8f, 0x25, 0xf7, 0x82, 0x66, 0x1e, 0x1a, 0xde, 0x7d, 0xc3, 0xaa, 0xfe, 0x21, 0x07, 0x30,
-	0xe8, 0x48, 0x24, 0x04, 0xe2, 0xb3, 0x58, 0x62, 0x57, 0x7a, 0x98, 0x35, 0x4e, 0xe3, 0x6a, 0x79,
-	0x63, 0x73, 0x82, 0x96, 0xa6, 0x4e, 0x50, 0x85, 0xee, 0x77, 0x5d, 0x61, 0x72, 0xb4, 0xe4, 0x1f,
-	0xa7, 0x57, 0x76, 0x60, 0xe5, 0xf9, 0xc2, 0x67, 0xc9, 0x56, 0xf5, 0xb7, 0x39, 0x33, 0x79, 0x98,
-	0x53, 0x8a, 0x10, 0x28, 0xc4, 0xb4, 0x83, 0x16, 0xab, 0x7f, 0x93, 0x75, 0x58, 0xb4, 0x67, 0x5e,
-	0x33, 0x8c, 0xd0, 0xd3, 0x7c, 0xa3, 0x67, 0xc1, 0xd0, 0xef, 0x84, 0x11, 0x7e, 0xa4, 0x24, 0xdf,
-	0x86, 0x65, 0xec, 0x26, 0x8c, 0x4b, 0x0c, 0x3c, 0xd1, 0xeb, 0x34, 0x58, 0x64, 0xa4, 0x4d, 0x7b,
-	0x23, 0x19, 0xaf, 0xae, 0x59, 0x1a, 0x51, 0x83, 0x19, 0x73, 0x10, 0xd8, 0xde, 0xb6, 0x7a, 0xa2,
-	0xb7, 0xd5, 0xf5, 0x1c, 0xe5, 0x5a, 0xb1, 0xea, 0x7f, 0xf2, 0x30, 0xdb, 0x1f, 0x0e, 0x94, 0x5f,
-	0x1c, 0x69, 0xd4, 0xb1, 0xf6, 0x9a, 0x05, 0xb9, 0x05, 0x53, 0x34, 0xe1, 0xf6, 0x63, 0xbf, 0xf6,
-	0xe2, 0x19, 0xc3, 0xd9, 0x4a, 0xb8, 0xab, 0x20, 0x95, 0x5f, 0xe5, 0x61, 0x6a, 0x2b, 0xe1, 0x64,
-	0x0f, 0xa6, 0x55, 0x2f, 0x16, 0xf6, 0x0b, 0x7b, 0x67, 0x32, 0x1d, 0xce, 0x23, 0x85, 0x31, 0x09,
-	0x33, 0xf8, 0x4a, 0x1d, 0x96, 0xeb, 0x34, 0x92, 0x18, 0xec, 0x53, 0xd1, 0xc6, 0xe0, 0x90, 0x0a,
-	0xf1, 0x84, 0xf1, 0x40, 0xc5, 0x59, 0xd0, 0x48, 0x66, 0x71, 0x56, 0xbf, 0x55, 0x23, 0x68, 0x6b,
-	0x29, 0x2f, 0xb1, 0x62, 0x59, 0x98, 0xdb, 0x23, 0xe0, 0x4a, 0x0a, 0x30, 0xd8, 0xe9, 0x39, 0xd9,
-	0x7e, 0x30, 0x9c, 0xed, 0xf2, 0xc6, 0x7b, 0x13, 0x5a, 0xff, 0x3c, 0x43, 0x87, 0x4b, 0xe5, 0x8b,
-	0x29, 0x98, 0xd6, 0x73, 0x15, 0x79, 0x05, 0x66, 0xed, 0x47, 0x19, 0x06, 0x76, 0xe3, 0x92, 0x21,
-	0xdc, 0x0d, 0xc8, 0xae, 0xea, 0xf9, 0x9a, 0x29, 0xd0, 0xe7, 0x28, 0x27, 0x9a, 0x08, 0xd4, 0x71,
-	0xa0, 0x30, 0x75, 0x0d, 0x51, 0xa7, 0xed, 0x6b, 0x00, 0xa1, 0x10, 0x29, 0x72, 0x2f, 0xe5, 0x91,
-	0xad, 0xa0, 0x59, 0x43, 0x79, 0xc4, 0x23, 0xd2, 0x85, 0x8a, 0x9e, 0x58, 0x30, 0x0e, 0x12, 0x16,
-	0xc6, 0xd2, 0xfb, 0x2c, 0x45, 0xde, 0x53, 0x5f, 0x2e, 0xed, 0x88, 0xb5, 0xa2, 0x4e, 0xdb, 0x7b,
-	0xa7, 0x8f, 0x87, 0x7a, 0x3a, 0xdb, 0xb5, 0xf8, 0x07, 0x0a, 0x7e, 0xa8, 0xd1, 0x26, 0x81, 0xab,
-	0xf4, 0xf9, 0x5c, 0xb2, 0x0a, 0x45, 0x9a, 0x24, 0xda, 0xaa, 0x82, 0xb6, 0x6a, 0x86, 0x26, 0x89,
-	0x32, 0xe9, 0x75, 0x98, 0xf7, 0x69, 0x14, 0x35, 0xa8, 0xff, 0xd8, 0x53, 0xc7, 0x8f, 0x3e, 0x61,
-	0x67, 0xdd, 0xb9, 0x8c, 0x78, 0x48, 0x65, 0x9b, 0xac, 0xc0, 0x8c, 0xf0, 0x59, 0x82, 0x62, 0x6d,
-	0x46, 0xf7, 0x31, 0xbb, 0xaa, 0xdc, 0x83, 0x57, 0x4f, 0x33, 0xe7, 0x4c, 0xdf, 0xf4, 0x06, 0x94,
-	0x0f, 0x94, 0xf5, 0x26, 0x98, 0xda, 0xae, 0xe1, 0x84, 0x58, 0x25, 0x73, 0xc3, 0x11, 0xaf, 0xfe,
-	0x5b, 0xf5, 0x81, 0xc1, 0x9c, 0xfb, 0x43, 0x58, 0x88, 0x68, 0x03, 0x23, 0x4f, 0x60, 0x84, 0xbe,
-	0x64, 0xdc, 0xf6, 0xb0, 0x9b, 0x13, 0x8c, 0xcc, 0xce, 0x87, 0x0a, 0x59, 0xb7, 0x40, 0x13, 0xcd,
-	0xf9, 0x68, 0x98, 0x46, 0xf6, 0xe1, 0x42, 0x36, 0x8f, 0x0f, 0x8a, 0x24, 0xfb, 0xda, 0x4e, 0xa9,
-	0x92, 0x45, 0x33, 0x8a, 0xf7, 0xab, 0x44, 0x54, 0x3e, 0x00, 0x72, 0x72, 0xbb, 0x33, 0x45, 0x2b,
-	0x84, 0xb9, 0xad, 0x21, 0xad, 0xaa, 0xdd, 0xb5, 0x30, 0x46, 0x4e, 0x25, 0x7a, 0xd6, 0x48, 0x33,
-	0xef, 0xba, 0x0b, 0x19, 0xdd, 0xc8, 0x9b, 0x4a, 0x30, 0x02, 0xf9, 0xac, 0x12, 0x34, 0x63, 0x05,
-	0x66, 0xb4, 0xbf, 0xe6, 0xee, 0x34, 0xeb, 0xda, 0x55, 0xf5, 0x21, 0x14, 0x0f, 0xfa, 0x13, 0x7c,
-	0xb1, 0xc3, 0x82, 0x34, 0xc2, 0xec, 0x74, 0x38, 0xc5, 0xeb, 0x4c, 0x52, 0x39, 0xa1, 0xcb, 0x3c,
-	0x73, 0x42, 0x2f, 0xaa, 0xdf, 0xe4, 0xa1, 0xa0, 0x06, 0x7d, 0xb2, 0x06, 0x45, 0x1a, 0x04, 0x1c,
-	0x85, 0xb0, 0x9e, 0x67, 0x4b, 0x72, 0xcd, 0x4c, 0x9c, 0x3b, 0xf1, 0x43, 0xec, 0x24, 0x11, 0x95,
-	0xfd, 0x06, 0x3e, 0x4a, 0x25, 0xb7, 0x60, 0xb5, 0x83, 0x9d, 0x06, 0x72, 0xd1, 0x0e, 0x93, 0x2d,
-	0x29, 0x79, 0xd8, 0x48, 0xa5, 0xee, 0xed, 0xf6, 0x0b, 0x1c, 0xc7, 0x26, 0x57, 0x61, 0xde, 0x9e,
-	0xc8, 0x7b, 0x9c, 0xa5, 0x89, 0x58, 0x2b, 0x68, 0xcf, 0x47, 0x89, 0xe4, 0x03, 0x28, 0x24, 0x8c,
-	0x45, 0xf6, 0xde, 0x74, 0xfd, 0xd4, 0x7b, 0x8b, 0x3a, 0x0a, 0x63, 0xf4, 0xd5, 0x5c, 0x7b, 0xc8,
-	0x58, 0xe4, 0x6a, 0x64, 0xe5, 0xa7, 0x39, 0x58, 0x18, 0x65, 0x90, 0x9b, 0x50, 0xec, 0xd0, 0x6e,
-	0x3d, 0x7c, 0x8a, 0x76, 0xac, 0x7f, 0xf5, 0xc4, 0x21, 0xf2, 0xe8, 0x6e, 0x2c, 0x6f, 0x6c, 0x7c,
-	0xac, 0x72, 0xee, 0x66, 0xc2, 0xe4, 0x7d, 0x28, 0x87, 0x71, 0xa8, 0x0e, 0x73, 0x8d, 0xcd, 0x4f,
-	0x80, 0x1d, 0x06, 0x54, 0xbf, 0x28, 0xc3, 0xbc, 0xbd, 0x24, 0xd9, 0x3b, 0x6e, 0x0d, 0x96, 0x87,
-	0xae, 0x51, 0xaa, 0xa6, 0xbd, 0xa1, 0xd3, 0x74, 0x89, 0xf6, 0x25, 0x5d, 0x6c, 0xea, 0xa8, 0xed,
-	0x0d, 0x6e, 0xd9, 0x25, 0x5d, 0x05, 0xe3, 0x27, 0xca, 0x91, 0x9d, 0x4e, 0x5c, 0xb4, 0x7f, 0x3d,
-	0x05, 0xe5, 0x83, 0x21, 0x4b, 0x4e, 0xed, 0xd0, 0x27, 0x1a, 0x42, 0xfe, 0x64, 0x43, 0x78, 0x51,
-	0xff, 0xfd, 0x59, 0x6e, 0x82, 0x06, 0x7c, 0x30, 0xa1, 0x37, 0x43, 0x96, 0xff, 0xbf, 0x36, 0xe5,
-	0xca, 0x57, 0x39, 0x58, 0x1c, 0xf4, 0x48, 0x9b, 0xa6, 0x9f, 0xe4, 0x60, 0xe5, 0x88, 0x46, 0x61,
-	0xe0, 0xf5, 0x9f, 0x27, 0xe2, 0xc0, 0x53, 0x1f, 0xa5, 0xed, 0x0a, 0x93, 0x46, 0xf0, 0xb8, 0x66,
-	0xe7, 0x63, 0xa5, 0xd5, 0x52, 0xe3, 0x40, 0x8d, 0x0b, 0x26, 0x82, 0xe4, 0xe8, 0x04, 0xa3, 0xb2,
-	0x0b, 0xab, 0x63, 0xc4, 0xcf, 0xe4, 0xe1, 0x1f, 0x73, 0x30, 0x6f, 0xdb, 0x9b, 0x75, 0xef, 0xd3,
-	0xe3, 0x4d, 0x6e, 0x6b, 0xd2, 0x82, 0x18, 0x56, 0xe3, 0xdc, 0x37, 0x3a, 0x8c, 0x03, 0xa7, 0x37,
-	0xc3, 0xca, 0x26, 0xcc, 0x0d, 0x8b, 0x9f, 0xc9, 0x81, 0xbf, 0x0c, 0x5e, 0xab, 0xee, 0x65, 0x0f,
-	0x4d, 0xe6, 0xa2, 0xb7, 0x71, 0xf6, 0x42, 0x1e, 0x3c, 0x3e, 0x8d, 0xbe, 0x7c, 0x15, 0x5e, 0xee,
-	0xe5, 0xeb, 0xd3, 0x63, 0x2f, 0x58, 0xa6, 0x83, 0x7e, 0xfb, 0x25, 0xcb, 0xe3, 0xf4, 0x57, 0xad,
-	0x99, 0x97, 0x7d, 0xd5, 0x7a, 0x30, 0xf4, 0xaa, 0x65, 0x9e, 0xa6, 0xde, 0x7d, 0x99, 0x84, 0x3f,
-	0xef, 0xa5, 0xab, 0xf4, 0xf2, 0x2f, 0x5d, 0x1b, 0x7f, 0xcf, 0xc3, 0xaa, 0xdd, 0x6e, 0x27, 0x7b,
-	0xf4, 0xcd, 0x5e, 0x0f, 0x7e, 0x00, 0x17, 0xea, 0xfa, 0xe2, 0x39, 0xda, 0xc9, 0x2f, 0x39, 0xfa,
-	0xad, 0xd8, 0xa1, 0x49, 0xe8, 0x1c, 0x6d, 0x38, 0x7d, 0x98, 0xbd, 0x2f, 0x56, 0x2e, 0x8f, 0xe5,
-	0x9b, 0x9b, 0x6f, 0xf5, 0xdc, 0x7a, 0xee, 0xed, 0x1c, 0x41, 0x20, 0x3b, 0x18, 0x49, 0x3a, 0xaa,
-	0xfc, 0xf5, 0x63, 0x60, 0x25, 0x71, 0x62, 0x87, 0xab, 0xa7, 0x0b, 0x8d, 0x6c, 0xf3, 0x63, 0x20,
-	0x77, 0x50, 0xfa, 0xed, 0xff, 0xb1, 0x0f, 0xd7, 0x9e, 0xfd, 0xf9, 0x9f, 0xbf, 0xc8, 0x5f, 0xa9,
-	0xbe, 0x32, 0xf2, 0x5c, 0xbe, 0x69, 0x5f, 0xc6, 0xec, 0x33, 0x62, 0xee, 0xcd, 0xed, 0x4f, 0x7e,
-	0xf7, 0x4d, 0x21, 0xf7, 0x9b, 0x7f, 0x5c, 0xca, 0x7d, 0xff, 0xa3, 0xc9, 0xfe, 0xef, 0x90, 0x3c,
-	0x6e, 0x4d, 0xf4, 0xbf, 0x87, 0xc6, 0x8c, 0x3e, 0x85, 0x6f, 0xfc, 0x37, 0x00, 0x00, 0xff, 0xff,
-	0x8e, 0x9b, 0xd6, 0xca, 0xd0, 0x18, 0x00, 0x00,
+	// 2816 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xe4, 0x5a, 0x4d, 0x6c, 0x1b, 0xc7,
+	0xf5, 0xd7, 0x52, 0x34, 0x45, 0x3d, 0x52, 0x5f, 0x63, 0xd9, 0xa2, 0xd7, 0x89, 0xe5, 0x30, 0x86,
+	0x63, 0x04, 0x36, 0x95, 0xd0, 0x41, 0xfe, 0x8e, 0xfc, 0x6f, 0x12, 0x51, 0x92, 0x2d, 0xd9, 0x71,
+	0x24, 0xaf, 0xec, 0x20, 0x6d, 0x5a, 0x2c, 0x46, 0xbb, 0x43, 0x72, 0xeb, 0xe5, 0xce, 0x66, 0x76,
+	0x56, 0x11, 0x8d, 0xf4, 0x12, 0xa4, 0x40, 0xd0, 0x43, 0x51, 0xa0, 0x97, 0xb6, 0x28, 0x7a, 0xee,
+	0xa5, 0xf7, 0xa2, 0x40, 0x53, 0x20, 0x97, 0xf6, 0xd6, 0x43, 0x91, 0x43, 0x81, 0x36, 0x05, 0x8a,
+	0xa2, 0x87, 0xde, 0x12, 0x20, 0x45, 0x6f, 0x2d, 0xe6, 0x63, 0x57, 0x4b, 0x89, 0x94, 0x28, 0x35,
+	0x01, 0x8a, 0xf6, 0x24, 0xee, 0x7b, 0xef, 0xf7, 0x66, 0xde, 0xc7, 0xcc, 0xfc, 0x76, 0x47, 0xf0,
+	0x66, 0xcb, 0xe3, 0xed, 0x78, 0xbb, 0xe6, 0xd0, 0xce, 0x42, 0x44, 0x7d, 0x7a, 0xcd, 0xa3, 0x0b,
+	0x2d, 0x9f, 0xd2, 0x85, 0x90, 0xd1, 0x6f, 0x12, 0x87, 0x47, 0xea, 0x09, 0x87, 0xde, 0xc2, 0xce,
+	0xf3, 0x0b, 0x24, 0xe0, 0x84, 0x85, 0xcc, 0x8b, 0xc8, 0x02, 0x0d, 0xb9, 0x47, 0x83, 0x68, 0x81,
+	0xec, 0x72, 0x1c, 0xf3, 0xb6, 0xd4, 0xaa, 0x9f, 0xb5, 0x90, 0x51, 0x4e, 0xd1, 0xdc, 0x9e, 0x71,
+	0x4d, 0xf8, 0xa8, 0x09, 0xf7, 0x35, 0x8f, 0x9a, 0xe7, 0xe4, 0x38, 0x8f, 0x3c, 0x9e, 0x78, 0x65,
+	0xa4, 0xa9, 0x30, 0xe6, 0x6c, 0x8b, 0xb6, 0xa8, 0xfc, 0xb9, 0x20, 0x7e, 0x69, 0x29, 0x22, 0xbb,
+	0x5c, 0x09, 0xc9, 0x2e, 0xd7, 0xb2, 0x0b, 0xfb, 0x9d, 0x74, 0x08, 0xc7, 0x2e, 0xe6, 0x58, 0xeb,
+	0x9f, 0xd8, 0xaf, 0x8f, 0x38, 0xe6, 0x71, 0x34, 0x08, 0x9d, 0x3c, 0x27, 0x68, 0x12, 0xec, 0xd0,
+	0xae, 0x52, 0xd6, 0x17, 0x5c, 0x2f, 0x72, 0xe8, 0x0e, 0x61, 0xdd, 0x44, 0xdb, 0xa2, 0xb4, 0xe5,
+	0x13, 0xa9, 0xc6, 0x41, 0x40, 0x39, 0x96, 0xa9, 0x48, 0x7c, 0x6b, 0xad, 0x7c, 0xda, 0x8e, 0x9b,
+	0x0b, 0x6e, 0xcc, 0xa4, 0xc1, 0x3e, 0x74, 0xaa, 0x8f, 0x38, 0x8b, 0x1d, 0x3e, 0x08, 0xfd, 0x0e,
+	0xc3, 0x61, 0x48, 0x98, 0xf6, 0x5e, 0xfd, 0x55, 0x01, 0x60, 0x29, 0xe6, 0xed, 0x65, 0x1a, 0x34,
+	0xbd, 0x16, 0xba, 0x0d, 0x05, 0x15, 0x58, 0xc5, 0xb8, 0x68, 0x5c, 0x29, 0xd5, 0x67, 0x6b, 0x0e,
+	0x65, 0x24, 0x49, 0x75, 0x6d, 0x4b, 0xea, 0x1a, 0xe7, 0x7e, 0xf3, 0xc9, 0xfc, 0xc8, 0x67, 0x9f,
+	0xcc, 0xcf, 0x70, 0x12, 0x71, 0xd7, 0x6b, 0x36, 0x17, 0xab, 0x5e, 0x2b, 0xa0, 0x8c, 0x54, 0x2d,
+	0x0d, 0x47, 0x37, 0xa0, 0x98, 0x64, 0xb0, 0x92, 0x93, 0xae, 0xce, 0xf6, 0xba, 0xba, 0xa7, 0xb5,
+	0x8d, 0xbc, 0x70, 0x66, 0xa5, 0xd6, 0x68, 0x05, 0xc6, 0x1c, 0x39, 0x99, 0xa8, 0x32, 0x7a, 0x71,
+	0xf4, 0x4a, 0xa9, 0xfe, 0x6c, 0x6d, 0x40, 0xe5, 0x6b, 0x7b, 0x13, 0xaf, 0xa9, 0x3f, 0x56, 0x02,
+	0x45, 0xaf, 0x40, 0x79, 0x9b, 0x52, 0x9f, 0xe0, 0xc0, 0x26, 0xbb, 0x21, 0xab, 0x80, 0x9c, 0xc3,
+	0x13, 0x35, 0x95, 0x8e, 0x5a, 0x92, 0x8e, 0xda, 0x16, 0x67, 0x5e, 0xd0, 0x7a, 0x03, 0xfb, 0x31,
+	0xb1, 0x4a, 0x1a, 0xb1, 0xba, 0x1b, 0x32, 0xf3, 0x3b, 0x79, 0x28, 0xe8, 0xa4, 0x3c, 0x07, 0xf9,
+	0x00, 0x77, 0x48, 0x65, 0x7c, 0x08, 0x1f, 0xd2, 0x12, 0x2d, 0x03, 0x6c, 0xe3, 0xc8, 0x73, 0x6c,
+	0xd1, 0xbf, 0x3a, 0x95, 0xd5, 0x81, 0x61, 0x34, 0x84, 0xa9, 0x88, 0x65, 0x6d, 0xc4, 0x1a, 0xdf,
+	0x4e, 0x1e, 0xd0, 0x22, 0x9c, 0xa2, 0x12, 0xaf, 0xf2, 0x77, 0x61, 0x20, 0x7e, 0x43, 0x98, 0x37,
+	0x72, 0x15, 0x63, 0x6d, 0xc4, 0x52, 0x10, 0xf4, 0x12, 0x14, 0xe4, 0x8f, 0x7a, 0xa5, 0x28, 0xc1,
+	0xf3, 0x87, 0x83, 0xeb, 0x6b, 0x23, 0x96, 0x06, 0xa0, 0xdb, 0x50, 0xc6, 0xa1, 0x67, 0x3f, 0x22,
+	0x5d, 0x35, 0xfb, 0xbc, 0x74, 0xf0, 0xf4, 0xe0, 0x22, 0x84, 0xde, 0x5d, 0xd2, 0xd5, 0xd3, 0x07,
+	0x9c, 0x3e, 0xa1, 0x5b, 0x50, 0x0a, 0xfd, 0xb8, 0xe5, 0x05, 0xca, 0xcf, 0xa9, 0xa3, 0xfc, 0xc4,
+	0xbc, 0xbd, 0x29, 0xed, 0x85, 0x1f, 0x85, 0x94, 0x7e, 0xbe, 0x02, 0x45, 0x1a, 0x62, 0xe5, 0xa4,
+	0x20, 0x9d, 0x5c, 0x1c, 0x1c, 0x4d, 0x88, 0xf5, 0x4c, 0xc6, 0xa8, 0xfa, 0x89, 0xae, 0x43, 0xde,
+	0x77, 0x71, 0x58, 0x19, 0x93, 0xd0, 0x27, 0x07, 0x42, 0x5f, 0x73, 0x71, 0xb8, 0x36, 0x62, 0x49,
+	0xe3, 0xc6, 0x04, 0x94, 0xc4, 0x78, 0xb6, 0x6a, 0xa7, 0x45, 0xf3, 0xbd, 0x4f, 0xf3, 0x79, 0xc8,
+	0x61, 0xe7, 0xbd, 0x4f, 0xf3, 0x93, 0xa8, 0x9c, 0x51, 0x45, 0xd5, 0x5f, 0x18, 0x30, 0xbd, 0xba,
+	0xcb, 0xc5, 0x58, 0xab, 0xbb, 0x9c, 0x04, 0x91, 0x47, 0x03, 0x64, 0xc2, 0x98, 0xeb, 0x45, 0x78,
+	0xdb, 0x27, 0xb2, 0xfa, 0x45, 0x31, 0x21, 0x2d, 0x40, 0x8b, 0x00, 0x0a, 0x6b, 0x33, 0xd2, 0xd4,
+	0xc5, 0x3d, 0xd7, 0xbb, 0x38, 0x2c, 0x12, 0xd1, 0x98, 0x39, 0xc4, 0x22, 0x4d, 0xd1, 0x13, 0xca,
+	0xdc, 0x22, 0x4d, 0x91, 0x53, 0x27, 0x8e, 0x38, 0xed, 0xa8, 0x74, 0x8c, 0x1e, 0x91, 0xd3, 0x65,
+	0x69, 0x9b, 0xd4, 0xc6, 0x49, 0x9f, 0x1a, 0x05, 0xc8, 0x47, 0x21, 0x71, 0xaa, 0x7f, 0x18, 0x85,
+	0xe2, 0x16, 0xe1, 0xdc, 0x0b, 0x5a, 0x11, 0x5a, 0x87, 0xd3, 0x7a, 0xcb, 0x7d, 0x6c, 0x47, 0x84,
+	0xed, 0x10, 0x26, 0x67, 0x68, 0x1c, 0x31, 0x43, 0x6b, 0x26, 0x41, 0x6d, 0x49, 0x90, 0x98, 0xe7,
+	0x6d, 0x28, 0xb7, 0x39, 0x0f, 0xa5, 0x1b, 0xcf, 0x21, 0x3a, 0xca, 0x4b, 0x03, 0x27, 0xba, 0xc6,
+	0x79, 0xb8, 0xa5, 0x6c, 0xad, 0x52, 0x7b, 0xef, 0x01, 0x5d, 0x82, 0xc9, 0x38, 0x22, 0xcc, 0xf6,
+	0x5c, 0xbb, 0x4d, 0xb0, 0x4b, 0x98, 0x8c, 0x79, 0xdc, 0x2a, 0x0b, 0xe9, 0xba, 0xbb, 0x26, 0x65,
+	0x68, 0x0d, 0xa6, 0x18, 0x79, 0x3b, 0x26, 0x11, 0xb7, 0xb9, 0xd7, 0x21, 0x34, 0xe6, 0xba, 0x6d,
+	0xcf, 0x1d, 0x58, 0xac, 0x2b, 0x7a, 0xf7, 0x6c, 0xe4, 0x7f, 0xf0, 0xa7, 0x79, 0xc3, 0x9a, 0xd4,
+	0xb8, 0x07, 0x0a, 0x86, 0xae, 0x02, 0x6a, 0x62, 0xcf, 0x8f, 0x19, 0xb1, 0x3b, 0xd4, 0x25, 0x36,
+	0xf6, 0x7d, 0xfa, 0x8e, 0xec, 0xdd, 0xa2, 0x35, 0xad, 0x35, 0xf7, 0xa8, 0x4b, 0x96, 0x84, 0x1c,
+	0xdd, 0x81, 0x72, 0x32, 0xee, 0x36, 0x75, 0xbb, 0xba, 0x3d, 0x9f, 0x19, 0xbc, 0xd2, 0xe3, 0x66,
+	0x93, 0xb0, 0x24, 0xe1, 0x56, 0x49, 0x83, 0x1b, 0xd4, 0xed, 0xa2, 0x67, 0x61, 0xc6, 0xf1, 0x09,
+	0x66, 0x36, 0xa3, 0x31, 0x27, 0xb6, 0x83, 0x9d, 0x36, 0x91, 0x4d, 0x5b, 0xb4, 0xa6, 0xa4, 0xc2,
+	0x12, 0xf2, 0x65, 0x21, 0x46, 0x97, 0x61, 0x4a, 0xed, 0xb3, 0x36, 0x0d, 0x6c, 0xc2, 0x18, 0x65,
+	0x72, 0x9d, 0x4f, 0x58, 0x13, 0x4a, 0xbc, 0x11, 0xac, 0x0a, 0x61, 0xf5, 0x87, 0x79, 0x28, 0x65,
+	0x52, 0x8b, 0xe6, 0xa1, 0x14, 0x62, 0xde, 0xb6, 0x43, 0x46, 0x9a, 0xde, 0xae, 0xac, 0xec, 0xb8,
+	0x05, 0x42, 0xb4, 0x29, 0x25, 0xe8, 0x16, 0x8c, 0xe9, 0x39, 0xe9, 0x92, 0x5d, 0x1d, 0xa6, 0x64,
+	0x35, 0x4b, 0x61, 0xac, 0x04, 0x8c, 0xd6, 0xa1, 0xc8, 0x48, 0x14, 0xd2, 0x20, 0x22, 0xba, 0x49,
+	0xaf, 0x0d, 0xe9, 0x48, 0x81, 0xac, 0x14, 0x6e, 0xfe, 0xde, 0x80, 0x31, 0xed, 0x1f, 0x3d, 0x03,
+	0x53, 0xb2, 0x20, 0x24, 0xe9, 0x06, 0x71, 0x4e, 0x8d, 0x5e, 0x19, 0xb7, 0x26, 0xb5, 0x58, 0xf5,
+	0x43, 0x84, 0x5c, 0x98, 0xd4, 0x06, 0x36, 0xa7, 0x36, 0x76, 0xdd, 0x4a, 0x4e, 0x9e, 0x25, 0x2f,
+	0x1f, 0x27, 0x9c, 0x9a, 0xf6, 0xf6, 0x80, 0x2e, 0xb9, 0xee, 0x6a, 0xc0, 0x59, 0xd7, 0x2a, 0xb7,
+	0x33, 0x22, 0xf3, 0x15, 0x98, 0x39, 0x60, 0x82, 0xa6, 0x61, 0xf4, 0x11, 0xe9, 0xea, 0xdc, 0x8a,
+	0x9f, 0x68, 0x16, 0x4e, 0xed, 0x88, 0xc3, 0x41, 0xa6, 0x74, 0xdc, 0x52, 0x0f, 0x8b, 0xb9, 0x1b,
+	0x86, 0xf9, 0x18, 0x8a, 0x49, 0xc4, 0xe8, 0x06, 0x54, 0x92, 0xd8, 0xe2, 0x30, 0xe2, 0x8c, 0xe0,
+	0xce, 0xbe, 0x20, 0xcf, 0x6a, 0xfd, 0x43, 0xad, 0x4e, 0x82, 0x7d, 0x01, 0x12, 0x8d, 0xed, 0xf8,
+	0x1e, 0x09, 0x78, 0x8a, 0xcb, 0x49, 0xdc, 0xac, 0xd6, 0x2e, 0x4b, 0xa5, 0x46, 0x55, 0x43, 0x98,
+	0xec, 0x6d, 0x47, 0xd1, 0x81, 0x1d, 0xbc, 0x6b, 0xa7, 0x1d, 0xdd, 0xe5, 0x44, 0xf1, 0x80, 0x09,
+	0x6b, 0xaa, 0x83, 0x77, 0x75, 0x56, 0x1a, 0x42, 0x8c, 0xea, 0x70, 0x46, 0x7a, 0xb5, 0x43, 0xcc,
+	0xb8, 0x87, 0x7d, 0xbb, 0x43, 0xa2, 0x08, 0xb7, 0x54, 0x8c, 0x45, 0xeb, 0xb4, 0x54, 0x6e, 0x2a,
+	0xdd, 0x3d, 0xa5, 0xaa, 0xfe, 0xd2, 0x00, 0xd8, 0xdb, 0x91, 0x90, 0x07, 0xc8, 0xa1, 0x01, 0x27,
+	0xbb, 0xdc, 0x26, 0xc9, 0xc6, 0xa9, 0x42, 0x2d, 0xd5, 0x17, 0x87, 0xd8, 0xd2, 0xc4, 0x99, 0x2f,
+	0xd0, 0xe9, 0xae, 0x1b, 0xa9, 0x1a, 0xcd, 0x38, 0xfb, 0xe5, 0xe6, 0x0a, 0x9c, 0xed, 0x6f, 0x7c,
+	0x9c, 0x6a, 0x55, 0x7f, 0x66, 0x28, 0xae, 0xa4, 0x4e, 0x29, 0x84, 0x34, 0x2d, 0x50, 0x58, 0x75,
+	0xf0, 0x5f, 0x81, 0x69, 0x7d, 0xe6, 0x35, 0x3d, 0x9f, 0xd8, 0x52, 0xaf, 0xfc, 0x4c, 0x2a, 0xf9,
+	0x2d, 0xcf, 0x27, 0xaf, 0x0b, 0xcb, 0xe7, 0x60, 0x96, 0xec, 0x86, 0x94, 0x71, 0xe2, 0xda, 0x51,
+	0xb7, 0xb3, 0x4d, 0x7d, 0x65, 0xad, 0xb6, 0x37, 0x94, 0xe8, 0xb6, 0xa4, 0x4a, 0x22, 0x16, 0xa0,
+	0xa0, 0x0e, 0x02, 0xbd, 0xb7, 0xcd, 0xf5, 0x23, 0x22, 0xb1, 0xc3, 0x2d, 0x6d, 0x56, 0xfd, 0x47,
+	0x0e, 0xc6, 0x53, 0x6e, 0x21, 0xe2, 0x62, 0x04, 0xfb, 0x1d, 0x3d, 0x5f, 0xf5, 0x80, 0x6e, 0xc0,
+	0x28, 0x0e, 0x99, 0x5e, 0xec, 0x97, 0x8f, 0xa6, 0x28, 0xb5, 0xa5, 0x90, 0x59, 0x02, 0x62, 0xfe,
+	0x28, 0x07, 0xa3, 0x4b, 0x21, 0x43, 0xb7, 0xe1, 0x94, 0xd8, 0x8b, 0x23, 0xbd, 0xc2, 0x9e, 0x1f,
+	0xce, 0x47, 0xed, 0xa1, 0xc0, 0xa8, 0x82, 0x29, 0xbc, 0xb9, 0x05, 0xb3, 0x5b, 0xd8, 0xe7, 0xc4,
+	0x5d, 0xc3, 0x51, 0x9b, 0xb8, 0x9b, 0x38, 0x8a, 0xde, 0xa1, 0xcc, 0x15, 0x79, 0x8e, 0xb0, 0xcf,
+	0x93, 0x3c, 0x8b, 0xdf, 0x62, 0x23, 0x68, 0x4b, 0x2b, 0x3b, 0xd4, 0x66, 0x49, 0x9a, 0xdb, 0x3d,
+	0x60, 0x33, 0x06, 0xd8, 0x1b, 0xa9, 0x4f, 0xb5, 0xef, 0x67, 0xab, 0x5d, 0xaa, 0xdf, 0x1c, 0x72,
+	0xf6, 0xfd, 0x26, 0x9a, 0x6d, 0x95, 0x8f, 0x46, 0xe1, 0x94, 0x64, 0x56, 0x68, 0x1e, 0xc6, 0xf5,
+	0xa2, 0xf4, 0x5c, 0x35, 0xb0, 0x60, 0x6a, 0x56, 0x51, 0x09, 0xd7, 0x5d, 0xb4, 0x2e, 0xf6, 0x7d,
+	0x69, 0x10, 0x11, 0x87, 0x11, 0x3e, 0x14, 0x2b, 0x90, 0x3e, 0xa6, 0x14, 0x6e, 0x4b, 0xc2, 0xc4,
+	0xa9, 0xfb, 0x14, 0x80, 0x17, 0x45, 0x31, 0x61, 0x76, 0xcc, 0x7c, 0xd5, 0x49, 0xd2, 0x70, 0x5c,
+	0x49, 0x1f, 0x32, 0x1f, 0xbd, 0x0b, 0xa6, 0x64, 0x2f, 0x24, 0x70, 0x43, 0xea, 0x05, 0xdc, 0x7e,
+	0x3b, 0x26, 0xac, 0x2b, 0x56, 0x31, 0xee, 0x44, 0x95, 0x31, 0x59, 0xc2, 0x9b, 0x87, 0x93, 0x45,
+	0xc9, 0xd4, 0x56, 0x35, 0xfe, 0xbe, 0x80, 0x6f, 0x4a, 0xb4, 0x4c, 0xb1, 0x1c, 0x6f, 0x0e, 0xf7,
+	0xb7, 0x40, 0xe7, 0x61, 0x0c, 0x87, 0xa1, 0x9c, 0x5d, 0x3e, 0x9d, 0x5d, 0x01, 0x87, 0xa1, 0x98,
+	0xda, 0x33, 0x30, 0xe1, 0x60, 0xdf, 0xdf, 0xc6, 0xce, 0x23, 0x5b, 0x1c, 0x49, 0xf2, 0xd4, 0x55,
+	0x26, 0xe5, 0x44, 0xb1, 0x89, 0x79, 0x1b, 0x99, 0x50, 0x88, 0x1c, 0x1a, 0x92, 0xa8, 0x52, 0x10,
+	0xfb, 0x9b, 0x72, 0xa2, 0x24, 0xe6, 0x1d, 0x78, 0xe2, 0xb0, 0xe9, 0x1d, 0x6b, 0xbd, 0xff, 0xcd,
+	0x80, 0x82, 0xa2, 0xc7, 0xa8, 0x0d, 0x73, 0xd4, 0x73, 0x15, 0x9f, 0xa7, 0xcc, 0x7b, 0x2c, 0x29,
+	0x84, 0xed, 0x50, 0x97, 0x68, 0x7a, 0x54, 0x1b, 0x9c, 0x33, 0xcf, 0x95, 0x7d, 0x93, 0xc2, 0x96,
+	0xa9, 0x4b, 0xd6, 0x46, 0xac, 0x33, 0xb4, 0x9f, 0x42, 0x8c, 0x84, 0x1d, 0x87, 0x44, 0xe2, 0xe0,
+	0x7a, 0x44, 0x02, 0x7b, 0x07, 0xfb, 0x9e, 0x2b, 0xd5, 0xba, 0x29, 0x06, 0x8f, 0xb4, 0x24, 0x71,
+	0x0f, 0x04, 0xec, 0x8d, 0x14, 0x25, 0x46, 0xc2, 0xfd, 0x14, 0x8d, 0x32, 0x80, 0xa4, 0xfc, 0x36,
+	0xef, 0x86, 0xa4, 0xfa, 0xeb, 0x51, 0x38, 0xd3, 0x77, 0xaa, 0xe8, 0xfc, 0x81, 0x0e, 0xce, 0x74,
+	0xef, 0xea, 0x49, 0xba, 0xf7, 0x60, 0xe7, 0x3e, 0x79, 0xb0, 0x73, 0xb3, 0x5d, 0xfb, 0x81, 0x71,
+	0x68, 0xdb, 0xe6, 0x65, 0xdb, 0xde, 0x3d, 0x5e, 0x09, 0x0e, 0x6d, 0xe3, 0xc1, 0x2d, 0x3c, 0xb7,
+	0xd7, 0xc2, 0xb2, 0x3f, 0xd3, 0xf6, 0x7d, 0x7a, 0x7f, 0xfb, 0x16, 0x14, 0x51, 0xed, 0x69, 0xdd,
+	0xb3, 0x69, 0xeb, 0x8e, 0xc9, 0xa3, 0xf9, 0xcb, 0x68, 0xdb, 0x8f, 0x0c, 0x38, 0xd3, 0xb7, 0x15,
+	0xd0, 0x35, 0x98, 0xf1, 0x02, 0xce, 0xa8, 0xa0, 0xfe, 0xb2, 0x81, 0x45, 0x14, 0xd2, 0xe7, 0xda,
+	0x88, 0x35, 0xdd, 0xa3, 0x12, 0x11, 0x3d, 0x05, 0x92, 0x65, 0x7b, 0x41, 0x93, 0xee, 0x2d, 0x59,
+	0xab, 0x94, 0xc8, 0x84, 0xc9, 0x8a, 0x08, 0xda, 0x69, 0x93, 0x94, 0x76, 0x9f, 0x1a, 0x8e, 0x76,
+	0x97, 0x25, 0x4a, 0x93, 0xee, 0xc6, 0x0c, 0x4c, 0xed, 0xb5, 0xb9, 0x6a, 0xc7, 0x3a, 0x94, 0x36,
+	0x44, 0x09, 0x54, 0x8b, 0xc8, 0xe4, 0x66, 0xdb, 0x4c, 0x67, 0xa2, 0x9c, 0xed, 0xa3, 0xea, 0x87,
+	0x79, 0x80, 0xbd, 0xb7, 0x51, 0xf4, 0x0d, 0x98, 0xf4, 0xf1, 0x36, 0xf1, 0xed, 0x88, 0xf8, 0xc4,
+	0xe1, 0x94, 0x69, 0x6e, 0xf1, 0xe2, 0x10, 0xaf, 0xb2, 0xb5, 0xd7, 0x04, 0x72, 0x4b, 0x03, 0x55,
+	0x4b, 0x4c, 0xf8, 0x59, 0x19, 0x5a, 0x83, 0xd3, 0xc9, 0x7b, 0xf2, 0x5e, 0xeb, 0x27, 0xa7, 0xe0,
+	0x21, 0xbd, 0x3f, 0xad, 0x5e, 0x91, 0xd3, 0xde, 0x8f, 0x04, 0x2b, 0x57, 0x84, 0x2d, 0xcb, 0x00,
+	0x40, 0x89, 0xe4, 0xc9, 0x1f, 0xc2, 0x99, 0x84, 0xcd, 0x36, 0x19, 0xed, 0xd8, 0xe9, 0x97, 0x15,
+	0xd5, 0xf8, 0xff, 0x3f, 0x4c, 0x40, 0x9a, 0xf6, 0xdd, 0x62, 0xb4, 0x93, 0x7c, 0x7a, 0x51, 0x61,
+	0x9d, 0x6e, 0x1f, 0xd4, 0x98, 0xaf, 0x02, 0x3a, 0x98, 0x81, 0x63, 0x51, 0xdb, 0x18, 0x2a, 0x83,
+	0x86, 0xec, 0xe3, 0x67, 0xb9, 0xf7, 0x18, 0xbe, 0x36, 0x4c, 0x44, 0x2a, 0x83, 0x77, 0x49, 0x37,
+	0x3b, 0xec, 0x4d, 0x18, 0x4f, 0xe5, 0x7d, 0x19, 0x9a, 0x29, 0xde, 0x4c, 0xde, 0x8e, 0x3d, 0x46,
+	0x5c, 0xcd, 0x55, 0xd3, 0xe7, 0xea, 0x3f, 0x0d, 0x28, 0x2f, 0x65, 0xaa, 0x83, 0xae, 0xc2, 0x74,
+	0x8b, 0x04, 0x84, 0x61, 0x4e, 0x6c, 0x5d, 0x6c, 0xf5, 0x3e, 0x2f, 0xcf, 0x9c, 0xc9, 0x44, 0xa7,
+	0x30, 0x6a, 0x6b, 0x50, 0x46, 0xb9, 0x64, 0x6b, 0x90, 0x0a, 0x13, 0x0a, 0xb2, 0x77, 0xd4, 0x17,
+	0x2d, 0x7d, 0x60, 0x29, 0x09, 0xda, 0xc8, 0x7c, 0x28, 0x53, 0xe5, 0xbc, 0x7e, 0x44, 0xf0, 0x6a,
+	0x6e, 0xb5, 0xde, 0x2a, 0xa6, 0x4e, 0xcc, 0x9b, 0x30, 0x71, 0x54, 0xb6, 0x07, 0xef, 0x1d, 0x0f,
+	0x60, 0x6c, 0x23, 0xfd, 0x6e, 0x32, 0xd6, 0xa1, 0x6e, 0xec, 0x93, 0x84, 0x93, 0x1f, 0xd2, 0xd3,
+	0x89, 0xa5, 0xf0, 0x2c, 0x77, 0xe6, 0xc4, 0xb3, 0x7c, 0xa8, 0x7e, 0x9e, 0x83, 0xfc, 0x6b, 0x2e,
+	0x0e, 0x51, 0x05, 0xc6, 0xb0, 0xeb, 0x32, 0x12, 0x45, 0x7a, 0x3a, 0xc9, 0x23, 0xba, 0xac, 0xde,
+	0xf3, 0x57, 0x82, 0x07, 0xa4, 0x13, 0xfa, 0x98, 0xa7, 0xb4, 0xb9, 0x57, 0x8a, 0x6e, 0xc0, 0x5c,
+	0x87, 0x74, 0xb6, 0x09, 0x8b, 0xda, 0x5e, 0xb8, 0xc4, 0x39, 0xf3, 0xb6, 0x63, 0x2e, 0x19, 0xb5,
+	0x5e, 0x37, 0x83, 0xd4, 0xe8, 0x12, 0x4c, 0xe8, 0xf7, 0xa0, 0xdb, 0x8c, 0xc6, 0xa1, 0x3a, 0x35,
+	0xc6, 0xad, 0x5e, 0x21, 0x7a, 0x15, 0xf2, 0x21, 0xa5, 0xbe, 0xde, 0xc7, 0xae, 0x1e, 0xfa, 0xb5,
+	0x48, 0xbc, 0x80, 0x04, 0x6a, 0xbb, 0xdc, 0xa4, 0xd4, 0xb7, 0x24, 0xd2, 0xfc, 0xc0, 0x80, 0xc9,
+	0x5e, 0x05, 0x7a, 0x11, 0xc6, 0x3a, 0x78, 0x77, 0xcb, 0x7b, 0x9c, 0xb0, 0x85, 0x83, 0xdf, 0x10,
+	0x1f, 0xae, 0x07, 0xfc, 0x7a, 0x5d, 0x7d, 0x43, 0x4c, 0x8c, 0xd1, 0xcb, 0x50, 0xf2, 0x02, 0x4f,
+	0xbc, 0x42, 0x49, 0x6c, 0x6e, 0x08, 0x6c, 0x16, 0x50, 0xfd, 0xc9, 0x1c, 0x4c, 0xe8, 0x4f, 0x53,
+	0xfa, 0x53, 0xe6, 0x02, 0xcc, 0x66, 0x3e, 0x5e, 0x89, 0x1d, 0xcb, 0xce, 0xac, 0x90, 0x19, 0x9c,
+	0x5a, 0x5a, 0xa4, 0x29, 0xb3, 0x76, 0x7b, 0xef, 0x6b, 0x6c, 0x51, 0x76, 0xc1, 0xe0, 0xa5, 0xd9,
+	0x33, 0xd2, 0x17, 0xff, 0x41, 0xf6, 0xb7, 0xa3, 0x50, 0xda, 0xc8, 0x84, 0x72, 0x24, 0xb1, 0xbe,
+	0xb9, 0xff, 0xcc, 0x90, 0x1d, 0xd5, 0x38, 0xfb, 0xd9, 0x27, 0xf3, 0xd3, 0x3e, 0x6d, 0xb5, 0xbc,
+	0xa0, 0xb5, 0x58, 0x65, 0xc4, 0xc5, 0x0e, 0xaf, 0x4a, 0x8e, 0x99, 0x39, 0x4b, 0x86, 0xa1, 0xd2,
+	0xdf, 0x33, 0x86, 0xe0, 0xd2, 0x1b, 0x43, 0xa6, 0x2b, 0x13, 0xd9, 0xff, 0x0a, 0xbf, 0x36, 0x3f,
+	0x1e, 0x85, 0xf3, 0x7d, 0xa9, 0x99, 0xae, 0xf0, 0xa1, 0xc4, 0xf3, 0xa5, 0xfe, 0xd5, 0x9d, 0xed,
+	0x57, 0xdd, 0x7d, 0xb5, 0x3d, 0x82, 0x6c, 0xfe, 0x78, 0x18, 0xb2, 0x69, 0x0f, 0x5b, 0xd7, 0xc1,
+	0xf1, 0xfd, 0xb7, 0x12, 0x50, 0xf3, 0xfd, 0x1c, 0x94, 0xd5, 0x7b, 0x93, 0x2e, 0xe4, 0xbb, 0x47,
+	0xbd, 0x3d, 0x35, 0xfe, 0xfd, 0x6c, 0xfe, 0xc7, 0xbd, 0x51, 0x99, 0x7f, 0x3f, 0x05, 0xd3, 0x7b,
+	0x74, 0x45, 0xa7, 0xe2, 0xdb, 0x06, 0x4c, 0xca, 0x09, 0x24, 0x7c, 0x22, 0x39, 0x5d, 0xd7, 0x87,
+	0x4c, 0xc1, 0x7e, 0x8f, 0x35, 0x39, 0xbe, 0x92, 0xea, 0x2d, 0x62, 0xc0, 0x1a, 0xd8, 0xc9, 0x18,
+	0xee, 0xe7, 0x9c, 0xb9, 0x03, 0x9c, 0xf3, 0xbb, 0x06, 0x9c, 0xeb, 0x21, 0x9d, 0x82, 0xe8, 0xa6,
+	0x4c, 0x45, 0xdd, 0xcc, 0x6d, 0x9d, 0x74, 0xce, 0x19, 0x66, 0x78, 0x97, 0x74, 0x7b, 0x99, 0xcc,
+	0xd9, 0x76, 0x5f, 0xa5, 0xf9, 0xb1, 0x01, 0xa5, 0xcc, 0xb3, 0x20, 0x72, 0x82, 0x1b, 0x64, 0x8e,
+	0xaf, 0xf4, 0x19, 0x75, 0x7a, 0x6e, 0x1f, 0xc5, 0x54, 0xef, 0x9f, 0x74, 0xaa, 0x99, 0x21, 0xbf,
+	0x14, 0xca, 0x65, 0xbe, 0x6f, 0xc0, 0xcc, 0x81, 0x1a, 0xf6, 0xf1, 0xf0, 0xd5, 0x5e, 0x8a, 0xbc,
+	0xfc, 0x05, 0x04, 0x94, 0x9d, 0xc6, 0x3a, 0x9c, 0x3f, 0xa4, 0x2a, 0xc7, 0x8a, 0xe8, 0x43, 0x03,
+	0x26, 0x34, 0x8b, 0xd4, 0x5d, 0xff, 0xd6, 0x7e, 0x2e, 0xb9, 0x34, 0xec, 0x82, 0xcf, 0xba, 0xa9,
+	0xdd, 0x53, 0x3e, 0x54, 0xfa, 0x0f, 0xe7, 0x9c, 0xe6, 0x22, 0x94, 0xb3, 0xe6, 0xc7, 0x0a, 0xe0,
+	0xaf, 0x07, 0xef, 0x7e, 0x4b, 0x43, 0xdf, 0xfd, 0xbe, 0x9e, 0x5c, 0xdb, 0xaa, 0x7b, 0x8f, 0xfa,
+	0xf1, 0x09, 0x40, 0xef, 0x55, 0xee, 0xbd, 0xf4, 0x2a, 0x57, 0xdd, 0x3f, 0x5f, 0x3f, 0x8e, 0xc3,
+	0x7a, 0xba, 0x39, 0x26, 0xd7, 0xbb, 0xbd, 0x57, 0xd3, 0xf9, 0x93, 0x5d, 0x4d, 0xbf, 0xb5, 0xef,
+	0x8e, 0x58, 0xb1, 0xe5, 0xff, 0x3b, 0x61, 0x4b, 0x1e, 0x7e, 0x6f, 0x5c, 0x38, 0xe9, 0xbd, 0xf1,
+	0xfd, 0xcc, 0xbd, 0xb1, 0xba, 0xfc, 0x7d, 0xe1, 0x24, 0x5d, 0xd7, 0xef, 0x2e, 0xb9, 0x78, 0xf2,
+	0xbb, 0xe4, 0x3b, 0xf9, 0xa2, 0x31, 0x9d, 0xbb, 0x93, 0x2f, 0xe6, 0xa6, 0x47, 0xeb, 0x7f, 0xcc,
+	0xc1, 0x9c, 0x1e, 0x7a, 0x25, 0xf9, 0xa7, 0x90, 0xe4, 0xae, 0xee, 0xeb, 0x70, 0x7a, 0x4b, 0x5e,
+	0xf3, 0xf4, 0x32, 0xf8, 0x0b, 0x35, 0xf9, 0xbf, 0x24, 0x35, 0x1c, 0x7a, 0xb5, 0x9d, 0x7a, 0x2d,
+	0x85, 0xe9, 0xdb, 0x19, 0x73, 0x7e, 0xa0, 0x5e, 0xdd, 0x33, 0x55, 0x47, 0xae, 0x18, 0xcf, 0x19,
+	0x88, 0x00, 0x5a, 0x21, 0x3e, 0xc7, 0xbd, 0xce, 0x9f, 0xde, 0x07, 0x16, 0x16, 0x07, 0x46, 0xb8,
+	0x74, 0xb8, 0x51, 0xcf, 0x30, 0xdf, 0x02, 0x74, 0x8b, 0x70, 0xa7, 0xfd, 0x05, 0xc7, 0x70, 0xf9,
+	0xbd, 0xdf, 0xfd, 0xe5, 0xfb, 0xb9, 0x8b, 0xd5, 0xf3, 0x3d, 0xff, 0x4e, 0xb3, 0xa8, 0xef, 0xa1,
+	0xf5, 0xa5, 0xbd, 0xf1, 0x6c, 0xe3, 0xcd, 0x9f, 0x7f, 0x9e, 0x37, 0x7e, 0xfa, 0xe7, 0x0b, 0xc6,
+	0xd7, 0x5e, 0x1f, 0xee, 0xff, 0x92, 0xc2, 0x47, 0xad, 0xa1, 0xfe, 0x37, 0x69, 0xbb, 0x20, 0x77,
+	0x80, 0xeb, 0xff, 0x0a, 0x00, 0x00, 0xff, 0xff, 0x54, 0x96, 0x91, 0x6f, 0xf0, 0x24, 0x00, 0x00,
 }
 
 func (this *AuthConfig) Equal(that interface{}) bool {
@@ -1910,6 +2661,9 @@ func (this *AuthConfig) Equal(that interface{}) bool {
 			return false
 		}
 	}
+	if !this.BooleanExpr.Equal(that1.BooleanExpr) {
+		return false
+	}
 	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
 		return false
 	}
@@ -1932,6 +2686,9 @@ func (this *AuthConfig_Config) Equal(that interface{}) bool {
 	if that1 == nil {
 		return this == nil
 	} else if this == nil {
+		return false
+	}
+	if !this.Name.Equal(that1.Name) {
 		return false
 	}
 	if that1.AuthConfig == nil {
@@ -1992,6 +2749,30 @@ func (this *AuthConfig_Config_Oauth) Equal(that interface{}) bool {
 		return false
 	}
 	if !this.Oauth.Equal(that1.Oauth) {
+		return false
+	}
+	return true
+}
+func (this *AuthConfig_Config_Oauth2) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*AuthConfig_Config_Oauth2)
+	if !ok {
+		that2, ok := that.(AuthConfig_Config_Oauth2)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if !this.Oauth2.Equal(that1.Oauth2) {
 		return false
 	}
 	return true
@@ -2609,6 +3390,211 @@ func (this *OAuth) Equal(that interface{}) bool {
 	}
 	return true
 }
+func (this *OAuth2) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*OAuth2)
+	if !ok {
+		that2, ok := that.(OAuth2)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if that1.OauthType == nil {
+		if this.OauthType != nil {
+			return false
+		}
+	} else if this.OauthType == nil {
+		return false
+	} else if !this.OauthType.Equal(that1.OauthType) {
+		return false
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *OAuth2_OidcAuthorizationCode) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*OAuth2_OidcAuthorizationCode)
+	if !ok {
+		that2, ok := that.(OAuth2_OidcAuthorizationCode)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if !this.OidcAuthorizationCode.Equal(that1.OidcAuthorizationCode) {
+		return false
+	}
+	return true
+}
+func (this *OAuth2_AccessTokenValidation) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*OAuth2_AccessTokenValidation)
+	if !ok {
+		that2, ok := that.(OAuth2_AccessTokenValidation)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if !this.AccessTokenValidation.Equal(that1.AccessTokenValidation) {
+		return false
+	}
+	return true
+}
+func (this *OidcAuthorizationCode) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*OidcAuthorizationCode)
+	if !ok {
+		that2, ok := that.(OidcAuthorizationCode)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.ClientId != that1.ClientId {
+		return false
+	}
+	if !this.ClientSecretRef.Equal(that1.ClientSecretRef) {
+		return false
+	}
+	if this.IssuerUrl != that1.IssuerUrl {
+		return false
+	}
+	if len(this.AuthEndpointQueryParams) != len(that1.AuthEndpointQueryParams) {
+		return false
+	}
+	for i := range this.AuthEndpointQueryParams {
+		if this.AuthEndpointQueryParams[i] != that1.AuthEndpointQueryParams[i] {
+			return false
+		}
+	}
+	if this.AppUrl != that1.AppUrl {
+		return false
+	}
+	if this.CallbackPath != that1.CallbackPath {
+		return false
+	}
+	if len(this.Scopes) != len(that1.Scopes) {
+		return false
+	}
+	for i := range this.Scopes {
+		if this.Scopes[i] != that1.Scopes[i] {
+			return false
+		}
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *AccessTokenValidation) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*AccessTokenValidation)
+	if !ok {
+		that2, ok := that.(AccessTokenValidation)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if that1.ValidationType == nil {
+		if this.ValidationType != nil {
+			return false
+		}
+	} else if this.ValidationType == nil {
+		return false
+	} else if !this.ValidationType.Equal(that1.ValidationType) {
+		return false
+	}
+	if this.UserinfoUrl != that1.UserinfoUrl {
+		return false
+	}
+	if this.CacheTimeout != nil && that1.CacheTimeout != nil {
+		if *this.CacheTimeout != *that1.CacheTimeout {
+			return false
+		}
+	} else if this.CacheTimeout != nil {
+		return false
+	} else if that1.CacheTimeout != nil {
+		return false
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *AccessTokenValidation_IntrospectionUrl) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*AccessTokenValidation_IntrospectionUrl)
+	if !ok {
+		that2, ok := that.(AccessTokenValidation_IntrospectionUrl)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.IntrospectionUrl != that1.IntrospectionUrl {
+		return false
+	}
+	return true
+}
 func (this *OauthSecret) Equal(that interface{}) bool {
 	if that == nil {
 		return this == nil
@@ -2671,6 +3657,47 @@ func (this *ApiKeyAuth) Equal(that interface{}) bool {
 			return false
 		}
 	}
+	if this.HeaderName != that1.HeaderName {
+		return false
+	}
+	if len(this.HeadersFromMetadata) != len(that1.HeadersFromMetadata) {
+		return false
+	}
+	for i := range this.HeadersFromMetadata {
+		if !this.HeadersFromMetadata[i].Equal(that1.HeadersFromMetadata[i]) {
+			return false
+		}
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *ApiKeyAuth_SecretKey) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ApiKeyAuth_SecretKey)
+	if !ok {
+		that2, ok := that.(ApiKeyAuth_SecretKey)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.Name != that1.Name {
+		return false
+	}
+	if this.Required != that1.Required {
+		return false
+	}
 	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
 		return false
 	}
@@ -2706,6 +3733,14 @@ func (this *ApiKeySecret) Equal(that interface{}) bool {
 	}
 	for i := range this.Labels {
 		if this.Labels[i] != that1.Labels[i] {
+			return false
+		}
+	}
+	if len(this.Metadata) != len(that1.Metadata) {
+		return false
+	}
+	for i := range this.Metadata {
+		if this.Metadata[i] != that1.Metadata[i] {
 			return false
 		}
 	}
@@ -2853,6 +3888,9 @@ func (this *ExtAuthConfig) Equal(that interface{}) bool {
 			return false
 		}
 	}
+	if !this.BooleanExpr.Equal(that1.BooleanExpr) {
+		return false
+	}
 	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
 		return false
 	}
@@ -2913,6 +3951,142 @@ func (this *ExtAuthConfig_OAuthConfig) Equal(that interface{}) bool {
 	}
 	return true
 }
+func (this *ExtAuthConfig_OidcAuthorizationCodeConfig) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ExtAuthConfig_OidcAuthorizationCodeConfig)
+	if !ok {
+		that2, ok := that.(ExtAuthConfig_OidcAuthorizationCodeConfig)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.ClientId != that1.ClientId {
+		return false
+	}
+	if this.ClientSecret != that1.ClientSecret {
+		return false
+	}
+	if this.IssuerUrl != that1.IssuerUrl {
+		return false
+	}
+	if len(this.AuthEndpointQueryParams) != len(that1.AuthEndpointQueryParams) {
+		return false
+	}
+	for i := range this.AuthEndpointQueryParams {
+		if this.AuthEndpointQueryParams[i] != that1.AuthEndpointQueryParams[i] {
+			return false
+		}
+	}
+	if this.AppUrl != that1.AppUrl {
+		return false
+	}
+	if this.CallbackPath != that1.CallbackPath {
+		return false
+	}
+	if len(this.Scopes) != len(that1.Scopes) {
+		return false
+	}
+	for i := range this.Scopes {
+		if this.Scopes[i] != that1.Scopes[i] {
+			return false
+		}
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *ExtAuthConfig_OAuth2Config) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ExtAuthConfig_OAuth2Config)
+	if !ok {
+		that2, ok := that.(ExtAuthConfig_OAuth2Config)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if that1.OauthType == nil {
+		if this.OauthType != nil {
+			return false
+		}
+	} else if this.OauthType == nil {
+		return false
+	} else if !this.OauthType.Equal(that1.OauthType) {
+		return false
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *ExtAuthConfig_OAuth2Config_OidcAuthorizationCode) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ExtAuthConfig_OAuth2Config_OidcAuthorizationCode)
+	if !ok {
+		that2, ok := that.(ExtAuthConfig_OAuth2Config_OidcAuthorizationCode)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if !this.OidcAuthorizationCode.Equal(that1.OidcAuthorizationCode) {
+		return false
+	}
+	return true
+}
+func (this *ExtAuthConfig_OAuth2Config_AccessTokenValidation) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ExtAuthConfig_OAuth2Config_AccessTokenValidation)
+	if !ok {
+		that2, ok := that.(ExtAuthConfig_OAuth2Config_AccessTokenValidation)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if !this.AccessTokenValidation.Equal(that1.AccessTokenValidation) {
+		return false
+	}
+	return true
+}
 func (this *ExtAuthConfig_ApiKeyAuthConfig) Equal(that interface{}) bool {
 	if that == nil {
 		return this == nil
@@ -2932,11 +4106,57 @@ func (this *ExtAuthConfig_ApiKeyAuthConfig) Equal(that interface{}) bool {
 	} else if this == nil {
 		return false
 	}
-	if len(this.ValidApiKeyAndUser) != len(that1.ValidApiKeyAndUser) {
+	if len(this.ValidApiKeys) != len(that1.ValidApiKeys) {
 		return false
 	}
-	for i := range this.ValidApiKeyAndUser {
-		if this.ValidApiKeyAndUser[i] != that1.ValidApiKeyAndUser[i] {
+	for i := range this.ValidApiKeys {
+		if !this.ValidApiKeys[i].Equal(that1.ValidApiKeys[i]) {
+			return false
+		}
+	}
+	if this.HeaderName != that1.HeaderName {
+		return false
+	}
+	if len(this.HeadersFromKeyMetadata) != len(that1.HeadersFromKeyMetadata) {
+		return false
+	}
+	for i := range this.HeadersFromKeyMetadata {
+		if this.HeadersFromKeyMetadata[i] != that1.HeadersFromKeyMetadata[i] {
+			return false
+		}
+	}
+	if !bytes.Equal(this.XXX_unrecognized, that1.XXX_unrecognized) {
+		return false
+	}
+	return true
+}
+func (this *ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata)
+	if !ok {
+		that2, ok := that.(ExtAuthConfig_ApiKeyAuthConfig_KeyMetadata)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if this.Username != that1.Username {
+		return false
+	}
+	if len(this.Metadata) != len(that1.Metadata) {
+		return false
+	}
+	for i := range this.Metadata {
+		if this.Metadata[i] != that1.Metadata[i] {
 			return false
 		}
 	}
@@ -2999,6 +4219,9 @@ func (this *ExtAuthConfig_Config) Equal(that interface{}) bool {
 	} else if this == nil {
 		return false
 	}
+	if !this.Name.Equal(that1.Name) {
+		return false
+	}
 	if that1.AuthConfig == nil {
 		if this.AuthConfig != nil {
 			return false
@@ -3033,6 +4256,30 @@ func (this *ExtAuthConfig_Config_Oauth) Equal(that interface{}) bool {
 		return false
 	}
 	if !this.Oauth.Equal(that1.Oauth) {
+		return false
+	}
+	return true
+}
+func (this *ExtAuthConfig_Config_Oauth2) Equal(that interface{}) bool {
+	if that == nil {
+		return this == nil
+	}
+
+	that1, ok := that.(*ExtAuthConfig_Config_Oauth2)
+	if !ok {
+		that2, ok := that.(ExtAuthConfig_Config_Oauth2)
+		if ok {
+			that1 = &that2
+		} else {
+			return false
+		}
+	}
+	if that1 == nil {
+		return this == nil
+	} else if this == nil {
+		return false
+	}
+	if !this.Oauth2.Equal(that1.Oauth2) {
 		return false
 	}
 	return true

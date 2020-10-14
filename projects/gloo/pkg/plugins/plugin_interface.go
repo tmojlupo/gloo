@@ -1,13 +1,15 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"sort"
+	"strings"
 
 	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
 	envoyroute "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
+	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 )
 
@@ -45,9 +47,19 @@ type RouteActionParams struct {
 	Upstream Plugins
 */
 
+// UpstreamPlugin is called after the envoy Cluster has been created for the input Upstream, and allows
+// the cluster to be edited before being sent to envoy via CDS
 type UpstreamPlugin interface {
 	Plugin
 	ProcessUpstream(params Params, in *v1.Upstream, out *envoyapi.Cluster) error
+}
+
+// Endpoint is called after the envoy ClusterLoadAssignment has been created for the input Upstream, and allows
+// the endpoints to be edited before being sent to envoy via EDS
+// If one wishes to also modify the corresponding envoy Cluster the above UpstreamPlugin interface should be used.
+type EndpointPlugin interface {
+	Plugin
+	ProcessEndpoints(params Params, in *v1.Upstream, out *envoyapi.ClusterLoadAssignment) error
 }
 
 /*
@@ -151,26 +163,26 @@ func (s StagedHttpFilterList) Len() int {
 	return len(s)
 }
 
-// filters by Relative Stage, Weighting, Name, and (to ensure stability) index
+// filters by Relative Stage, Weighting, Name, Config Type-Url, Config Value, and (to ensure stability) index.
+// The assumption is that if two filters are in the same stage, their order doesn't matter, and we
+// just need to make sure it is stable.
 func (s StagedHttpFilterList) Less(i, j int) bool {
-	switch FilterStageComparison(s[i].Stage, s[j].Stage) {
-	case -1:
-		return true
-	case 1:
-		return false
+	if compare := FilterStageComparison(s[i].Stage, s[j].Stage); compare != 0 {
+		return compare < 0
 	}
-	if s[i].HttpFilter.Name < s[j].HttpFilter.Name {
-		return true
+
+	if compare := strings.Compare(s[i].HttpFilter.Name, s[j].HttpFilter.Name); compare != 0 {
+		return compare < 0
 	}
-	if s[i].HttpFilter.Name > s[j].HttpFilter.Name {
-		return false
+
+	if compare := strings.Compare(s[i].HttpFilter.GetTypedConfig().GetTypeUrl(), s[j].HttpFilter.GetTypedConfig().GetTypeUrl()); compare != 0 {
+		return compare < 0
 	}
-	if s[i].HttpFilter.String() < s[j].HttpFilter.String() {
-		return true
+
+	if compare := bytes.Compare(s[i].HttpFilter.GetTypedConfig().GetValue(), s[j].HttpFilter.GetTypedConfig().GetValue()); compare != 0 {
+		return compare < 0
 	}
-	if s[i].HttpFilter.String() > s[j].HttpFilter.String() {
-		return false
-	}
+
 	// ensure stability
 	return i < j
 }

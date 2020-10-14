@@ -18,20 +18,14 @@ import (
 
 	"github.com/solo-io/go-utils/testutils/helper"
 
-	"github.com/solo-io/go-utils/testutils"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	skhelpers "github.com/solo-io/solo-kit/test/helpers"
 )
 
 func TestHelm(t *testing.T) {
-	if testutils.AreTestsDisabled() {
-		return
-	}
-	if os.Getenv("CLUSTER_LOCK_TESTS") == "1" {
-		log.Warnf("This test does not require using a cluster lock. Cluster lock is enabled so this test is disabled. " +
-			"To enable, unset CLUSTER_LOCK_TESTS in your env.")
+	if os.Getenv("KUBE2E_TESTS") != "helm" {
+		log.Warnf("This test is disabled. To enable, set KUBE2E_TESTS to 'helm' in your env.")
 		return
 	}
 	helpers.RegisterGlooDebugLogPrintHandlerAndClearLogs()
@@ -74,16 +68,18 @@ func StartTestHelper() {
 		"--version", "v1.3.0")
 
 	// Check that everything is OK
-	kube2e.GlooctlCheckEventuallyHealthy(testHelper, "40s")
+	kube2e.GlooctlCheckEventuallyHealthy(1, testHelper, "90s")
 
 }
 
 func TearDownTestHelper() {
-	Expect(testHelper).ToNot(BeNil())
-	err := testHelper.UninstallGloo()
-	Expect(err).NotTo(HaveOccurred())
-	_, err = kube2e.MustKubeClient().CoreV1().Namespaces().Get(testHelper.InstallNamespace, metav1.GetOptions{})
-	Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	if os.Getenv("TEAR_DOWN") == "true" {
+		Expect(testHelper).ToNot(BeNil())
+		err := testHelper.UninstallGloo()
+		Expect(err).NotTo(HaveOccurred())
+		_, err = kube2e.MustKubeClient().CoreV1().Namespaces().Get(testHelper.InstallNamespace, metav1.GetOptions{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	}
 }
 
 func runAndCleanCommand(name string, arg ...string) []byte {

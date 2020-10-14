@@ -42,7 +42,7 @@ Each upstream type is handled by a corresponding Gloo plugin. (plugins currently
 "connectionConfig": .gloo.solo.io.ConnectionConfig
 "healthChecks": []envoy.api.v2.core.HealthCheck
 "outlierDetection": .envoy.api.v2.cluster.OutlierDetection
-"useHttp2": bool
+"useHttp2": .google.protobuf.BoolValue
 "kube": .kubernetes.options.gloo.solo.io.UpstreamSpec
 "static": .static.options.gloo.solo.io.UpstreamSpec
 "pipe": .pipe.options.gloo.solo.io.UpstreamSpec
@@ -50,6 +50,9 @@ Each upstream type is handled by a corresponding Gloo plugin. (plugins currently
 "azure": .azure.options.gloo.solo.io.UpstreamSpec
 "consul": .consul.options.gloo.solo.io.UpstreamSpec
 "awsEc2": .aws_ec2.options.gloo.solo.io.UpstreamSpec
+"failover": .gloo.solo.io.Failover
+"initialStreamWindowSize": .google.protobuf.UInt32Value
+"initialConnectionWindowSize": .google.protobuf.UInt32Value
 
 ```
 
@@ -64,7 +67,7 @@ Each upstream type is handled by a corresponding Gloo plugin. (plugins currently
 | `connectionConfig` | [.gloo.solo.io.ConnectionConfig](../connection.proto.sk/#connectionconfig) |  |  |
 | `healthChecks` | [[]envoy.api.v2.core.HealthCheck](../../external/envoy/api/v2/core/health_check.proto.sk/#healthcheck) |  |  |
 | `outlierDetection` | [.envoy.api.v2.cluster.OutlierDetection](../../external/envoy/api/v2/cluster/outlier_detection.proto.sk/#outlierdetection) |  |  |
-| `useHttp2` | `bool` | Use http2 when communicating with this upstream this field is evaluated `true` for upstreams with a grpc service spec. otherwise defaults to `false`. |  |
+| `useHttp2` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | Use http2 when communicating with this upstream this field is evaluated `true` for upstreams with a grpc service spec. otherwise defaults to `false`. |  |
 | `kube` | [.kubernetes.options.gloo.solo.io.UpstreamSpec](../options/kubernetes/kubernetes.proto.sk/#upstreamspec) |  Only one of `kube`, `static`, `pipe`, `aws`, `azure`, or `awsEc2` can be set. |  |
 | `static` | [.static.options.gloo.solo.io.UpstreamSpec](../options/static/static.proto.sk/#upstreamspec) |  Only one of `static`, `kube`, `pipe`, `aws`, `azure`, or `awsEc2` can be set. |  |
 | `pipe` | [.pipe.options.gloo.solo.io.UpstreamSpec](../options/pipe/pipe.proto.sk/#upstreamspec) |  Only one of `pipe`, `kube`, `static`, `aws`, `azure`, or `awsEc2` can be set. |  |
@@ -72,6 +75,9 @@ Each upstream type is handled by a corresponding Gloo plugin. (plugins currently
 | `azure` | [.azure.options.gloo.solo.io.UpstreamSpec](../options/azure/azure.proto.sk/#upstreamspec) |  Only one of `azure`, `kube`, `static`, `pipe`, `aws`, or `awsEc2` can be set. |  |
 | `consul` | [.consul.options.gloo.solo.io.UpstreamSpec](../options/consul/consul.proto.sk/#upstreamspec) |  Only one of `consul`, `kube`, `static`, `pipe`, `aws`, or `awsEc2` can be set. |  |
 | `awsEc2` | [.aws_ec2.options.gloo.solo.io.UpstreamSpec](../options/aws/ec2/aws_ec2.proto.sk/#upstreamspec) |  Only one of `awsEc2`, `kube`, `static`, `pipe`, `aws`, or `consul` can be set. |  |
+| `failover` | [.gloo.solo.io.Failover](../failover.proto.sk/#failover) | Failover endpoints for this upstream. If omitted (the default) no failovers will be applied. |  |
+| `initialStreamWindowSize` | [.google.protobuf.UInt32Value](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/u-int-32-value) | (UInt32Value) Initial stream-level flow-control window size. Valid values range from 65535 (2^16 - 1, HTTP/2 default) to 2147483647 (2^31 - 1, HTTP/2 maximum) and defaults to 268435456 (256 * 1024 * 1024). NOTE: 65535 is the initial window size from HTTP/2 spec. We only support increasing the default window size now, so it’s also the minimum. This field also acts as a soft limit on the number of bytes Envoy will buffer per-stream in the HTTP/2 codec buffers. Once the buffer reaches this pointer, watermark callbacks will fire to stop the flow of data to the codec buffers. Requires UseHttp2 to be true to be acknowledged. |  |
+| `initialConnectionWindowSize` | [.google.protobuf.UInt32Value](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/u-int-32-value) | (UInt32Value) Similar to initial_stream_window_size, but for connection-level flow-control window. Currently, this has the same minimum/maximum/default as initial_stream_window_size. Requires UseHttp2 to be true to be acknowledged. |  |
 
 
 
@@ -83,11 +89,13 @@ Each upstream type is handled by a corresponding Gloo plugin. (plugins currently
 created by discovery services
 
 ```yaml
+"labels": map<string, string>
 
 ```
 
 | Field | Type | Description | Default |
 | ----- | ---- | ----------- |----------- | 
+| `labels` | `map<string, string>` | Labels inherited from the original upstream (e.g. Kubernetes labels). |  |
 
 
 

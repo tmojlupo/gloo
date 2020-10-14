@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/solo-io/gloo/projects/gateway/pkg/reconciler"
@@ -19,7 +20,6 @@ import (
 	"github.com/solo-io/gloo/pkg/utils"
 	v1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gateway/pkg/defaults"
-	"github.com/solo-io/gloo/projects/gateway/pkg/propagator"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/bootstrap"
@@ -37,8 +37,7 @@ import (
 // TODO: switch AcceptAllResourcesByDefault to false after validation has been tested in user environments
 var AcceptAllResourcesByDefault = true
 
-// TODO: expose AllowMissingLinks as a setting
-var AllowMissingLinks = true
+var AllowWarnings = true
 
 func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory.InMemoryResourceCache, settings *gloov1.Settings) error {
 	var (
@@ -98,7 +97,11 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 			alwaysAcceptResources = alwaysAccept.GetValue()
 		}
 
-		allowMissingLinks := AllowMissingLinks
+		allowWarnings := AllowWarnings
+
+		if allowWarning := validationCfg.AllowWarnings; allowWarning != nil {
+			allowWarnings = allowWarning.GetValue()
+		}
 
 		validation = &translator.ValidationOpts{
 			ProxyValidationServerAddress: validationCfg.GetProxyValidationServerAddr(),
@@ -107,7 +110,7 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 			ValidatingWebhookKeyPath:     validationCfg.GetValidationWebhookTlsKey(),
 			IgnoreProxyValidationFailure: validationCfg.GetIgnoreGlooValidationFailure(),
 			AlwaysAcceptResources:        alwaysAcceptResources,
-			AllowMissingLinks:            allowMissingLinks,
+			AllowWarnings:                allowWarnings,
 		}
 		if validation.ProxyValidationServerAddress == "" {
 			validation.ProxyValidationServerAddress = defaults.GlooProxyValidationServerAddr
@@ -129,6 +132,7 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 	}
 
 	opts := translator.Opts{
+		GlooNamespace:   settings.Metadata.Namespace,
 		WriteNamespace:  writeNamespace,
 		WatchNamespaces: watchNamespaces,
 		Gateways:        gatewayFactory,
@@ -147,6 +151,7 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 	return RunGateway(opts)
 }
 
+// the need for the namespace is limited to this function, whereas the opts struct's use is more widespread.
 func RunGateway(opts translator.Opts) error {
 	opts.WatchOpts = opts.WatchOpts.WithDefaults()
 	opts.WatchOpts.Ctx = contextutils.WithLogger(opts.WatchOpts.Ctx, "gateway")
@@ -187,15 +192,13 @@ func RunGateway(opts translator.Opts) error {
 	rpt := reporter.NewReporter("gateway", gatewayClient.BaseClient(), virtualServiceClient.BaseClient(), routeTableClient.BaseClient())
 	writeErrs := make(chan error)
 
-	prop := propagator.NewPropagator("gateway", gatewayClient, virtualServiceClient, proxyClient, writeErrs)
-
 	txlator := translator.NewDefaultTranslator(opts)
 
 	var (
 		// this constructor should be called within a lock
 		validationClient             validation.ProxyValidationServiceClient
 		ignoreProxyValidationFailure bool
-		allowMissingLinks            bool
+		allowWarnings                bool
 	)
 
 	// construct the channel that resyncs the API Translator loop
@@ -217,7 +220,7 @@ func RunGateway(opts translator.Opts) error {
 		}
 
 		ignoreProxyValidationFailure = opts.Validation.IgnoreProxyValidationFailure
-		allowMissingLinks = opts.Validation.AllowMissingLinks
+		allowWarnings = opts.Validation.AllowWarnings
 	}
 
 	emitter := v1.NewApiEmitterWithEmit(virtualServiceClient, routeTableClient, gatewayClient, notifications)
@@ -227,19 +230,17 @@ func RunGateway(opts translator.Opts) error {
 		validationClient,
 		opts.WriteNamespace,
 		ignoreProxyValidationFailure,
-		allowMissingLinks,
+		allowWarnings,
 	))
 
 	proxyReconciler := reconciler.NewProxyReconciler(validationClient, proxyClient)
 
 	translatorSyncer := NewTranslatorSyncer(
+		ctx,
 		opts.WriteNamespace,
 		proxyClient,
 		proxyReconciler,
-		gatewayClient,
-		virtualServiceClient,
 		rpt,
-		prop,
 		txlator)
 
 	gatewaySyncers := v1.ApiSyncers{
@@ -269,6 +270,24 @@ func RunGateway(opts translator.Opts) error {
 
 	validationServerErr := make(chan error, 1)
 	if opts.Validation != nil {
+		// make sure non-empty WatchNamespaces contains the gloo instance's own namespace if
+		// ReadGatewaysFromAllNamespaces is false
+		if !opts.ReadGatewaysFromAllNamespaces && !utils.AllNamespaces(opts.WatchNamespaces) {
+			foundSelf := false
+			for _, namespace := range opts.WatchNamespaces {
+				if opts.GlooNamespace == namespace {
+					foundSelf = true
+					break
+				}
+			}
+			if !foundSelf {
+				return errors.Errorf("The gateway configuration value readGatewaysFromAllNamespaces was set "+
+					"to false, but the non-empty settings.watchNamespaces "+
+					"list (%s) did not contain this gloo instance's own namespace: %s.",
+					strings.Join(opts.WatchNamespaces, ", "), opts.GlooNamespace)
+			}
+		}
+
 		validationWebhook, err := k8sadmisssion.NewGatewayValidatingWebhook(
 			k8sadmisssion.NewWebhookConfig(
 				ctx,
@@ -278,6 +297,8 @@ func RunGateway(opts translator.Opts) error {
 				opts.Validation.ValidatingWebhookCertPath,
 				opts.Validation.ValidatingWebhookKeyPath,
 				opts.Validation.AlwaysAcceptResources,
+				opts.ReadGatewaysFromAllNamespaces,
+				opts.GlooNamespace,
 			),
 		)
 		if err != nil {

@@ -4,15 +4,26 @@ weight: 70
 description: Publish interactive documentation for your APIs
 ---
 
-{{% notice note %}}
-The developer portal feature was introduced with **Gloo Enterprise**, release v1.3.0. If you are using an 
-earlier version, this feature will not be available.
-{{% /notice %}}
-
 In this guide we will see how to publish interactive documentation for your APIs and expose it to users via the 
 Gloo Enterprise developer portal.
 
+## Important Update
+We recently released an updated version of the Developer Portal. The new Developer Portal adds a number of new features, 
+including the ability to automatically generate routing configuration for your Gloo Gateways based on your service 
+specifications.
+
+The new Developer Portal is a standalone application that can be installed on top of **Gloo Enterprise** starting with 
+release v1.5.0-beta10. For more information, check out the 
+[new Developer Portal documentation](https://docs.solo.io/dev-portal/latest).
+
 ## Initial setup
+{{% notice warning %}}
+The developer portal feature described on this page was introduced with **Gloo Enterprise**, release v1.3.0 and 
+deprecated with **Gloo Enterprise**, release v1.5.0-beta10. 
+If you are using an earlier version, this feature will not be available. If you are running this (or a later) version of 
+Gloo Enterprise, use [these installation instructions](https://docs.solo.io/dev-portal/latest/setup/gloo).
+{{% /notice %}}
+
 Before we can start configuring our portal, we need to enable the developer portal feature in Gloo and configure our 
 cluster with an example application and the corresponding routing configuration.
 
@@ -21,13 +32,34 @@ The Gloo Developer Portal can be installed as part of Gloo Enterprise by providi
 value during your installation or upgrade process. Please refer to the Gloo Enterprise [installation guide](https://docs.solo.io/gloo/latest/installation/enterprise/) 
 for more details on the various installation options.
 
-To install Gloo Enterprise with the Developer Portal you can run:
+You can install Gloo Enterprise with the Developer Portal either via `helm` or via `gloooctl`:
 
-```yaml
+{{< tabs >}}
+{{% tab name="helm" %}}
+```shell script
 helm install glooe glooe/gloo-ee --namespace gloo-system \
   --set-string license_key=YOUR_LICENSE_KEY \
   --set devPortal.enabled=true
 ```
+{{% /tab %}}
+{{% tab name="glooctl" %}}
+
+First we need to create a values file:
+
+```shell script
+cat << EOF > values.yaml
+devPortal:
+  enabled: true
+EOF
+```
+
+Then we can install with the above values:
+
+```shell script
+glooctl install gateway enterprise --license-key YOUR_LICENSE_KEY --values values.yaml
+```
+{{% /tab %}}
+{{< /tabs >}}
 
 If the installation was successful you should see the following when running `kubectl get pods -n gloo-system`:
 

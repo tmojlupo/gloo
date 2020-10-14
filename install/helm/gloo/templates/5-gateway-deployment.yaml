@@ -21,6 +21,11 @@ spec:
     metadata:
       labels:
         gloo: gateway
+        {{- if .Values.gateway.deployment.extraGatewayLabels }}
+        {{- range $key, $value := .Values.gateway.deployment.extraGatewayLabels }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
       {{- if $statsConfig.enabled }}
       annotations:
         prometheus.io/path: /metrics
@@ -50,7 +55,7 @@ spec:
           allowPrivilegeEscalation: false
           runAsNonRoot: true
           {{- if not .Values.gateway.deployment.floatingUserId }}
-          runAsUser: {{ printf "%.0f" .Values.gateway.deployment.runAsUser -}}
+          runAsUser: {{ printf "%.0f" (float64 .Values.gateway.deployment.runAsUser) -}}
           {{- end }}
           capabilities:
             drop:

@@ -6,6 +6,7 @@ import (
 )
 
 type Opts struct {
+	GlooNamespace                 string
 	WriteNamespace                string
 	WatchNamespaces               []string
 	Gateways                      factory.ResourceClientFactory
@@ -26,5 +27,5 @@ type ValidationOpts struct {
 	ValidatingWebhookKeyPath     string
 	IgnoreProxyValidationFailure bool
 	AlwaysAcceptResources        bool
-	AllowMissingLinks            bool
+	AllowWarnings                bool
 }

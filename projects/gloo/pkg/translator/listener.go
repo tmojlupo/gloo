@@ -2,21 +2,25 @@ package translator
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
+
+	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
+
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 
 	"github.com/gogo/protobuf/proto"
 
 	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoyauth "github.com/envoyproxy/go-control-plane/envoy/api/v2/auth"
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
+	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/gogo/protobuf/types"
 	"github.com/solo-io/gloo/pkg/utils/gogoutils"
 	validationapi "github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
-	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/pluginutils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/utils/validation"
 	"github.com/solo-io/go-utils/contextutils"
 )
@@ -51,6 +55,8 @@ func (t *translatorInstance) computeListener(params plugins.Params, proxy *v1.Pr
 			filterChains = append(filterChains, result...)
 		}
 	}
+
+	CheckForDuplicateFilterChainMatches(filterChains, listenerReport)
 
 	out := &envoyapi.Listener{
 		Name: listener.Name,
@@ -141,7 +147,6 @@ func (t *translatorInstance) computeListenerFilters(params plugins.Params, liste
 // create a duplicate of the listener filter chain for each ssl cert we want to serve
 // if there is no SSL config on the listener, the envoy listener will have one insecure filter chain
 func (t *translatorInstance) computeFilterChainsFromSslConfig(snap *v1.ApiSnapshot, listener *v1.Listener, listenerFilters []*envoylistener.Filter, listenerReport *validationapi.ListenerReport) []*envoylistener.FilterChain {
-
 	// if no ssl config is provided, return a single insecure filter chain
 	if len(listener.SslConfigurations) == 0 {
 		return []*envoylistener.FilterChain{{
@@ -161,6 +166,7 @@ func (t *translatorInstance) computeFilterChainsFromSslConfig(snap *v1.ApiSnapsh
 			continue
 		}
 		filterChain := newSslFilterChain(downstreamConfig, sslConfig.SniDomains, listener.UseProxyProto, listenerFilters)
+
 		secureFilterChains = append(secureFilterChains, filterChain)
 	}
 	return secureFilterChains
@@ -249,8 +255,8 @@ func newSslFilterChain(downstreamConfig *envoyauth.DownstreamTlsContext, sniDoma
 		Filters: listenerFiltersCopy,
 
 		TransportSocket: &envoycore.TransportSocket{
-			Name:       pluginutils.TlsTransportSocket,
-			ConfigType: &envoycore.TransportSocket_TypedConfig{TypedConfig: pluginutils.MustMessageToAny(downstreamConfig)},
+			Name:       wellknown.TransportSocketTls,
+			ConfigType: &envoycore.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(downstreamConfig)},
 		},
 
 		UseProxyProto: gogoutils.BoolGogoToProto(useProxyProto),
@@ -264,4 +270,28 @@ func sortListenerFilters(filters plugins.StagedListenerFilterList) []*envoyliste
 		sortedFilters = append(sortedFilters, filter.ListenerFilter)
 	}
 	return sortedFilters
+}
+
+// Check for identical FilterChains to avoid the envoy error that occurs here:
+// https://github.com/envoyproxy/envoy/blob/v1.15.0/source/server/filter_chain_manager_impl.cc#L162-L166
+// Note: this is NOT address non-equal but overlapping FilterChainMatches, which is a separate check here:
+// https://github.com/envoyproxy/envoy/blob/50ef0945fa2c5da4bff7627c3abf41fdd3b7cffd/source/server/filter_chain_manager_impl.cc#L218-L354
+// Given the complexity of the overlap detection implementation, we don't want to duplicate that behavior here.
+// We may want to consider invoking envoy from a library to detect overlapping and other issues, which would build
+// off this discussion: https://github.com/solo-io/gloo/issues/2114
+// Visible for testing
+func CheckForDuplicateFilterChainMatches(filterChains []*envoylistener.FilterChain, listenerReport *validationapi.ListenerReport) {
+	for idx1, filterChain := range filterChains {
+		for idx2, otherFilterChain := range filterChains {
+			// only need to compare each pair once
+			if idx2 <= idx1 {
+				continue
+			}
+			if reflect.DeepEqual(filterChain.FilterChainMatch, otherFilterChain.FilterChainMatch) {
+				validation.AppendListenerError(listenerReport,
+					validationapi.ListenerReport_Error_SSLConfigError, fmt.Sprintf("Tried to apply multiple filter chains "+
+						"with the same FilterChainMatch. This is usually caused by overlapping sniDomains in virtual services: {%v}", filterChain.FilterChainMatch))
+			}
+		}
+	}
 }

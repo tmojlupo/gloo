@@ -186,12 +186,13 @@ func getTestClients(cache memory.InMemoryResourceCache, serviceClient skkube.Ser
 
 func defaultTestConstructOpts(ctx context.Context, runOptions *RunOptions) translator.Opts {
 	ctx = contextutils.WithLogger(ctx, "gateway")
-	ctx = contextutils.SilenceLogger(ctx)
 	f := &factory.MemoryResourceClientFactory{
 		Cache: runOptions.Cache,
 	}
 
+	meta := runOptions.Settings.GetMetadata()
 	return translator.Opts{
+		GlooNamespace:   meta.GetNamespace(),
 		WriteNamespace:  runOptions.NsToWrite,
 		WatchNamespaces: runOptions.NsToWatch,
 		Gateways:        f,
@@ -247,6 +248,7 @@ func defaultGlooOpts(ctx context.Context, runOptions *RunOptions) bootstrap.Opts
 		Secrets:           f,
 		Artifacts:         f,
 		AuthConfigs:       f,
+		RateLimitConfigs:  f,
 		KubeServiceClient: newServiceClient(ctx, f, runOptions),
 		WatchNamespaces:   runOptions.NsToWatch,
 		WatchOpts: clients.WatchOpts{

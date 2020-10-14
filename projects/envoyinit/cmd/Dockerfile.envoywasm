@@ -1,6 +1,12 @@
-FROM quay.io/solo-io/envoy-gloo-wasm:0.2.1
+ARG ENVOY_IMAGE
 
-COPY envoywasm-linux-amd64 /usr/local/bin/envoyinit
+FROM $ENVOY_IMAGE
+
+ARG GOARCH=amd64
+
+COPY envoywasm-linux-$GOARCH /usr/local/bin/envoyinit
+
+USER 10101
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/usr/local/bin/envoyinit"]
 CMD []
