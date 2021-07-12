@@ -1,3 +1,4 @@
+{{- define "gateway.deploymentSpec"}}
 {{- $image := .Values.gateway.deployment.image }}
 {{- $statsConfig := coalesce .Values.gateway.deployment.stats .Values.global.glooStats -}}
 {{- if .Values.global  }}
@@ -26,14 +27,24 @@ spec:
         {{ $key }}: {{ $value | quote }}
         {{- end }}
         {{- end }}
-      {{- if $statsConfig.enabled }}
       annotations:
+        {{- if $statsConfig.enabled }}
         prometheus.io/path: /metrics
         prometheus.io/port: "9091"
         prometheus.io/scrape: "true"
-      {{- end}}
+        {{- end}}
+        {{- if .Values.global.istioIntegration.disableAutoinjection }}
+        sidecar.istio.io/inject: "false"
+        {{- end }}
+        {{- if .Values.gateway.deployment.extraGatewayAnnotations }}
+        {{- range $key, $value := .Values.gateway.deployment.extraGatewayAnnotations }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
     spec:
+      {{- include "gloo.pullSecret" $image | nindent 6 -}}
       serviceAccountName: gateway
+      {{- include "gloo.podSpecStandardFields" .Values.gateway.deployment | nindent 6 -}}
       containers:
       - image: {{template "gloo.image" $image}}
         imagePullPolicy: {{ $image.pullPolicy }}
@@ -54,7 +65,7 @@ spec:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
           runAsNonRoot: true
-          {{- if not .Values.gateway.deployment.floatingUserId }}
+          {{- if and (not .Values.gateway.deployment.floatingUserId) (.Values.gateway.deployment.runAsUser) }}
           runAsUser: {{ printf "%.0f" (float64 .Values.gateway.deployment.runAsUser) -}}
           {{- end }}
           capabilities:
@@ -76,6 +87,10 @@ spec:
           - name: VALIDATION_MUST_START
             value: "true"
         {{- end}}
+        {{- if .Values.gateway.logLevel }}
+          - name: LOG_LEVEL
+            value: {{ .Values.gateway.logLevel }}
+        {{- end}}
 
 {{- if .Values.gateway.validation.enabled }}
         volumeMounts:
@@ -92,5 +107,13 @@ spec:
           secret:
             defaultMode: 420
             secretName: {{ .Values.gateway.validation.secretName }}
-{{- end}}
-{{- end }}
+{{- end}} {{/* if .Values.gateway.validation.enabled */}}
+{{- end }} {{/* if .Values.gateway.enabled */}}
+{{- end }} {{/* define "gateway.deploymentSpec" */}}
+
+{{/* Render template with yaml overrides */}}
+{{- $kubeResourceOverride := dict -}}
+{{- if .Values.gateway.deployment -}}
+{{- $kubeResourceOverride = .Values.gateway.deployment.kubeResourceOverride  -}}
+{{- end -}}
+{{- include "gloo.util.merge" (list . $kubeResourceOverride "gateway.deploymentSpec") -}}

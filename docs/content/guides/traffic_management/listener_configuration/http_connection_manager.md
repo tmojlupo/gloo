@@ -1,10 +1,10 @@
 ---
 title: HTTP Connection Manager
 weight: 10
-description: Refine the behavior of Envoy for each listener that you manage with Gloo
+description: Refine the behavior of Envoy for each listener that you manage with Gloo Edge
 ---
 
-The HTTP Connection Manager lets you refine the behavior of Envoy for each listener that you manage with Gloo.
+The HTTP Connection Manager lets you refine the behavior of Envoy for each listener that you manage with Gloo Edge.
 
 ---
 
@@ -16,15 +16,16 @@ You can configure the Http Connection Manager on a listener to enable or disable
 
 One of the fields in the HTTP Connection Manager Plugin is `tracing`. This specifies the listener-specific tracing configuration.
 
-For notes on configuring and using tracing with Gloo, please see the [tracing setup docs.]({{% versioned_link_path fromRoot="/guides/observability/tracing/" %}})
+For notes on configuring and using tracing with Gloo Edge, please see the [tracing setup docs.]({{% versioned_link_path fromRoot="/guides/observability/tracing/" %}})
 
 The tracing configuration fields of the Gateway Custom Resource (CR) are highlighted below.
 
-{{< highlight yaml "hl_lines=8-15" >}}
+**Option 1: Using an upstream ref:**
+
+{{< highlight yaml "hl_lines=10-21" >}}
 apiVersion: gateway.solo.io/v1
 kind: Gateway
 metadata: # collapsed for brevity
-spec:
 spec:
   bindAddress: '::'
   bindPort: 8080
@@ -36,12 +37,47 @@ spec:
           requestHeadersForTags:
             - path
             - origin
+          zipkinConfig:
+            collectorEndpoint: /api/v2/spans
+            collectorEndpointVersion: HTTP_JSON
+            collectorUpstreamRef:
+              name: zipkin
+              namespace: default
 status: # collapsed for brevity
 {{< /highlight >}}
 
+**Option 2: Using a cluster name:**
+
+{{< highlight yaml "hl_lines=10-19" >}}
+apiVersion: gateway.solo.io/v1
+kind: Gateway
+metadata: # collapsed for brevity
+spec:
+  bindAddress: '::'
+  bindPort: 8080
+  httpGateway:
+    options:
+      httpConnectionManagerSettings:
+        tracing:
+          verbose: true
+          requestHeadersForTags:
+            - path
+            - origin
+          zipkinConfig:
+            collectorEndpoint: /api/v2/spans
+            collectorEndpointVersion: HTTP_JSON
+            clusterName: zipkin
+status: # collapsed for brevity
+{{< /highlight >}}
+
+{{% notice note %}}
+If you provide an invalid clusterName, the error will not show up in Gloo.
+However, if you are using Gloo Edge Enterprise you can use our [observability]({{% versioned_link_path fromRoot="/guides/observability" %}}) features to track the `glooe.solo.io/xds/outofsync` statistic
+{{% /notice %}}
+
 ### Advanced listener configuration
 
-Gloo exposes Envoy's powerful configuration capabilities with the HTTP Connection Manager. The details of these fields can be found [here](https://www.envoyproxy.io/docs/envoy/v1.9.0/configuration/http_conn_man/http_conn_man) and [here](https://www.envoyproxy.io/docs/envoy/latest/api-v2/api/v2/core/protocol.proto#envoy-api-msg-core-http1protocoloptions)
+Gloo Edge exposes Envoy's powerful configuration capabilities with the HTTP Connection Manager. The details of these fields can be found [here](https://www.envoyproxy.io/docs/envoy/v1.9.0/configuration/http_conn_man/http_conn_man) and [here](https://www.envoyproxy.io/docs/envoy/latest/api-v2/api/v2/core/protocol.proto#envoy-api-msg-core-http1protocoloptions)
 
 Below, see a reference configuration specification to demonstrate the structure of the expected YAML.
 

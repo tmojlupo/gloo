@@ -2,18 +2,18 @@ package istio
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/ghodss/yaml"
+	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/ptypes/duration"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/istio/sidecars"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/options"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/helpers"
 	"github.com/solo-io/go-utils/cliutils"
-
-	"github.com/ghodss/yaml"
-	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/ptypes/duration"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -58,9 +58,6 @@ func Inject(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.C
 		Short: "Enable SDS & istio-proxy sidecars in gateway-proxy pod",
 		Long: "Adds an istio-proxy sidecar to the gateway-proxy pod for mTLS certificate generation purposes. " +
 			"Also adds an sds sidecar to the gateway-proxy pod for mTLS certificate rotation purposes.",
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return nil
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := istioInject(args, opts)
 			if err != nil {
@@ -72,6 +69,8 @@ func Inject(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.C
 	pflags := cmd.PersistentFlags()
 	cliutils.ApplyOptions(cmd, optionsFunc)
 	addIstioNamespaceFlag(pflags, &opts.Istio.Namespace)
+	addIstioMetaMeshIdFlag(pflags, &opts.Istio.IstioMetaMeshId)
+	addIstioMetaClusterIdFlag(pflags, &opts.Istio.IstioMetaClusterId)
 	return cmd
 }
 
@@ -79,15 +78,30 @@ func Inject(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.C
 func istioInject(args []string, opts *options.Options) error {
 	glooNS := opts.Metadata.Namespace
 	istioNS := opts.Istio.Namespace
+	istioMetaMeshID := getIstioMetaMeshID(opts.Istio.IstioMetaMeshId)
+	istioMetaClusterID := getIstioMetaClusterID(opts.Istio.IstioMetaClusterId)
 
 	client := helpers.MustKubeClient()
-	_, err := client.CoreV1().Namespaces().Get(glooNS, metav1.GetOptions{})
+	_, err := client.CoreV1().Namespaces().Get(opts.Top.Ctx, glooNS, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
 
-	// Add gateway_proxy_sds configmap
-	configMaps, err := client.CoreV1().ConfigMaps(glooNS).List(metav1.ListOptions{})
+	// It would be preferable to delegate to the control plane to manage
+	// the sds cluster. However, doing so produces the following error:
+	//
+	//		gRPC config for type.googleapis.com/envoy.config.cluster.v3.Cluster rejected:
+	//		Error adding/updating cluster(s) [CLUSTER NAME]:
+	//		envoy.config.core.v3.ApiConfigSource must have a statically defined non-EDS cluster:
+	//		[CLUSTER NAME] does not exist, was added via api, or is an EDS cluster
+	//
+	// There is an open envoy issue to track this bug/feature request:
+	// https://github.com/envoyproxy/envoy/issues/12954
+	// Tracking Gloo Issue: https://github.com/solo-io/gloo/issues/4398
+	//
+	// To get around this, we write the gateway_proxy_sds cluster into the configmap that
+	// gateway-proxy loads at bootstrap time.
+	configMaps, err := client.CoreV1().ConfigMaps(glooNS).List(opts.Top.Ctx, metav1.ListOptions{})
 	for _, configMap := range configMaps.Items {
 		if configMap.Name == gatewayProxyConfigMap {
 			// Make sure we don't already have the gateway_proxy_sds cluster set up
@@ -99,14 +113,14 @@ func istioInject(args []string, opts *options.Options) error {
 			if err != nil {
 				return err
 			}
-			_, err = client.CoreV1().ConfigMaps(glooNS).Update(&configMap)
+			_, err = client.CoreV1().ConfigMaps(glooNS).Update(opts.Top.Ctx, &configMap, metav1.UpdateOptions{})
 			if err != nil {
 				return err
 			}
 		}
 	}
 
-	deployments, err := client.AppsV1().Deployments(glooNS).List(metav1.ListOptions{})
+	deployments, err := client.AppsV1().Deployments(glooNS).List(opts.Top.Ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
 	}
@@ -126,19 +140,20 @@ func istioInject(args []string, opts *options.Options) error {
 				}
 			}
 
-			err := addSdsSidecar(&deployment, glooNS)
+			err := addSdsSidecar(opts.Top.Ctx, &deployment, glooNS)
 			if err != nil {
 				return err
 			}
-			err = addIstioSidecar(&deployment, istioNS)
+			err = addIstioSidecar(opts.Top.Ctx, &deployment, istioNS, istioMetaMeshID, istioMetaClusterID)
 			if err != nil {
 				return err
 			}
-			_, err = client.AppsV1().Deployments(glooNS).Update(&deployment)
+			_, err = client.AppsV1().Deployments(glooNS).Update(opts.Top.Ctx, &deployment, metav1.UpdateOptions{})
 			if err != nil {
 				return err
 			}
 
+			fmt.Println("Istio injection was successful!")
 		}
 	}
 
@@ -146,8 +161,8 @@ func istioInject(args []string, opts *options.Options) error {
 }
 
 // addSdsSidecar adds an SDS sidecar to the given deployment's containers
-func addSdsSidecar(deployment *appsv1.Deployment, glooNamespace string) error {
-	glooVersion, err := getGlooVersion(glooNamespace)
+func addSdsSidecar(ctx context.Context, deployment *appsv1.Deployment, glooNamespace string) error {
+	glooVersion, err := getGlooVersion(ctx, glooNamespace)
 	if err != nil {
 		return ErrGlooVerUndetermined
 	}
@@ -160,9 +175,9 @@ func addSdsSidecar(deployment *appsv1.Deployment, glooNamespace string) error {
 }
 
 // addIstioSidecar adds an Istio sidecar to the given deployment's containers
-func addIstioSidecar(deployment *appsv1.Deployment, istioNamespace string) error {
+func addIstioSidecar(ctx context.Context, deployment *appsv1.Deployment, istioNamespace string, istioMetaMeshID string, istioMetaClusterID string) error {
 	// Get current istio version & JWT policy from cluster
-	istioPilotContainer, err := getIstiodContainer(istioNamespace)
+	istioPilotContainer, err := getIstiodContainer(ctx, istioNamespace)
 	if err != nil {
 		return err
 	}
@@ -176,7 +191,7 @@ func addIstioSidecar(deployment *appsv1.Deployment, istioNamespace string) error
 	jwtPolicy := getJWTPolicy(istioPilotContainer)
 
 	// Get the appropriate sidecar based on Istio configuration currently deployed
-	istioSidecar, err := sidecars.GetIstioSidecar(istioVersion, jwtPolicy)
+	istioSidecar, err := sidecars.GetIstioSidecar(istioVersion, jwtPolicy, istioMetaMeshID, istioMetaClusterID)
 	if err != nil {
 		return err
 	}
@@ -321,4 +336,12 @@ func genGatewayProxyCluster() *envoy_config_cluster.Cluster {
 
 func addIstioNamespaceFlag(set *pflag.FlagSet, strptr *string) {
 	set.StringVar(strptr, "istio-namespace", istioDefaultNS, "namespace in which istio is installed")
+}
+
+func addIstioMetaMeshIdFlag(set *pflag.FlagSet, strptr *string) {
+	set.StringVar(strptr, "istio-meta-mesh-id", "", "sets ISTIO_META_MESH_ID env var")
+}
+
+func addIstioMetaClusterIdFlag(set *pflag.FlagSet, strptr *string) {
+	set.StringVar(strptr, "istio-meta-cluster-id", "", "sets ISTIO_META_CLUSTER_ID env var")
 }

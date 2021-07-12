@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/kubernetes/serviceconverter"
 	"github.com/solo-io/go-utils/contextutils"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/utils"
 
-	sanitizer "github.com/solo-io/go-utils/kubeutils"
+	sanitizer "github.com/solo-io/k8s-utils/kubeutils"
 
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	kubeplugin "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/kubernetes"
@@ -47,7 +46,7 @@ func (uc *KubeUpstreamConverter) CreateUpstream(ctx context.Context, svc *kubev1
 	meta := svc.ObjectMeta
 	coremeta := kubeutils.FromKubeMeta(meta)
 	coremeta.ResourceVersion = ""
-	coremeta.Name = strings.ToLower(UpstreamName(meta.Namespace, meta.Name, port.Port))
+	coremeta.Name = UpstreamName(meta.Namespace, meta.Name, port.Port)
 	labels := coremeta.Labels
 	coremeta.Labels = make(map[string]string)
 

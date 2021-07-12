@@ -23,6 +23,7 @@ weight: 5
 - [Transformation](#transformation)
 - [Extraction](#extraction)
 - [TransformationTemplate](#transformationtemplate)
+- [HeaderToAppend](#headertoappend)
 - [DynamicMetadataValue](#dynamicmetadatavalue)
 - [RequestBodyParse](#requestbodyparse)
 - [InjaTemplate](#injatemplate)
@@ -50,10 +51,10 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `transformations` | [[]envoy.api.v2.filter.http.TransformationRule](../transformation.proto.sk/#transformationrule) | Specifies transformations based on the route matches. The first matched transformation will be applied. If there are overlapped match conditions, please put the most specific match first. |  |
-| `stage` | `int` | Only RouteTransformations.RouteTransformation with matching stage will be used with this filter. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `transformations` | [[]envoy.api.v2.filter.http.TransformationRule](../transformation.proto.sk/#transformationrule) | Specifies transformations based on the route matches. The first matched transformation will be applied. If there are overlapped match conditions, please put the most specific match first. |
+| `stage` | `int` | Only RouteTransformations.RouteTransformation with matching stage will be used with this filter. |
 
 
 
@@ -64,15 +65,15 @@ weight: 5
 
 
 ```yaml
-"match": .envoy.config.route.v3.RouteMatch
+"match": .solo.io.envoy.config.route.v3.RouteMatch
 "routeTransformations": .envoy.api.v2.filter.http.TransformationRule.Transformations
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `match` | [.envoy.config.route.v3.RouteMatch](../../../../../../../../../../../envoy/config/route/v3/route_components.proto.sk/#routematch) | The route matching parameter. Only when the match is satisfied, the "requires" field will apply. For example: following match will match all requests. .. code-block:: yaml match: prefix: /. |  |
-| `routeTransformations` | [.envoy.api.v2.filter.http.TransformationRule.Transformations](../transformation.proto.sk/#transformations) | transformation to perform. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `match` | [.solo.io.envoy.config.route.v3.RouteMatch](../../../config/route/v3/route_components.proto.sk/#routematch) | The route matching parameter. Only when the match is satisfied, the "requires" field will apply. For example: following match will match all requests. .. code-block:: yaml match: prefix: /. |
+| `routeTransformations` | [.envoy.api.v2.filter.http.TransformationRule.Transformations](../transformation.proto.sk/#transformations) | transformation to perform. |
 
 
 
@@ -86,14 +87,16 @@ weight: 5
 "requestTransformation": .envoy.api.v2.filter.http.Transformation
 "clearRouteCache": bool
 "responseTransformation": .envoy.api.v2.filter.http.Transformation
+"onStreamCompletionTransformation": .envoy.api.v2.filter.http.Transformation
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation to requests. |  |
-| `clearRouteCache` | `bool` | Clear the route cache if the request transformation was applied. |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation to responses. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation to requests. |
+| `clearRouteCache` | `bool` | Clear the route cache if the request transformation was applied. |
+| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation to responses. |
+| `onStreamCompletionTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation in the onStreamComplete callback (for modifying headers and dynamic metadata for access logs). |
 
 
 
@@ -111,12 +114,12 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | deprecated. Use transformations[].request_match.request_transformation instead. |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | deprecated. Use transformations[].request_match.response_transformation instead. |  |
-| `clearRouteCache` | `bool` | deprecated. Use transformations[].request_match.clear_route_cache instead. |  |
-| `transformations` | [[]envoy.api.v2.filter.http.RouteTransformations.RouteTransformation](../transformation.proto.sk/#routetransformation) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | deprecated. Use transformations[].request_match.request_transformation instead. |
+| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | deprecated. Use transformations[].request_match.response_transformation instead. |
+| `clearRouteCache` | `bool` | deprecated. Use transformations[].request_match.clear_route_cache instead. |
+| `transformations` | [[]envoy.api.v2.filter.http.RouteTransformations.RouteTransformation](../transformation.proto.sk/#routetransformation) |  |
 
 
 
@@ -133,11 +136,11 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `stage` | `int` | Stage number. This transformation will only be processed by filters with the same stage number. |  |
-| `requestMatch` | [.envoy.api.v2.filter.http.RouteTransformations.RouteTransformation.RequestMatch](../transformation.proto.sk/#requestmatch) |  Only one of `requestMatch` or `responseMatch` can be set. |  |
-| `responseMatch` | [.envoy.api.v2.filter.http.RouteTransformations.RouteTransformation.ResponseMatch](../transformation.proto.sk/#responsematch) |  Only one of `responseMatch` or `requestMatch` can be set. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `stage` | `int` | Stage number. This transformation will only be processed by filters with the same stage number. |
+| `requestMatch` | [.envoy.api.v2.filter.http.RouteTransformations.RouteTransformation.RequestMatch](../transformation.proto.sk/#requestmatch) |  Only one of `requestMatch` or `responseMatch` can be set. |
+| `responseMatch` | [.envoy.api.v2.filter.http.RouteTransformations.RouteTransformation.ResponseMatch](../transformation.proto.sk/#responsematch) |  Only one of `responseMatch` or `requestMatch` can be set. |
 
 
 
@@ -148,19 +151,19 @@ weight: 5
 
 
 ```yaml
-"match": .envoy.config.route.v3.RouteMatch
+"match": .solo.io.envoy.config.route.v3.RouteMatch
 "requestTransformation": .envoy.api.v2.filter.http.Transformation
 "responseTransformation": .envoy.api.v2.filter.http.Transformation
 "clearRouteCache": bool
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `match` | [.envoy.config.route.v3.RouteMatch](../../../../../../../../../../../envoy/config/route/v3/route_components.proto.sk/#routematch) | if no match is specified, will match all. |  |
-| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | transformation to perform. |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) |  |  |
-| `clearRouteCache` | `bool` | clear the route cache if the request transformation was applied. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `match` | [.solo.io.envoy.config.route.v3.RouteMatch](../../../config/route/v3/route_components.proto.sk/#routematch) | if no match is specified, will match all. |
+| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | transformation to perform. |
+| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) |  |
+| `clearRouteCache` | `bool` | clear the route cache if the request transformation was applied. |
 
 
 
@@ -176,10 +179,10 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `match` | [.envoy.api.v2.filter.http.ResponseMatcher](../transformation.proto.sk/#responsematcher) |  |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | transformation to perform. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `match` | [.envoy.api.v2.filter.http.ResponseMatcher](../transformation.proto.sk/#responsematcher) |  |
+| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | transformation to perform. |
 
 
 
@@ -190,15 +193,15 @@ weight: 5
 
 
 ```yaml
-"headers": []envoy.config.route.v3.HeaderMatcher
-"responseCodeDetails": .envoy.type.matcher.v3.StringMatcher
+"headers": []solo.io.envoy.config.route.v3.HeaderMatcher
+"responseCodeDetails": .solo.io.envoy.type.matcher.v3.StringMatcher
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `headers` | [[]envoy.config.route.v3.HeaderMatcher](../../../../../../../../../../../envoy/config/route/v3/route_components.proto.sk/#headermatcher) | Specifies a set of headers that the route should match on. The router will check the response headers against all the specified headers in the route config. A match will happen if all the headers in the route are present in the request with the same values (or based on presence if the value field is not in the config). |  |
-| `responseCodeDetails` | [.envoy.type.matcher.v3.StringMatcher](../../../../../../../../../../../envoy/type/matcher/v3/string.proto.sk/#stringmatcher) | Only match responses with non empty response code details (this usually implies a local reply). |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `headers` | [[]solo.io.envoy.config.route.v3.HeaderMatcher](../../../config/route/v3/route_components.proto.sk/#headermatcher) | Specifies a set of headers that the route should match on. The router will check the response headers against all the specified headers in the route config. A match will happen if all the headers in the route are present in the request with the same values (or based on presence if the value field is not in the config). |
+| `responseCodeDetails` | [.solo.io.envoy.type.matcher.v3.StringMatcher](../../../type/matcher/v3/string.proto.sk/#stringmatcher) | Only match responses with non empty response code details (this usually implies a local reply). |
 
 
 
@@ -214,10 +217,10 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `match` | [.envoy.api.v2.filter.http.ResponseMatcher](../transformation.proto.sk/#responsematcher) |  |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | transformation to perform. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `match` | [.envoy.api.v2.filter.http.ResponseMatcher](../transformation.proto.sk/#responsematcher) |  |
+| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../transformation.proto.sk/#transformation) | transformation to perform. |
 
 
 
@@ -227,17 +230,20 @@ weight: 5
 
  
 This message defines a transformation.
+This proto is for envoy filter config, not user-facing API.
 
 ```yaml
 "transformationTemplate": .envoy.api.v2.filter.http.TransformationTemplate
 "headerBodyTransform": .envoy.api.v2.filter.http.HeaderBodyTransform
+"transformerConfig": .solo.io.envoy.config.core.v3.TypedExtensionConfig
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `transformationTemplate` | [.envoy.api.v2.filter.http.TransformationTemplate](../transformation.proto.sk/#transformationtemplate) | Apply transformation templates. Only one of `transformationTemplate` or `headerBodyTransform` can be set. |  |
-| `headerBodyTransform` | [.envoy.api.v2.filter.http.HeaderBodyTransform](../transformation.proto.sk/#headerbodytransform) | This type of transformation will make all the headers available in the response body. The resulting JSON body will consist of two attributes: 'headers', containing the headers, and 'body', containing the original body. Only one of `headerBodyTransform` or `transformationTemplate` can be set. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `transformationTemplate` | [.envoy.api.v2.filter.http.TransformationTemplate](../transformation.proto.sk/#transformationtemplate) | Apply transformation templates. Only one of `transformationTemplate`, or `transformerConfig` can be set. |
+| `headerBodyTransform` | [.envoy.api.v2.filter.http.HeaderBodyTransform](../transformation.proto.sk/#headerbodytransform) | This type of transformation will make all the headers available in the response body. The resulting JSON body will consist of two attributes: 'headers', containing the headers, and 'body', containing the original body. Only one of `headerBodyTransform`, or `transformerConfig` can be set. |
+| `transformerConfig` | [.solo.io.envoy.config.core.v3.TypedExtensionConfig](../../../config/core/v3/extension.proto.sk/#typedextensionconfig) | Configuration for an externally implemented transformer, used by envoy transformation filter. Only one of `transformerConfig`, or `headerBodyTransform` can be set. |
 
 
 
@@ -257,12 +263,12 @@ The extracted information can then be referenced in template fields.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `header` | `string` | Extract information from headers. Only one of `header` or `body` can be set. |  |
-| `body` | [.google.protobuf.Empty](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/empty) | Extract information from the request/response body. Only one of `body` or `header` can be set. |  |
-| `regex` | `string` | Only strings matching this regular expression will be part of the extraction. The most simple value for this field is '.*', which matches the whole source. The field is required. If extraction fails the result is an empty value. |  |
-| `subgroup` | `int` | If your regex contains capturing groups, use this field to determine which group should be selected. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `header` | `string` | Extract information from headers. Only one of `header` or `body` can be set. |
+| `body` | [.google.protobuf.Empty](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/empty) | Extract information from the request/response body. Only one of `body` or `header` can be set. |
+| `regex` | `string` | Only strings matching this regular expression will be part of the extraction. The most simple value for this field is '.*', which matches the whole source. The field is required. If extraction fails the result is an empty value. |
+| `subgroup` | `int` | If your regex contains capturing groups, use this field to determine which group should be selected. |
 
 
 
@@ -277,6 +283,7 @@ Defines a transformation template.
 "advancedTemplates": bool
 "extractors": map<string, .envoy.api.v2.filter.http.Extraction>
 "headers": map<string, .envoy.api.v2.filter.http.InjaTemplate>
+"headersToAppend": []envoy.api.v2.filter.http.TransformationTemplate.HeaderToAppend
 "body": .envoy.api.v2.filter.http.InjaTemplate
 "passthrough": .envoy.api.v2.filter.http.Passthrough
 "mergeExtractorsToBody": .envoy.api.v2.filter.http.MergeExtractorsToBody
@@ -286,17 +293,38 @@ Defines a transformation template.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `advancedTemplates` | `bool` | If set to true, use JSON pointer notation (e.g. "time/start") instead of dot notation (e.g. "time.start") to access JSON elements. Defaults to false. Please note that, if set to 'true', you will need to use the `extraction` function to access extractors in the template (e.g. '{{ extraction("my_extractor") }}'); if the default value of 'false' is used, extractors will simply be available by their name (e.g. '{{ my_extractor }}'). |  |
-| `extractors` | `map<string, .envoy.api.v2.filter.http.Extraction>` | Use this attribute to extract information from the request. It consists of a map of strings to extractors. The extractor will defines which information will be extracted, while the string key will provide the extractor with a name. You can reference extractors by their name in templates, e.g. "{{ my-extractor }}" will render to the value of the "my-extractor" extractor. |  |
-| `headers` | `map<string, .envoy.api.v2.filter.http.InjaTemplate>` | Use this attribute to transform request/response headers. It consists of a map of strings to templates. The string key determines the name of the resulting header, the rendered template will determine the value. |  |
-| `body` | [.envoy.api.v2.filter.http.InjaTemplate](../transformation.proto.sk/#injatemplate) | Apply a template to the body. Only one of `body`, or `mergeExtractorsToBody` can be set. |  |
-| `passthrough` | [.envoy.api.v2.filter.http.Passthrough](../transformation.proto.sk/#passthrough) | This will cause the transformation filter not to buffer the body. Use this setting if the response body is large and you don't need to transform nor extract information from it. Only one of `passthrough`, or `mergeExtractorsToBody` can be set. |  |
-| `mergeExtractorsToBody` | [.envoy.api.v2.filter.http.MergeExtractorsToBody](../transformation.proto.sk/#mergeextractorstobody) | Merge all defined extractors to the request/response body. If you want to nest elements inside the body, use dot separator in the extractor name. Only one of `mergeExtractorsToBody`, or `passthrough` can be set. |  |
-| `parseBodyBehavior` | [.envoy.api.v2.filter.http.TransformationTemplate.RequestBodyParse](../transformation.proto.sk/#requestbodyparse) |  |  |
-| `ignoreErrorOnParse` | `bool` | If set to true, Envoy will not throw an exception in case the body parsing fails. |  |
-| `dynamicMetadataValues` | [[]envoy.api.v2.filter.http.TransformationTemplate.DynamicMetadataValue](../transformation.proto.sk/#dynamicmetadatavalue) | Use this field to set Dynamic Metadata. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `advancedTemplates` | `bool` | If set to true, use JSON pointer notation (e.g. "time/start") instead of dot notation (e.g. "time.start") to access JSON elements. Defaults to false. Please note that, if set to 'true', you will need to use the `extraction` function to access extractors in the template (e.g. '{{ extraction("my_extractor") }}'); if the default value of 'false' is used, extractors will simply be available by their name (e.g. '{{ my_extractor }}'). |
+| `extractors` | `map<string, .envoy.api.v2.filter.http.Extraction>` | Use this attribute to extract information from the request. It consists of a map of strings to extractors. The extractor will defines which information will be extracted, while the string key will provide the extractor with a name. You can reference extractors by their name in templates, e.g. "{{ my-extractor }}" will render to the value of the "my-extractor" extractor. |
+| `headers` | `map<string, .envoy.api.v2.filter.http.InjaTemplate>` | Use this attribute to transform request/response headers. It consists of a map of strings to templates. The string key determines the name of the resulting header, the rendered template will determine the value. Any existing headers with the same header name will be replaced by the transformed header. If a header name is included in `headers` and `headers_to_append`, it will first be replaced the template in `headers`, then additional header values will be appended by the templates defined in `headers_to_append`. For example, the following header transformation configuration: ```yaml headers: x-header-one: {"text": "first {{inja}} template"} x-header-one: {"text": "second {{inja}} template"} headersToAppend: - key: x-header-one value: {"text": "first appended {{inja}} template"} - key: x-header-one value: {"text": "second appended {{inja}} template"} ``` will result in the following headers on the HTTP message: ``` x-header-one: first inja template x-header-one: first appended inja template x-header-one: second appended inja template ```. |
+| `headersToAppend` | [[]envoy.api.v2.filter.http.TransformationTemplate.HeaderToAppend](../transformation.proto.sk/#headertoappend) | Use this attribute to transform request/response headers. It consists of an array of string/template objects. Use this attribute to define multiple templates for a single header. Header template(s) defined here will be appended to any existing headers with the same header name, not replace existing ones. See `headers` documentation to see an example of usage. |
+| `body` | [.envoy.api.v2.filter.http.InjaTemplate](../transformation.proto.sk/#injatemplate) | Apply a template to the body. Only one of `body`, or `mergeExtractorsToBody` can be set. |
+| `passthrough` | [.envoy.api.v2.filter.http.Passthrough](../transformation.proto.sk/#passthrough) | This will cause the transformation filter not to buffer the body. Use this setting if the response body is large and you don't need to transform nor extract information from it. Only one of `passthrough`, or `mergeExtractorsToBody` can be set. |
+| `mergeExtractorsToBody` | [.envoy.api.v2.filter.http.MergeExtractorsToBody](../transformation.proto.sk/#mergeextractorstobody) | Merge all defined extractors to the request/response body. If you want to nest elements inside the body, use dot separator in the extractor name. Only one of `mergeExtractorsToBody`, or `passthrough` can be set. |
+| `parseBodyBehavior` | [.envoy.api.v2.filter.http.TransformationTemplate.RequestBodyParse](../transformation.proto.sk/#requestbodyparse) |  |
+| `ignoreErrorOnParse` | `bool` | If set to true, Envoy will not throw an exception in case the body parsing fails. |
+| `dynamicMetadataValues` | [[]envoy.api.v2.filter.http.TransformationTemplate.DynamicMetadataValue](../transformation.proto.sk/#dynamicmetadatavalue) | Use this field to set Dynamic Metadata. |
+
+
+
+
+---
+### HeaderToAppend
+
+ 
+Defines a header-template pair to be used in `headers_to_append`
+
+```yaml
+"key": string
+"value": .envoy.api.v2.filter.http.InjaTemplate
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `key` | `string` | Header name. |
+| `value` | [.envoy.api.v2.filter.http.InjaTemplate](../transformation.proto.sk/#injatemplate) | Apply a template to the header value. |
 
 
 
@@ -316,11 +344,11 @@ entry.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `metadataNamespace` | `string` | The metadata namespace. Defaults to the filter namespace. |  |
-| `key` | `string` | The metadata key. |  |
-| `value` | [.envoy.api.v2.filter.http.InjaTemplate](../transformation.proto.sk/#injatemplate) | A template that determines the metadata value. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `metadataNamespace` | `string` | The metadata namespace. Defaults to the filter namespace. |
+| `key` | `string` | The metadata key. |
+| `value` | [.envoy.api.v2.filter.http.InjaTemplate](../transformation.proto.sk/#injatemplate) | A template that determines the metadata value. |
 
 
 
@@ -360,9 +388,9 @@ a JSON body that is an array)
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `text` | `string` |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `text` | `string` |  |
 
 
 
@@ -376,8 +404,8 @@ a JSON body that is an array)
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
 
 
 
@@ -391,8 +419,8 @@ a JSON body that is an array)
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
 
 
 
@@ -406,8 +434,8 @@ a JSON body that is an array)
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
 
 
 

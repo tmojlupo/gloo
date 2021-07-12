@@ -1,10 +1,10 @@
 ---
 title: Transformations
 weight: 10
-description: Use the Gloo Transformation API to transform requests and responses
+description: Use the Gloo Edge Transformation API to transform requests and responses
 ---
 
-One of the core features of any API Gateway is the ability to transform the traffic that it manages. To really enable the decoupling of your services, the API Gateway should be able to mutate requests before forwarding them to your upstream services and do the same with the resulting responses before they reach the downstream clients. Gloo delivers on this promise by providing you with a powerful transformation API.
+One of the core features of any API Gateway is the ability to transform the traffic that it manages. To really enable the decoupling of your services, the API Gateway should be able to mutate requests before forwarding them to your upstream services and do the same with the resulting responses before they reach the downstream clients. Gloo Edge delivers on this promise by providing you with a powerful transformation API.
 
 ## Defining a transformation
 Transformations are defined by adding the `transformations` attribute to your Virtual Services. You can define this attribute on three different Virtual Service sub-resources:
@@ -19,12 +19,14 @@ The configuration format is the same in all three cases and must be specified un
 # This snippet has been abridged for brevity
 virtualHost:
   options:
-    transformations:
-      requestTransformation: 
-        transformationTemplate:
-          headers:
-            foo:
-              text: 'bar'
+    stagedTransformations:
+      regular:
+        requestTransforms:
+        - requestTransformation:
+            transformationTemplate:
+              headers:
+                foo:
+                  text: 'bar'
 {{< /highlight >}}
 
 #### Inheritance rules
@@ -34,28 +36,110 @@ By default, a transformation defined on a Virtual Service attribute is **inherit
 - transformations defined on `VirtualHosts` are inherited by `Route`s and `WeightedDestination`s.
 - transformations defined on `Route`s are inherited by `WeightedDestination`s.
 
-If however a child attribute defines its own transformation, it will override the configuration on its parent.
+If a child attribute defines its own transformation, it will override the configuration on its parent.
+However, if `inheritTransformation` is set to true on the `stagedTransformations` for a Route, it can inherit transformations
+from its parent as illustrated below.
+
+Let's define the `virtualHost` and it's child route is defined as follows:
+{{< highlight yaml "hl_lines=7-13 20-27" >}}
+# This snippet has been abridged for brevity, and only includes transformation-relevant config
+virtualHost:
+  options:
+    stagedTransformations:
+      regular:
+        requestTransforms:
+        - matchers:
+            - prefix: '/parent'
+          requestTransformation:
+            transformationTemplate:
+              headers:
+                foo:
+                  text: 'bar'
+  routes:
+    - options:
+        stagedTransformations:
+          inheritTransformation: true
+          regular:
+            requestTransforms:
+            - matchers:
+              - prefix: '/child'
+              requestTransformation:
+                transformationTemplate:
+                  headers:
+                    foo:
+                      text: 'baz'
+{{< /highlight >}}
+
+Because `inheritTransformation` is set to `true` on the child route, the parent `virtualHost` transformation config will
+be merged into the child. The child route's transformations will look like:
+
+{{< highlight yaml "hl_lines=8-22" >}}
+# This snippet has been abridged for brevity, and only includes transformation-relevant config
+routes:
+- options:
+  stagedTransformations:
+    inheritTransformation: true
+    regular:
+      requestTransforms:
+      - matchers:
+        - prefix: '/child'
+        requestTransformation:
+          transformationTemplate:
+            headers:
+              foo:
+                text: 'baz'
+      - matchers:
+        - prefix: '/parent'
+        requestTransformation:
+          transformationTemplate:
+            headers:
+              foo:
+                text: 'bar'
+{{< /highlight >}}
+
+As stated above, the route's configuration will override its parent's, but now it also inherits the parent's transformations. So in this case,
+routes matching `/parent` will also be transformed. If `inheritTransformation` was set to `false`, this would not be the case. 
+Note that only the first matched transformation will run, so if both the child and the parent had the same matchers, the child's transformation
+would run.
 
 ### Configuration format
-In this section we will detail all the properties of the `transformations` {{< protobuf display="object" name="envoy.api.v2.filter.http.RouteTransformations" >}},
+In this section we will detail all the properties of the `stagedTransformations` {{< protobuf display="object" name="transformation.options.gloo.solo.io.TransformationStages" >}},
 which has the following structure:
 
 ```yaml
-transformations:
-  clearRouteCache: bool
-  requestTransformation: {}
-  responseTransformation: {}
+stagedTransformations:
+  early:
+    # early transformations
+  regular: 
+    requestTransforms:
+      - matcher:
+          prefix : '/'
+        clearRouteCache: bool
+        requestTransformation: {}
+        responseTransformation: {}
+    responseTransforms: {}
+  inheritTransformations: bool
 ```
+
+The `early` and `regular` attributes are used to specify when in the envoy filter chain the transformations run. The following diagram illustrates the stages at which each of the transformation filters run in relation to other envoy filters. 
+
+![Transformation Filter Stages]({{% versioned_link_path fromRoot="/img/transformation_stages.png" %}})
+
+The `inheritTransformation` attribute allows child routes to inherit transformations from their parent RouteTables and/or VirtualHosts. This is detailed in the Inheritance rules section.
+
+The `requestTransforms` attribute specifies a list of transformations which will be evaluated based on the request attributes. The first transformation which has a `matcher` that matches the request attributes will run.
+
+The `responseTransforms` attribute specifies a list of transformations which will be evaluated based on the response attributes. A transformation will only be chosen from this list if no transformation in `requestTransform` matched the request.
 
 The `clearRouteCache` attribute is a boolean value that determines whether the route cache should be cleared if the request transformation was applied. If the transformation modifies the headers in a way that affects routing, this attribute must be set to `true`. The default value is `false`.
 
-The `requestTransformation` and `responseTransformation` attributes have the {{< protobuf display="same format" name="envoy.api.v2.filter.http.Transformation" >}} and specify transformations that will be applied to requests and responses respectively. The format can take one of two forms:
+The `requestTransformation` and `responseTransformation` attributes have the {{< protobuf display="same format" name="transformation.options.gloo.solo.io.Transformation" >}} and specify transformations that will be applied to requests and responses respectively. The format can take one of two forms:
 
 - `headerBodyTransform`: this type of transformation will make all the headers available in the body. The result will be a JSON body that consists of two attributes: `headers`, containing the headers, and `body`, containing the original body.
 - `transformationTemplate`: this type of transformation allows you to define transformation templates. This is the more powerful and flexible type of transformation. We will spend the rest of this guide to describe its properties.
 
 #### Transformation templates
-{{< protobuf display="Templates" name="envoy.api.v2.filter.http.TransformationTemplate" >}} are the core of Gloo's transformation API. They allow you to mutate the headers and bodies of requests and responses based on the properties of the headers and bodies themselves. The following snippet illustrates the structure of the `transformationTemplate` object:
+{{< protobuf display="Templates" name="envoy.api.v2.filter.http.TransformationTemplate" >}} are the core of Gloo Edge's transformation API. They allow you to mutate the headers and bodies of requests and responses based on the properties of the headers and bodies themselves. The following snippet illustrates the structure of the `transformationTemplate` object:
 
 ```yaml
 transformationTemplate:
@@ -72,7 +156,7 @@ transformationTemplate:
 ```
 
 {{% notice note %}}
-The `body`, `passthrough`, and `mergeExtractorsToBody` attributes define three different ways of handling the body of the request/response. Please note that **only one of them may be set**, otherwise Gloo will reject the `transformationTemplate`.
+The `body`, `passthrough`, and `mergeExtractorsToBody` attributes define three different ways of handling the body of the request/response. Please note that **only one of them may be set**, otherwise Gloo Edge will reject the `transformationTemplate`.
 {{% /notice %}}
 
 Let's go ahead and describe each one of these attributes in detail.
@@ -80,7 +164,7 @@ Let's go ahead and describe each one of these attributes in detail.
 ##### parseBodyBehavior
 This attribute determines how the request/response body will be parsed and can have one of two values:
 
-- `ParseAsJson`: Gloo will attempt to parse the body as a JSON structure. *This is the default behavior*.
+- `ParseAsJson`: Gloo Edge will attempt to parse the body as a JSON structure. *This is the default behavior*.
 - `DontParse`: the body will be treated as plain text.
 
 The important part to know about the `DontParse` setting is that the body will be buffered and available, but will not be parsed. If you're looking to skip any body buffering completely, see the section [on passthrough: {}](#passthrough)
@@ -88,7 +172,7 @@ The important part to know about the `DontParse` setting is that the body will b
 As we will [see later](#templating-language), some of the templating features won't be available when treating the body as plain text.
 
 ##### ignoreErrorOnParse
-By default, Gloo will attempt to parse the body as JSON, unless you have `DontParse` set as the `parseBodyBehavior`. If `ignoreErrorOnParse` is set to `true`, Envoy will not throw an exception in case the body parsing fails. Defaults to `false`.
+By default, Gloo Edge will attempt to parse the body as JSON, unless you have `DontParse` set as the `parseBodyBehavior`. If `ignoreErrorOnParse` is set to `true`, Envoy will not throw an exception in case the body parsing fails. Defaults to `false`.
 
 Implicit in this setting is that the body will be buffered and available. If you're looking to skip any body buffering completely, see the section [on passthrough: {}](#passthrough)
 
@@ -105,21 +189,27 @@ An extraction must have one of two sources:
     extractors:
       myExtractor:
         header: 'foo'
+        regex: '.*'
     ```
 - `body`: extract information from the body. This attribute takes an empty value (as there is always only one body).
     ```yaml
     extractors:
       myExtractor:
         body: {}
+        regex: '.*'
     ```
 
 {{% notice note %}}
-The `body` extraction source has been introduced with **Gloo**, release 0.20.12, and **Gloo Enterprise**, release 0.20.7. If you are using an earlier version, it will not work.
+The `body` extraction source has been introduced with **Gloo Edge**, release 0.20.12, and **Gloo Edge Enterprise**, release 0.20.7. If you are using an earlier version, it will not work.
 {{% /notice %}}
 
-Extracting the body is generally not useful when Gloo has already parsed it as JSON, the default behavior. The parsed body data can be directly referenced using standard JSON syntax. The `body` extractor treats the body as plaintext, and is interpreted using a regular expression as noted below. This can be useful for body data that cannot be parsed as JSON.
+Extracting the body is generally not useful when Gloo Edge has already parsed it as JSON, the default behavior. The parsed body data can be directly referenced using standard JSON syntax. The `body` extractor treats the body as plaintext, and is interpreted using a regular expression as noted below. This can be useful for body data that cannot be parsed as JSON.
 
 An extraction must also define which information is to be extracted from the source. This can be done by providing a regular expression via the `regex` attribute. The regular expression will be applied to the body or to the value of relevant header. If your regular expression uses _capturing groups_, you can select the group match you want to use via the `subgroup` attribute.
+
+{{% notice note %}}
+The `regex` attribute is required when specifying an extraction. Even if a `regex` attribute is not required to capture a subset of the source information, you must still specify a catch-all pattern like `regex: '.*'`. If no `regex` is specified, the extractor will silently fail.
+{{% /notice %}}
 
 As an example, to define an extraction named `foo` which will contain the value of the `foo` query parameter you can apply the following configuration:
 
@@ -190,7 +280,7 @@ transformationTemplate:
 See the [template language section](#templating-language) for more details about template strings.
 
 ##### passthrough
-In some cases your do not need to transform the request/response body nor extract information from it. In these cases, particularly if the payload is large, you should use the `passthrough` attribute to instruct Gloo to ignore the body (i.e. to not buffer it). The attribute always takes just the empty value:
+In some cases your do not need to transform the request/response body nor extract information from it. In these cases, particularly if the payload is large, you should use the `passthrough` attribute to instruct Gloo Edge to ignore the body (i.e. to not buffer it). The attribute always takes just the empty value:
 
 ```yaml
 transformationTemplate:
@@ -244,12 +334,12 @@ dynamicMetadataValues:
 
 ```
 
-The `metadataNamespace` is optional. It defaults to the namespace of the Gloo transformation filter name, i.e. `io.solo.transformation`.
+The `metadataNamespace` is optional. It defaults to the namespace of the Gloo Edge transformation filter name, i.e. `io.solo.transformation`.
 
 A common use case for this attribute is to define custom data to be included in your access logs. See the [dedicated tutorial]({{% versioned_link_path fromRoot="/guides/traffic_management/request_processing/transformations/enrich_access_logs/" %}}) for an example of how this can be achieved.
 
 ##### advancedTemplates
-This attribute determines which notation to use when accessing elements in JSON structures. If set to `true`, Gloo will expect JSON pointer notation (e.g. "time/start") instead of dot notation (e.g. "time.start"). Defaults to `false`.
+This attribute determines which notation to use when accessing elements in JSON structures. If set to `true`, Gloo Edge will expect JSON pointer notation (e.g. "time/start") instead of dot notation (e.g. "time.start"). Defaults to `false`.
 
 Please note that, if set to `true`, you will need to use the `extraction` function to access extractors in template strings (e.g. `{{ extraction("myExtractor") }}`); if the default value of `false` is used, extractors will simply be available by their name (e.g. `{{ myExtractor }}`).
 
@@ -258,7 +348,7 @@ Please note that, if set to `true`, you will need to use the `extraction` functi
 Templates can be used only if the request/response payload is a JSON string.
 {{% /notice %}}
 
-Gloo templates are powered by the [Inja](https://github.com/pantor/inja) template engine, which is inspired by the popular [Jinja](https://palletsprojects.com/p/jinja/) templating language in Python. When writing your templates, you can take advantage of all the core _Inja_ features, i.a. loops, conditional logic, and functions.
+Gloo Edge templates are powered by the [Inja](https://github.com/pantor/inja) template engine, which is inspired by the popular [Jinja](https://palletsprojects.com/p/jinja/) templating language in Python. When writing your templates, you can take advantage of all the core _Inja_ features, i.a. loops, conditional logic, and functions.
 
 In addition to the standard functions available in the core _Inja_ library, you can use additional custom functions that we have added:
 
@@ -270,7 +360,32 @@ In addition to the standard functions available in the core _Inja_ library, you 
 
 You can use templates to mutate [headers](#headers), the [body](#body), and [dynamic metadata](#dynamicmetadatavalues).
 
+#### XSLT Transformation
+{{% notice note %}}
+The XSLT transformation has been introduced with **Gloo Edge Enterprise**, release v1.8.0-beta3. If you are using an earlier version, it will not work.
+{{% /notice %}}
+{{< protobuf display="XSLT transformations" name="envoy.config.transformer.xslt.v2.XsltTransformation" >}} allow transformations on HTTP requests using the XSLT transformation language.
+The following snippet illustrates the structure of the `xsltTransformation` object.
+```yaml
+xsltTransformation:
+  xslt: string
+  setContentType: string
+  nonXmlTransform: bool
+```
+
+##### xslt
+The XSLT transformation is specified in this field as a string. Like other transformations, an invalid XSLT transformation will not be accepted and envoy 
+validation will reject the transformation configuration.
+
+##### setContentType
+XSLT transformations can be used to transform HTTP body between content type. For example, from [XML to JSON](https://www.w3.org/TR/xslt-30/#func-xml-to-json), or [JSON to XML](https://www.w3.org/TR/xslt-30/#func-json-to-xml).
+In the case of these transformations, the `content-type` HTTP header is set to the value of `setContentType`. If left empty, the `content-type` header is unchanged.
+
+##### nonXmlTransform
+XSLT transformations typically accept only XML as input. If the input to the transformation is not XML, this should be set to true. For example, if 
+the XSLT transformation is transforming a JSON input to XML, this would be set to `true`. By default, this is false and the XSLT transformation will only accept XML input.
+
 ### Common use cases
-On this page we have seen all the properties of the Gloo Transformation API as well as some simple example snippets. If are looking for complete examples, please check out the following tutorials, which will guide you through some of the most common transformation use cases.
+On this page we have seen all the properties of the Gloo Edge Transformation API as well as some simple example snippets. If are looking for complete examples, please check out the following tutorials, which will guide you through some of the most common transformation use cases.
 
 {{% children description="true" %}}

@@ -22,7 +22,6 @@ func InstallCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cob
 		gatewayCmd(opts),
 		ingressCmd(opts),
 		knativeCmd(opts),
-		glooFedCmd(opts),
 	)
 	cliutils.ApplyOptions(cmd, optionsFunc)
 
@@ -38,7 +37,7 @@ func UninstallCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *c
 		Long:   constants.UNINSTALL_COMMAND.Long,
 		PreRun: setVerboseMode(opts),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("Uninstalling Gloo...\n")
+			fmt.Printf("Uninstalling Gloo Edge...\n")
 			if err := Uninstall(opts, &install.CmdKubectl{}, Gloo); err != nil {
 				return err
 			}
@@ -47,32 +46,10 @@ func UninstallCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *c
 		},
 	}
 
-	cmd.AddCommand(UninstallGlooFedCmd(opts))
-
 	flagutils.AddGlooUninstallFlags(cmd.Flags(), &opts.Uninstall.GlooUninstall)
 	cliutils.ApplyOptions(cmd, optionsFunc)
 	flagutils.AddVerboseFlag(cmd.PersistentFlags(), opts)
 
-	return cmd
-}
-
-func UninstallGlooFedCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:    constants.UNINSTALL_GLOO_FED_COMMAND.Use,
-		Short:  constants.UNINSTALL_GLOO_FED_COMMAND.Short,
-		Long:   constants.UNINSTALL_GLOO_FED_COMMAND.Long,
-		PreRun: setVerboseMode(opts),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Printf("Uninstalling Gloo Federation...\n")
-			if err := Uninstall(opts, &install.CmdKubectl{}, Federation); err != nil {
-				return err
-			}
-			fmt.Printf("\nGloo Federation was successfully uninstalled.\n")
-			return nil
-		},
-	}
-
-	flagutils.AddGlooFedUninstallFlags(cmd.PersistentFlags(), &opts.Uninstall.FedUninstall)
 	return cmd
 }
 

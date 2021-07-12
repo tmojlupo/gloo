@@ -59,12 +59,12 @@ func ExtAuthApiKeyCmd(opts *options.Options) *cobra.Command {
 
 			if opts.Top.Interactive {
 				// and gather any missing args that are available through interactive mode
-				if err := apiKeySecretArgsInteractive(meta, &input); err != nil {
+				if err := apiKeySecretArgsInteractive(opts.Top.Ctx, meta, &input); err != nil {
 					return err
 				}
 			}
 			// create the secret
-			if err := createApiKeySecret(opts.Top.Ctx, *meta, input, opts.Create.DryRun, opts.Top.Output); err != nil {
+			if err := createApiKeySecret(opts.Top.Ctx, meta, input, opts.Create.DryRun, opts.Top.Output); err != nil {
 				return err
 			}
 
@@ -80,8 +80,8 @@ func ExtAuthApiKeyCmd(opts *options.Options) *cobra.Command {
 	return cmd
 }
 
-func apiKeySecretArgsInteractive(meta *core.Metadata, input *apiKeySecret) error {
-	if err := surveyutils.InteractiveNamespace(&meta.Namespace); err != nil {
+func apiKeySecretArgsInteractive(ctx context.Context, meta *core.Metadata, input *apiKeySecret) error {
+	if err := surveyutils.InteractiveNamespace(ctx, &meta.Namespace); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func apiKeySecretArgsInteractive(meta *core.Metadata, input *apiKeySecret) error
 	return nil
 }
 
-func createApiKeySecret(ctx context.Context, meta core.Metadata, input apiKeySecret, dryRun bool, outputType printers.OutputType) error {
+func createApiKeySecret(ctx context.Context, meta *core.Metadata, input apiKeySecret, dryRun bool, outputType printers.OutputType) error {
 	if input.ApiKey == "" {
 		if !input.GenerateApiKey {
 			return MissingApiKeyError
@@ -140,7 +140,7 @@ func createApiKeySecret(ctx context.Context, meta core.Metadata, input apiKeySec
 	}
 
 	if !dryRun {
-		secretClient := helpers.MustSecretClient()
+		secretClient := helpers.MustSecretClient(ctx)
 		if _, err := secretClient.Write(secret, clients.WriteOpts{Ctx: ctx}); err != nil {
 			return err
 		}

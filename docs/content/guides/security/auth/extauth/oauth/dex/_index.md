@@ -1,16 +1,16 @@
 ---
 title: Authenticate with Dex
 weight: 20
-description: Integrating Gloo and Dex Identity Provider
+description: Integrating Gloo Edge and Dex Identity Provider
 ---
 
-[Dex](https://github.com/dexidp/dex) is an **OpenID Connect identity hub**. Dex can be used to expose a consistent 
+[Dex](https://dexidp.io/) is an **OpenID Connect identity hub**. Dex can be used to expose a consistent 
 OpenID Connect interface to your applications while allowing your users to authenticate using their existing credentials 
 from various back-ends, including LDAP, SAML, and other OIDC providers. Using an identity hub like Dex has the advantage 
 of allowing you to change your authentication back-ends without affecting the rest of the system. 
 You can also use Dex for authentication to the Kubernetes API server itself; for example, to allow LDAP logins to work 
 with `kubectl`. This is outside the scope of this document, but you can read more about it 
-[here](https://github.com/dexidp/dex/blob/master/Documentation/kubernetes.md).
+[here](https://dexidp.io/docs/kubernetes/).
 
 In this guide we will see how to authenticate users with your application via an OIDC flow that uses Dex as an identity 
 provider. This guide is just an example to get you started and does not cover all aspects of a complete setup, 
@@ -18,10 +18,10 @@ like setting up a domain and SSL certificates.
 
 ## Setup
 {{% notice warning %}}
-This feature requires Gloo's external auth server to communicate with an external OIDC provider/authorization server.
+This feature requires Gloo Edge's external auth server to communicate with an external OIDC provider/authorization server.
 Because of this interaction, the OIDC flow may take longer than the default timeout of 200ms.
 You can increase this timeout by setting the {{% protobuf name="enterprise.gloo.solo.io.Settings" display="`requestTimeout` value on external auth settings"%}}.
-The external auth settings can be configured on the {{% protobuf name="gloo.solo.io.Settings" display="global Gloo `Settings` object"%}}.
+The external auth settings can be configured on the {{% protobuf name="gloo.solo.io.Settings" display="global Gloo Edge `Settings` object"%}}.
 {{% /notice %}}
 
 {{< readfile file="/static/content/setup_notes" markdown="true">}}
@@ -67,7 +67,7 @@ spec:
             port: 80
 ```
 
-To verify that the Virtual Service has been accepted by Gloo, let's port-forward the Gateway Proxy service so that it is 
+To verify that the Virtual Service has been accepted by Gloo Edge, let's port-forward the Gateway Proxy service so that it is 
 reachable from your machine at `localhost:8080`:
 ```
 kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80
@@ -76,17 +76,17 @@ kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80
 If you open your browser and navigate to [http://localhost:8080](http://localhost:8080) you should see the following page (you might need to wait a 
 minute for the containers to start):
 
-![Pet Clinic app homepage](./../petclinic-home.png)
+![Pet Clinic app homepage]({{% versioned_link_path fromRoot="/img/petclinic-home.png" %}})
 
 ## Securing the Virtual Service
 As we just saw, we were able to reach our application without having to provide any credentials. This is because by 
-default Gloo allows any request on routes that do not specify authentication configuration. Let's change this behavior. 
+default Gloo Edge allows any request on routes that do not specify authentication configuration. Let's change this behavior. 
 We will update the Virtual Service so that each request to the sample application is authenticated using an 
 **OpenID Connect** flow.
 
 ### Install Dex
 To implement the authentication flow, we need an OpenID Connect provider to be running in your cluster. To this end, we 
-will deploy the [Dex](https://github.com/dexidp/dex) identity service, as it easy to install and configure.
+will deploy the [Dex](https://dexidp.io/) identity service, as it easy to install and configure.
 
 Let's start by defining a `dex-values.yaml` Helm values file with some bootstrap configuration for Dex:
 
@@ -117,18 +117,16 @@ config:
 EOF
 ```
 
-This configures Dex with a static users. Notice how we choose a **client secret** with value `secretvalue` for the client named `gloo`. Gloo will need to provide this secret when connecting to Dex in order to confirm its identity.
+This configures Dex with a static users. Notice how we choose a **client secret** with value `secretvalue` for the client named `gloo`. Gloo Edge will need to provide this secret when connecting to Dex in order to confirm its identity.
 
-{{< notice note >}}
-The above configuration uses unsecured http traffic without SSL certificates. You can have Dex generate its own certificates by including settings for the Helm chart on the path `certs.web.altNames`. The names should be set to the fully-qualified domain name of the Dex service on Kubernetes and the Dex URL, which would be `dex.gloo-system.svc.cluster.local` and `https://dex.gloo-system.svc.cluster.local:32000`. You would then need to add the Dex web server certificate authority to Gloo's external authentication so the web certificates used by the Dex service will be trusted. You can find more information about adding trusted CAs to the Ext Auth service [here]({{< versioned_link_path fromRoot="/installation/advanced_configuration/extauth_custom/" >}}).
-{{< /notice >}}
+Note that the above configuration uses unsecured http traffic without SSL certificates. You can have Dex generate its own certificates by including settings for the Helm chart on the path `certs.web.altNames`. The names should be set to the fully-qualified domain name of the Dex service on Kubernetes and the Dex URL, which would be `dex.gloo-system.svc.cluster.local` and `https://dex.gloo-system.svc.cluster.local:32000`. You would then need to add the Dex web server certificate authority to Gloo Edge's external authentication so the web certificates used by the Dex service will be trusted. You can find more information about adding trusted CAs to the Ext Auth service [here]({{< versioned_link_path fromRoot="/installation/advanced_configuration/extauth_custom_ca/" >}}).
 
 Using this configuration, we can deploy Dex to our cluster using Helm.
 
-If `help repo list` doesn't list the `stable` repo, invoke:
+If `helm repo list` doesn't list the `stable` repo, invoke:
 
 ```shell
-helm repo add stable https://kubernetes-charts.storage.googleapis.com
+helm repo add stable https://charts.helm.sh/stable
 ```
 
 And then install dex (helm 3 command follows):
@@ -136,9 +134,9 @@ And then install dex (helm 3 command follows):
 helm install dex --namespace gloo-system stable/dex -f dex-values.yaml
 ```
 
-#### Make the client secret accessible to Gloo
-To be able to act as our OIDC client, Gloo needs to have access to the **client secret** we defined in the Dex configuration, 
-so that it can use it to identify itself with the Dex authorization server. Gloo expects the client secret to be stored 
+#### Make the client secret accessible to Gloo Edge
+To be able to act as our OIDC client, Gloo Edge needs to have access to the **client secret** we defined in the Dex configuration, 
+so that it can use it to identify itself with the Dex authorization server. Gloo Edge expects the client secret to be stored 
 in a specific format inside of a Kubernetes `Secret`. 
 
 Let's create the secret and name it `oauth`:
@@ -159,7 +157,7 @@ metadata:
 data:
   # The value is a base64 encoding of the following YAML:
   # client_secret: secretvalue
-  # Gloo expects OAuth client secrets in this format.
+  # Gloo Edge expects OAuth client secrets in this format.
   oauth: Y2xpZW50U2VjcmV0OiBzZWNyZXR2YWx1ZQo=
 {{< /tab >}}
 {{< /tabs >}} 
@@ -192,13 +190,16 @@ spec:
         issuer_url: http://dex.gloo-system.svc.cluster.local:32000/
         scopes:
         - email
+        session:
+          cookieOptions:
+            notSecure: true
 {{< /highlight >}}
 
 {{% notice note %}}
 The above configuration uses the new `oauth2` syntax. The older `oauth` syntax is still supported, but has been deprecated.
 {{% /notice %}}
 
-The above configuration instructs Gloo to use its extauth OIDC module to authenticate the incoming request. 
+The above configuration instructs Gloo Edge to use its extauth OIDC module to authenticate the incoming request. 
 Notice how the configuration references the client secret we created earlier and compare the configuration values 
 with the ones we used to bootstrap Dex.
 
@@ -233,7 +234,7 @@ spec:
 {{< /highlight >}}
 
 {{% notice note %}}
-Note this is a simplistic example that has a `/` catch-all path prefix route. Gloo needs to handle the `/callback` route and does so in the External Auth service. If you don't have a matching route (ie, either using a `/` or `/callback`) for the `callback` setting, you'll see `404`s when the Identity Provider tries to callback to Gloo with the correct tokens. Please reach out to us on the [Slack](https://slack.solo.io) if you run into trouble here.
+Note this is a simplistic example that has a `/` catch-all path prefix route. Gloo Edge needs to handle the `/callback` route and does so in the External Auth service. If you don't have a matching route (ie, either using a `/` or `/callback`) for the `callback` setting, you'll see `404`s when the Identity Provider tries to callback to Gloo Edge with the correct tokens. Please reach out to us on the [Slack](https://slack.solo.io) if you run into trouble here.
 {{% /notice %}}
 
 ### Testing our configuration
@@ -253,7 +254,7 @@ portForwardPid1=$! # Store the port-forward pid so we can kill the process later
 echo "127.0.0.1 dex.gloo-system.svc.cluster.local" | sudo tee -a /etc/hosts
 ```
 
-1. Port-forward the Gloo Gateway Proxy service so that it is reachable from your machine at `localhost:8080`:
+1. Port-forward the Gloo Edge Proxy service so that it is reachable from your machine at `localhost:8080`:
 ```
 kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80 &
 portForwardPid2=$! # Store the port-forward pid so we can kill the process later
@@ -262,18 +263,18 @@ portForwardPid2=$! # Store the port-forward pid so we can kill the process later
 Now we are ready to test our complete setup! Open you browser and navigate to [http://localhost:8080](http://localhost:8080). You should see the 
 following login page:
 
-![Dex login page](./dex-login.png)
+![Dex login page]({{% versioned_link_path fromRoot="/img/dex-login.png" %}})
 
-If you login as the `admin@example.com` user with the password `password`, Gloo should redirect you to the main page 
+If you login as the `admin@example.com` user with the password `password`, Gloo Edge should redirect you to the main page 
 of our sample application!
 
-![Pet Clinic app homepage](./../petclinic-home.png)
+![Pet Clinic app homepage]({{% versioned_link_path fromRoot="/img/petclinic-home.png" %}})
 
 If this does not work, one thing to check is the `requestTimeout` setting on your `extauth` Settings. See the warning in the [setup section](#setup) for more details.
 
 ### Logging
 
-If Gloo is running on kubernetes, the extauth server logs can be viewed with:
+If Gloo Edge is running on kubernetes, the extauth server logs can be viewed with:
 ```
 kubectl logs -n gloo-system deploy/extauth -f
 ```

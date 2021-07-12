@@ -2,7 +2,7 @@ package plugins
 
 import (
 	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 )
 
@@ -34,4 +34,14 @@ func NewStagedFilterWithConfig(name string, config proto.Message, stage FilterSt
 	}
 
 	return s, nil
+}
+
+func StagedFilterListContainsName(filters StagedHttpFilterList, filterName string) bool {
+	for _, filter := range filters {
+		if filter.HttpFilter.GetName() == filterName {
+			return true
+		}
+	}
+
+	return false
 }

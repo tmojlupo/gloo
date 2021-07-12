@@ -1,11 +1,11 @@
 ---
 title: OPA Authorization
 weight: 50
-description: Illustrating how to combine OpenID Connect with Open Policy Agent to achieve fine grained policy with Gloo.
+description: Illustrating how to combine OpenID Connect with Open Policy Agent to achieve fine grained policy with Gloo Edge.
 ---
 
 {{% notice note %}}
-The OPA feature was introduced with **Gloo Enterprise**, release 0.18.21. If you are using an earlier version, this tutorial will not work.
+The OPA feature was introduced with **Gloo Edge Enterprise**, release 0.18.21. If you are using an earlier version, this tutorial will not work.
 {{% /notice %}}
 
 The [Open Policy Agent](https://www.openpolicyagent.org/) (OPA) is an open source, general-purpose policy engine that can be used to define and enforce versatile policies in a uniform way across your organization. Compared to an RBAC authorization system, OPA allows you to create more fine-grained policies. For more information, see [the official docs](https://www.openpolicyagent.org/docs/latest/comparison-to-other-systems/).
@@ -13,7 +13,7 @@ The [Open Policy Agent](https://www.openpolicyagent.org/) (OPA) is an open sourc
 Be sure to check the external auth [configuration overview]({{% versioned_link_path fromRoot="/guides/security/auth/extauth/#auth-configuration-overview" %}}) for detailed information about how authentication is configured on Virtual Services.
 
 {{% notice note %}}
-As of **Gloo Enterprise** release 1.5.0-beta1, you can see Gloo's version of OPA in the extauth service logs.
+As of **Gloo Edge Enterprise** release 1.5.0-beta1, you can see Gloo Edge's version of OPA in the extauth service logs.
 {{% /notice %}}
 
 ## Table of Contents
@@ -33,7 +33,7 @@ As of **Gloo Enterprise** release 1.5.0-beta1, you can see Gloo's version of OPA
     - [Create a Virtual Service](#create-a-virtual-service)
     - [Secure the Virtual Service](#secure-the-virtual-service)
         - [Install Dex](#install-dex)
-        - [Make the client secret accessible to Gloo](#make-the-client-secret-accessible-to-gloo)
+        - [Make the client secret accessible to Gloo Edge](#make-the-client-secret-accessible-to-gloo-edge)
         - [Create a Policy](#create-a-policy)
         - [Create a multi-step AuthConfig](#create-a-multi-step-authconfig)
         - [Update the Virtual Service](#update-the-virtual-service)
@@ -46,7 +46,7 @@ As of **Gloo Enterprise** release 1.5.0-beta1, you can see Gloo's version of OPA
 ## OPA policy overview
 Open Policy Agent policies are written in [Rego](https://www.openpolicyagent.org/docs/latest/how-do-i-write-policies/). The _Rego_ language is inspired from _Datalog_, which in turn is a subset of _Prolog_. _Rego_ is more suited to work with modern JSON documents.
 
-Gloo's OPA integration will populate an `input` document which can be used in your OPA policies. The structure of the `input` document depends on the context of the incoming request. See the following section for details.
+Gloo Edge's OPA integration will populate an `input` document which can be used in your OPA policies. The structure of the `input` document depends on the context of the incoming request. See the following section for details.
 
 ### OPA input structure
 - `input.check_request` - By default, all OPA policies will contain an [Envoy Auth Service `CheckRequest`](https://www.envoyproxy.io/docs/envoy/latest/api-v2/service/auth/v2/external_auth.proto#service-auth-v2-checkrequest). This object contains all the information Envoy has gathered of the request being processed. See the Envoy docs and [proto files for `AttributeContext`](https://github.com/envoyproxy/envoy/blob/b3949eaf2080809b8a3a6cf720eba2cfdf864472/api/envoy/service/auth/v2/attribute_context.proto#L39) for the structure of this object.
@@ -105,7 +105,7 @@ You should see the following output:
 {{% extauth_version_info_note %}}
 {{% /notice %}}
 
-As we just saw, we were able to reach the upstream without having to provide any credentials. This is because by default Gloo allows any request on routes that do not specify authentication configuration. Let's change this behavior. We will update the Virtual Service so that only requests that comply with a given OPA policy are allowed.
+As we just saw, we were able to reach the upstream without having to provide any credentials. This is because by default Gloo Edge allows any request on routes that do not specify authentication configuration. Let's change this behavior. We will update the Virtual Service so that only requests that comply with a given OPA policy are allowed.
 
 #### Define an OPA policy 
 
@@ -137,7 +137,7 @@ This policy:
   - the path is exactly `/api/pets/2` AND the http method is either `GET` or `DELETE`
 
 #### Create an OPA AuthConfig CRD
-Gloo expects OPA policies to be stored in a Kubernetes ConfigMap, so let's go ahead and create a ConfigMap with the contents of the above policy file:
+Gloo Edge expects OPA policies to be stored in a Kubernetes ConfigMap, so let's go ahead and create a ConfigMap with the contents of the above policy file:
 
 ```
 kubectl -n gloo-system create configmap allow-get-users --from-file=policy.rego
@@ -196,7 +196,7 @@ spec:
 EOF
 {{< /highlight >}}
 
-In the above example we have added the configuration to the Virtual Host. Each route belonging to a Virtual Host will inherit its `AuthConfig`, unless it [overwrites or disables]({{% versioned_link_path fromRoot="/guides/security/auth#inheritance-rules" %}}) it.
+In the above example we have added the configuration to the Virtual Host. Each route belonging to a Virtual Host will inherit its `AuthConfig`, unless it [overwrites or disables]({{% versioned_link_path fromRoot="/guides/security/auth/extauth/#inheritance-rules" %}}) it.
 
 ### Testing the configuration
 Paths that don't start with `/api/pets` are not authorized (should return 403):
@@ -230,7 +230,7 @@ for [JSON Web Tokens](https://jwt.io/) (JWTs), allowing you to define policies b
 If you are using an **authentication** mechanism that conveys identity information via JWTs (e.g. [OpenID Connect](https://en.wikipedia.org/wiki/OpenID_Connect)),
 this feature makes it easy to implement **authorization** for authenticated users.
 
-In this guide we will see how to use OPA to enforce policies on the JWTs produced by Gloo's **OpenID Connect** (OIDC) authentication module.
+In this guide we will see how to use OPA to enforce policies on the JWTs produced by Gloo Edge's **OpenID Connect** (OIDC) authentication module.
 
 {{% notice note %}}
 It is possible to use the OPA without the OIDC authentication module.
@@ -286,7 +286,7 @@ spec:
             port: 8080
 ```
 
-To verify that the Virtual Service has been accepted by Gloo, let's port-forward the Gateway Proxy service so that it is 
+To verify that the Virtual Service has been accepted by Gloo Edge, let's port-forward the Gateway Proxy service so that it is 
 reachable from you machine at `localhost:8080`:
 ```
 kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80
@@ -294,11 +294,11 @@ kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80
 
 If you open your browser and navigate to [http://localhost:8080](http://localhost:8080) you should see the following page:
 
-![Pet Clinic app homepage](petclinic-home.png)
+![Pet Clinic app homepage]({{% versioned_link_path fromRoot="/img/petclinic-home.png" %}})
 
 ### Secure the Virtual Service
 As we just saw, we were able to reach the service without having to provide any credentials. This is because by default 
-Gloo allows any request on routes that do not specify authentication configuration. Let's change this behavior. 
+Gloo Edge allows any request on routes that do not specify authentication configuration. Let's change this behavior. 
 We will update the Virtual Service so that each request to the sample application is:
  
 - authenticated using an **OpenID Connect** flow and
@@ -332,12 +332,12 @@ config:
   staticPasswords:
   - email: "admin@example.com"
     # bcrypt hash of the string "password"
-    hash: "\$2a\$10\$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
     username: "admin"
     userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
   - email: "user@example.com"
     # bcrypt hash of the string "password"
-    hash: "\$2a\$10\$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
     username: "user"
     userID: "123456789-db88-4b73-90a9-3cd1661f5466"
 EOF
@@ -350,7 +350,7 @@ Using this configuration, we can deploy Dex to our cluster using Helm.
 If `help repo list` doesn't list the `stable` repo, invoke:
 
 ```shell
-helm repo add stable https://kubernetes-charts.storage.googleapis.com
+helm repo add stable https://charts.helm.sh/stable
 ```
 
 And then install dex (helm 3 command follows):
@@ -358,9 +358,9 @@ And then install dex (helm 3 command follows):
 helm install dex --namespace gloo-system stable/dex -f dex-values.yaml
 ```
 
-#### Make the client secret accessible to Gloo
-To be able to act as our OIDC client, Gloo needs to have access to the **client secret** we just defined, so that it can 
-use it to identify itself with the Dex authorization server. Gloo expects the client secret to be stored in a specific format 
+#### Make the client secret accessible to Gloo Edge
+To be able to act as our OIDC client, Gloo Edge needs to have access to the **client secret** we just defined, so that it can 
+use it to identify itself with the Dex authorization server. Gloo Edge expects the client secret to be stored in a specific format 
 inside of a Kubernetes `Secret`. 
 
 Let's create the secret and name it `oauth`:
@@ -381,7 +381,7 @@ metadata:
 data:
   # The value is a base64 encoding of the following YAML:
   # client_secret: secretvalue
-  # Gloo expected OAuth client secrets in this format.
+  # Gloo Edge expected OAuth client secrets in this format.
   oauth: Y2xpZW50U2VjcmV0OiBzZWNyZXR2YWx1ZQo=
 {{< /tab >}}
 {{< /tabs >}} 
@@ -417,7 +417,7 @@ This policy allows the request if:
 
 Notice how we are using the `io.jwt.decode` function to decode the JWT and how we access claims in the `payload`. 
 
-Gloo expects OPA policies to be stored in a Kubernetes ConfigMap, so let's go ahead and create a ConfigMap with the 
+Gloo Edge expects OPA policies to be stored in a Kubernetes ConfigMap, so let's go ahead and create a ConfigMap with the 
 contents of the above policy file:
 
 ```
@@ -430,7 +430,7 @@ kubectl --namespace=gloo-system create configmap allow-jwt --from-file=check-jwt
 {{% /notice %}}
 
 Now that all the necessary resources are in place we can create the `AuthConfig` resource that we will use to secure our 
-Virtual Service.
+Virtual Service.  Save the code block below as `jwt-opa.yaml`.
 
 {{< highlight shell "hl_lines=8-22" >}}
 apiVersion: enterprise.gloo.solo.io/v1
@@ -440,16 +440,20 @@ metadata:
   namespace: gloo-system
 spec:
   configs:
-  - oauth:
-      app_url: http://localhost:8080/
-      callback_path: /callback
-      client_id: gloo
-      client_secret_ref:
-        name: oauth
-        namespace: gloo-system
-      issuer_url: http://dex.gloo-system.svc.cluster.local:32000/
-      scopes:
-      - email
+  - oauth2:
+      oidcAuthorizationCode:
+        app_url: http://localhost:8080
+        callback_path: /callback
+        client_id: gloo
+        client_secret_ref:
+          name: oauth
+          namespace: gloo-system
+        issuer_url: http://dex.gloo-system.svc.cluster.local:32000/
+        session:
+          cookieOptions:
+            notSecure: true
+        scopes:
+        - email
   - opa_auth:
       modules:
       - name: allow-jwt
@@ -457,13 +461,17 @@ spec:
       query: "data.test.allow == true"
 {{< /highlight >}}
 
-The above `AuthConfig` defines two configurations that Gloo will execute in order: 
+```
+kubectl apply -f jwt-opa.yaml
+```
 
-1. First, Gloo will use its extauth OIDC module to authenticate the incoming request. If authentication was successful, 
-Gloo will add the JWT ID token to the `Authorization` request header and execute the next configuration; otherwise it 
+The above `AuthConfig` defines two configurations that Gloo Edge will execute in order: 
+
+1. First, Gloo Edge will use its extauth OIDC module to authenticate the incoming request. If authentication was successful, 
+Gloo Edge will add the JWT ID token to the `Authorization` request header and execute the next configuration; otherwise it 
 will deny the request. Notice how the configuration references the client secret we created earlier and compare the 
 configuration values with the ones we used to bootstrap Dex.
-1. If authentication was successful, Gloo will check the request against the `allow-jwt` OPA policy to determine whether 
+1. If authentication was successful, Gloo Edge will check the request against the `allow-jwt` OPA policy to determine whether 
 it should be allowed. Notice how the configuration references the `modules` ConfigMap we created earlier and defines a 
 query that allows access only if the `allow` variable in the policy evaluates to `true`.
 
@@ -514,7 +522,7 @@ portForwardPid1=$! # Store the port-forward pid so we can kill the process later
 echo "127.0.0.1 dex.gloo-system.svc.cluster.local" | sudo tee -a /etc/hosts
 ```
 
-1. Port-forward the Gloo Gateway Proxy service so that it is reachable from you machine at `localhost:8080`:
+1. Port-forward the Gloo Edge Proxy service so that it is reachable from you machine at `localhost:8080`:
 ```
 kubectl -n gloo-system port-forward svc/gateway-proxy 8080:80 &
 portForwardPid2=$!
@@ -523,7 +531,7 @@ portForwardPid2=$!
 Now we are ready to test our complete setup! Open you browser and navigate to
 [http://localhost:8080](http://localhost:8080). You should see the following login page:
 
-![Dex login page](./dex-login.png)
+![Dex login page]({{% versioned_link_path fromRoot="/img/dex-login.png" %}})
 
 {{% notice note %}}
 As the demo app doesn't have a sign-out button, use a private browser window (also known as incognito mode) to access the demo app. This will make it easy to change the user we logged in with.

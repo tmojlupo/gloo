@@ -3,6 +3,8 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
@@ -28,12 +30,12 @@ type routeTableClient struct {
 	rc clients.ResourceClient
 }
 
-func NewRouteTableClient(rcFactory factory.ResourceClientFactory) (RouteTableClient, error) {
-	return NewRouteTableClientWithToken(rcFactory, "")
+func NewRouteTableClient(ctx context.Context, rcFactory factory.ResourceClientFactory) (RouteTableClient, error) {
+	return NewRouteTableClientWithToken(ctx, rcFactory, "")
 }
 
-func NewRouteTableClientWithToken(rcFactory factory.ResourceClientFactory, token string) (RouteTableClient, error) {
-	rc, err := rcFactory.NewResourceClient(factory.NewResourceClientParams{
+func NewRouteTableClientWithToken(ctx context.Context, rcFactory factory.ResourceClientFactory, token string) (RouteTableClient, error) {
+	rc, err := rcFactory.NewResourceClient(ctx, factory.NewResourceClientParams{
 		ResourceType: &RouteTable{},
 		Token:        token,
 	})
@@ -104,7 +106,12 @@ func (client *routeTableClient) Watch(namespace string, opts clients.WatchOpts) 
 		for {
 			select {
 			case resourceList := <-resourcesChan:
-				routeTablesChan <- convertToRouteTable(resourceList)
+				select {
+				case routeTablesChan <- convertToRouteTable(resourceList):
+				case <-opts.Ctx.Done():
+					close(routeTablesChan)
+					return
+				}
 			case <-opts.Ctx.Done():
 				close(routeTablesChan)
 				return

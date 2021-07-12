@@ -1,18 +1,17 @@
 package tcp
 
 import (
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
+	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_config_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	envoytcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-	"github.com/gogo/protobuf/proto"
-	"github.com/gogo/protobuf/types"
+	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/hashicorp/go-multierror"
 	"github.com/rotisserie/eris"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/tcp"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/pluginutils"
 	translatorutil "github.com/solo-io/gloo/projects/gloo/pkg/translator"
@@ -33,7 +32,6 @@ func NewPlugin(sslConfigTranslator utils.SslConfigTranslator) *Plugin {
 var (
 	_ plugins.Plugin                    = (*Plugin)(nil)
 	_ plugins.ListenerFilterChainPlugin = (*Plugin)(nil)
-	_ plugins.ListenerPlugin            = (*Plugin)(nil)
 
 	NoDestinationTypeError = func(host *v1.TcpHost) error {
 		return eris.Errorf("no destination type was specified for tcp host %v", host)
@@ -52,43 +50,16 @@ func (p *Plugin) Init(_ plugins.InitParams) error {
 	return nil
 }
 
-func (p *Plugin) ProcessListener(_ plugins.Params, in *v1.Listener, out *envoyapi.Listener) error {
-	// Only focused on Tcp listeners, so return otherwise
-	tcpListener := in.GetTcpListener()
-	if tcpListener == nil {
-		return nil
-	}
-
-	var sniCluster, sniMatch bool
-	for _, host := range tcpListener.GetTcpHosts() {
-		if len(host.GetSslConfig().GetSniDomains()) > 0 {
-			sniMatch = true
-		}
-		if host.GetDestination().GetForwardSniClusterName() != nil {
-			sniCluster = true
-		}
-	}
-
-	// If there is a forward SNI cluster, and no SNI matches, prepend the TLS inspector manually.
-	if sniCluster && !sniMatch {
-		out.ListenerFilters = append(
-			[]*envoylistener.ListenerFilter{{Name: wellknown.TlsInspector}},
-			out.ListenerFilters...,
-		)
-	}
-	return nil
-}
-
-func (p *Plugin) ProcessListenerFilterChain(params plugins.Params, in *v1.Listener) ([]*envoylistener.FilterChain, error) {
+func (p *Plugin) ProcessListenerFilterChain(params plugins.Params, in *v1.Listener) ([]*envoy_config_listener_v3.FilterChain, error) {
 	tcpListener := in.GetTcpListener()
 	if tcpListener == nil {
 		return nil, nil
 	}
-	var filterChains []*envoylistener.FilterChain
+	var filterChains []*envoy_config_listener_v3.FilterChain
 	multiErr := multierror.Error{}
 	for _, tcpHost := range tcpListener.TcpHosts {
 
-		var listenerFilters []*envoylistener.Filter
+		var listenerFilters []*envoy_config_listener_v3.Filter
 		statPrefix := tcpListener.GetStatPrefix()
 		if statPrefix == "" {
 			statPrefix = DefaultTcpStatPrefix
@@ -116,7 +87,7 @@ func (p *Plugin) tcpProxyFilters(
 	host *v1.TcpHost,
 	plugins *v1.TcpListenerOptions,
 	statPrefix string,
-) ([]*envoylistener.Filter, error) {
+) ([]*envoy_config_listener_v3.Filter, error) {
 
 	cfg := &envoytcp.TcpProxy{
 		StatPrefix: statPrefix,
@@ -124,15 +95,16 @@ func (p *Plugin) tcpProxyFilters(
 
 	if plugins != nil {
 		if tcpSettings := plugins.GetTcpProxySettings(); tcpSettings != nil {
-			cfg.MaxConnectAttempts = gogoutils.UInt32GogoToProto(tcpSettings.GetMaxConnectAttempts())
-			cfg.IdleTimeout = gogoutils.DurationStdToProto(tcpSettings.GetIdleTimeout())
+			cfg.MaxConnectAttempts = tcpSettings.GetMaxConnectAttempts()
+			cfg.IdleTimeout = tcpSettings.GetIdleTimeout()
+			cfg.TunnelingConfig = convertToEnvoyTunnelingConfig(tcpSettings.GetTunnelingConfig())
 		}
 	}
 
 	if err := translatorutil.ValidateTcpRouteDestinations(params.Snapshot, host.GetDestination()); err != nil {
 		return nil, err
 	}
-	var filters []*envoylistener.Filter
+	var filters []*envoy_config_listener_v3.Filter
 	switch dest := host.GetDestination().GetDestination().(type) {
 	case *v1.TcpHost_TcpAction_Single:
 		usRef, err := usconversion.DestinationToUpstreamRef(dest.Single)
@@ -140,7 +112,7 @@ func (p *Plugin) tcpProxyFilters(
 			return nil, err
 		}
 		cfg.ClusterSpecifier = &envoytcp.TcpProxy_Cluster{
-			Cluster: translatorutil.UpstreamToClusterName(*usRef),
+			Cluster: translatorutil.UpstreamToClusterName(usRef),
 		}
 	case *v1.TcpHost_TcpAction_Multi:
 		wc, err := p.convertToWeightedCluster(dest.Multi)
@@ -173,7 +145,7 @@ func (p *Plugin) tcpProxyFilters(
 			Cluster: "",
 		}
 		// append empty sni-forward-filter to pass the SNI name to the cluster field above
-		filters = append(filters, &envoylistener.Filter{
+		filters = append(filters, &envoy_config_listener_v3.Filter{
 			Name: SniFilter,
 		})
 	default:
@@ -203,7 +175,7 @@ func (p *Plugin) convertToWeightedCluster(multiDest *v1.MultiDestination) (*envo
 		}
 
 		wc[i] = &envoytcp.TcpProxy_WeightedCluster_ClusterWeight{
-			Name:   translatorutil.UpstreamToClusterName(*usRef),
+			Name:   translatorutil.UpstreamToClusterName(usRef),
 			Weight: weightedDest.GetWeight(),
 		}
 	}
@@ -215,14 +187,14 @@ func (p *Plugin) convertToWeightedCluster(multiDest *v1.MultiDestination) (*envo
 func (p *Plugin) computerTcpFilterChain(
 	snap *v1.ApiSnapshot,
 	listener *v1.Listener,
-	listenerFilters []*envoylistener.Filter,
+	listenerFilters []*envoy_config_listener_v3.Filter,
 	host *v1.TcpHost,
-) (*envoylistener.FilterChain, error) {
+) (*envoy_config_listener_v3.FilterChain, error) {
 	sslConfig := host.GetSslConfig()
 	if sslConfig == nil {
-		return &envoylistener.FilterChain{
+		return &envoy_config_listener_v3.FilterChain{
 			Filters:       listenerFilters,
-			UseProxyProto: gogoutils.BoolGogoToProto(listener.GetUseProxyProto()),
+			UseProxyProto: listener.GetUseProxyProto(),
 		}, nil
 	}
 
@@ -240,25 +212,34 @@ func (p *Plugin) computerTcpFilterChain(
 func (p *Plugin) newSslFilterChain(
 	downstreamConfig *envoyauth.DownstreamTlsContext,
 	sniDomains []string,
-	useProxyProto *types.BoolValue,
-	listenerFilters []*envoylistener.Filter,
-) *envoylistener.FilterChain {
+	useProxyProto *wrappers.BoolValue,
+	listenerFilters []*envoy_config_listener_v3.Filter,
+) *envoy_config_listener_v3.FilterChain {
 
 	// copy listenerFilter so we can modify filter chain later without changing the filters on all of them!
-	listenerFiltersCopy := make([]*envoylistener.Filter, len(listenerFilters))
+	listenerFiltersCopy := make([]*envoy_config_listener_v3.Filter, len(listenerFilters))
 	for i, lf := range listenerFilters {
-		listenerFiltersCopy[i] = proto.Clone(lf).(*envoylistener.Filter)
+		listenerFiltersCopy[i] = proto.Clone(lf).(*envoy_config_listener_v3.Filter)
 	}
 
-	return &envoylistener.FilterChain{
-		FilterChainMatch: &envoylistener.FilterChainMatch{
+	return &envoy_config_listener_v3.FilterChain{
+		FilterChainMatch: &envoy_config_listener_v3.FilterChainMatch{
 			ServerNames: sniDomains,
 		},
 		Filters: listenerFiltersCopy,
-		TransportSocket: &envoycore.TransportSocket{
+		TransportSocket: &envoy_config_core_v3.TransportSocket{
 			Name:       wellknown.TransportSocketTls,
-			ConfigType: &envoycore.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(downstreamConfig)},
+			ConfigType: &envoy_config_core_v3.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(downstreamConfig)},
 		},
-		UseProxyProto: gogoutils.BoolGogoToProto(useProxyProto),
+		UseProxyProto: useProxyProto,
+	}
+}
+
+func convertToEnvoyTunnelingConfig(config *tcp.TcpProxySettings_TunnelingConfig) *envoytcp.TcpProxy_TunnelingConfig {
+	if config == nil {
+		return nil
+	}
+	return &envoytcp.TcpProxy_TunnelingConfig{
+		Hostname: config.GetHostname(),
 	}
 }

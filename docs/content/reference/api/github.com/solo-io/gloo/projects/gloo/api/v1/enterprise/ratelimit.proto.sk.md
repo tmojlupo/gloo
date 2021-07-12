@@ -31,13 +31,15 @@ weight: 5
 ```yaml
 "domain": string
 "descriptors": []ratelimit.api.solo.io.Descriptor
+"setDescriptors": []ratelimit.api.solo.io.SetDescriptor
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `domain` | `string` |  |  |
-| `descriptors` | [[]ratelimit.api.solo.io.Descriptor](../../../../../../../solo-apis/api/rate-limiter/v1alpha1/ratelimit.proto.sk/#descriptor) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `domain` | `string` |  |
+| `descriptors` | [[]ratelimit.api.solo.io.Descriptor](../../../../../../../solo-apis/api/rate-limiter/v1alpha1/ratelimit.proto.sk/#descriptor) |  |
+| `setDescriptors` | [[]ratelimit.api.solo.io.SetDescriptor](../../../../../../../solo-apis/api/rate-limiter/v1alpha1/ratelimit.proto.sk/#setdescriptor) |  |
 
 
 

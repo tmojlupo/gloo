@@ -6,31 +6,51 @@ ROOTDIR := $(shell pwd)
 OUTPUT_DIR ?= $(ROOTDIR)/_output
 
 # If you just put your username, then that refers to your account at hub.docker.com
-ifeq ($(IMAGE_REPO),) # Set quay.io/solo-io as default if IMAGE_REPO is unset
-	IMAGE_REPO := quay.io/solo-io
-endif
+# To use quay images, set the IMAGE_REPO to "quay.io/solo-io" (or leave unset)
+# To use dockerhub images, set the IMAGE_REPO to "soloio"
+# To use gcr images, set the IMAGE_REPO to "gcr.io/$PROJECT_NAME"
+IMAGE_REPO ?= quay.io/solo-io
 
 # Kind of a hack to make sure _output exists
 z := $(shell mkdir -p $(OUTPUT_DIR))
 
 SOURCES := $(shell find . -name "*.go" | grep -v test.go)
-RELEASE := "true"
+RELEASE := "false"
+CREATE_TEST_ASSETS := "false"
+CREATE_ASSETS := "true"
+
+ifneq ($(TEST_ASSET_ID),)
+	CREATE_TEST_ASSETS := "true"
+endif
+
+# If TAGGED_VERSION does not exist, this is not a release in CI
 ifeq ($(TAGGED_VERSION),)
-	TAGGED_VERSION := $(shell git describe --tags --dirty)
-	RELEASE := "false"
-endif
-VERSION ?= $(shell echo $(TAGGED_VERSION) | cut -c 2-)
-
-# WASM version has '-wasm' added after major.minor.patch but before label. Eg 1.2.3-wasm or 1.2.3-wasm-rc1
-WASM_VERSION ?= $(shell echo $(VERSION) | sed 's/\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)/\1-wasm/g')
-
-# For non-versioned releases like local or dev builds, just prepend 'wasm-', eg wasm-dev
-ifeq ($(VERSION), $(WASM_VERSION))
-	WASM_VERSION = wasm-$(VERSION)
+	# If we want to create test assets, set version to be PR-unique rather than commit-unique for charts and images
+	ifeq ($(CREATE_TEST_ASSETS), "true")
+	  VERSION ?= $(shell git describe --tags --abbrev=0 | cut -c 2-)-$(TEST_ASSET_ID)
+	else
+	  VERSION ?= $(shell git describe --tags --dirty | cut -c 2-)
+	endif
+else
+	RELEASE := "true"
+	VERSION ?= $(shell echo $(TAGGED_VERSION) | cut -c 2-)
 endif
 
-ENVOY_GLOO_IMAGE ?= quay.io/solo-io/envoy-gloo:1.16.0-rc4
-ENVOY_GLOO_WASM_IMAGE ?= quay.io/solo-io/envoy-gloo:1.16.0-wasm-rc1
+# only set CREATE_ASSETS to true if RELEASE is true or CREATE_TEST_ASSETS is true
+# workaround since makefile has no Logical OR for conditionals
+ifeq ($(CREATE_TEST_ASSETS), "true")
+  # set quay image expiration if creating test assets and we're pushing to Quay
+  ifeq ($(IMAGE_REPO),"quay.io/solo-io")
+    QUAY_EXPIRATION_LABEL := --label "quay.expires-after=3w"
+  endif
+else
+  ifeq ($(RELEASE), "true")
+  else
+    CREATE_ASSETS := "false"
+  endif
+endif
+
+ENVOY_GLOO_IMAGE ?= quay.io/solo-io/envoy-gloo:1.19.0-rc3
 
 # The full SHA of the currently checked out commit
 CHECKED_OUT_SHA := $(shell git rev-parse HEAD)
@@ -110,19 +130,25 @@ install-go-tools: mod-download
 	mkdir -p $(DEPSGOBIN)
 	chmod +x $(shell go list -f '{{ .Dir }}' -m k8s.io/code-generator)/generate-groups.sh
 	GOBIN=$(DEPSGOBIN) go install github.com/solo-io/protoc-gen-ext
+	GOBIN=$(DEPSGOBIN) go install github.com/sam-heilbron/protoc-gen-openapi
+	GOBIN=$(DEPSGOBIN) go install github.com/envoyproxy/protoc-gen-validate
+	GOBIN=$(DEPSGOBIN) go install github.com/golang/protobuf/protoc-gen-go
 	GOBIN=$(DEPSGOBIN) go install golang.org/x/tools/cmd/goimports
-	GOBIN=$(DEPSGOBIN) go install github.com/gogo/protobuf/protoc-gen-gogo
 	GOBIN=$(DEPSGOBIN) go install github.com/cratonica/2goarray
 	GOBIN=$(DEPSGOBIN) go install github.com/golang/mock/gomock
 	GOBIN=$(DEPSGOBIN) go install github.com/golang/mock/mockgen
-	GOBIN=$(DEPSGOBIN) go install github.com/gogo/protobuf/gogoproto
 	GOBIN=$(DEPSGOBIN) go install github.com/onsi/ginkgo/ginkgo
 
 # command to run regression tests with guaranteed access to $(DEPSGOBIN)/ginkgo
 # requires the environment variable KUBE2E_TESTS to be set to the test type you wish to run
+
+.PHONY: run-tests
+run-tests:
+	$(DEPSGOBIN)/ginkgo -ldflags=$(LDFLAGS) -r -failFast -trace -progress -race -compilers=4 -failOnPending -noColor $(TEST_PKG)
+
 .PHONY: run-ci-regression-tests
-run-ci-regression-tests: install-go-tools
-	$(DEPSGOBIN)/ginkgo -r -failFast -trace -progress -race -compilers=4 -failOnPending -noColor ./test/kube2e/...
+run-ci-regression-tests: TEST_PKG=./test/kube2e/...
+run-ci-regression-tests: install-go-tools run-tests
 
 .PHONY: check-format
 check-format:
@@ -150,7 +176,7 @@ clean:
 #----------------------------------------------------------------------------------
 
 .PHONY: generated-code
-generated-code: $(OUTPUT_DIR)/.generated-code verify-enterprise-protos update-licenses generate-helm-files init
+generated-code: $(OUTPUT_DIR)/.generated-code verify-enterprise-protos generate-helm-files update-licenses init
 
 # Note: currently we generate CLI docs, but don't push them to the consolidated docs repo (gloo-docs). Instead, the
 # Glooctl enterprise docs are pushed from the private repo.
@@ -199,10 +225,10 @@ generate-client-mocks:
 	@$(foreach INFO, $(MOCK_RESOURCE_INFO), \
 		echo Generating mock for $(word 3,$(subst :, , $(INFO)))...; \
 		GOBIN=$(DEPSGOBIN) mockgen -destination=projects/$(word 1,$(subst :, , $(INFO)))/pkg/mocks/mock_$(word 2,$(subst :, , $(INFO)))_client.go \
-     		-package=mocks \
-     		github.com/solo-io/gloo/projects/$(word 1,$(subst :, , $(INFO)))/pkg/api/v1 \
-     		$(word 3,$(subst :, , $(INFO))) \
-     	;)
+		-package=mocks \
+		github.com/solo-io/gloo/projects/$(word 1,$(subst :, , $(INFO)))/pkg/api/v1 \
+		$(word 3,$(subst :, , $(INFO))) \
+	;)
 
 #----------------------------------------------------------------------------------
 # glooctl
@@ -256,7 +282,7 @@ $(GATEWAY_OUTPUT_DIR)/Dockerfile.gateway: $(GATEWAY_DIR)/cmd/Dockerfile
 gateway-docker: $(GATEWAY_OUTPUT_DIR)/gateway-linux-$(GOARCH) $(GATEWAY_OUTPUT_DIR)/Dockerfile.gateway
 	docker build $(GATEWAY_OUTPUT_DIR) -f $(GATEWAY_OUTPUT_DIR)/Dockerfile.gateway \
 		--build-arg GOARCH=$(GOARCH) \
-		-t $(IMAGE_REPO)/gateway:$(VERSION)
+		-t $(IMAGE_REPO)/gateway:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
 # Ingress
@@ -279,7 +305,7 @@ $(INGRESS_OUTPUT_DIR)/Dockerfile.ingress: $(INGRESS_DIR)/cmd/Dockerfile
 ingress-docker: $(INGRESS_OUTPUT_DIR)/ingress-linux-$(GOARCH) $(INGRESS_OUTPUT_DIR)/Dockerfile.ingress
 	docker build $(INGRESS_OUTPUT_DIR) -f $(INGRESS_OUTPUT_DIR)/Dockerfile.ingress \
 		--build-arg GOARCH=$(GOARCH) \
-		-t $(IMAGE_REPO)/ingress:$(VERSION)
+		-t $(IMAGE_REPO)/ingress:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
 # Access Logger
@@ -302,7 +328,7 @@ $(ACCESS_LOG_OUTPUT_DIR)/Dockerfile.access-logger: $(ACCESS_LOG_DIR)/cmd/Dockerf
 access-logger-docker: $(ACCESS_LOG_OUTPUT_DIR)/access-logger-linux-$(GOARCH) $(ACCESS_LOG_OUTPUT_DIR)/Dockerfile.access-logger
 	docker build $(ACCESS_LOG_OUTPUT_DIR) -f $(ACCESS_LOG_OUTPUT_DIR)/Dockerfile.access-logger \
 		--build-arg GOARCH=$(GOARCH) \
-		-t $(IMAGE_REPO)/access-logger:$(VERSION)
+		-t $(IMAGE_REPO)/access-logger:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
 # Discovery
@@ -325,10 +351,10 @@ $(DISCOVERY_OUTPUT_DIR)/Dockerfile.discovery: $(DISCOVERY_DIR)/cmd/Dockerfile
 discovery-docker: $(DISCOVERY_OUTPUT_DIR)/discovery-linux-$(GOARCH) $(DISCOVERY_OUTPUT_DIR)/Dockerfile.discovery
 	docker build $(DISCOVERY_OUTPUT_DIR) -f $(DISCOVERY_OUTPUT_DIR)/Dockerfile.discovery \
 		--build-arg GOARCH=$(GOARCH) \
-		-t $(IMAGE_REPO)/discovery:$(VERSION)
+		-t $(IMAGE_REPO)/discovery:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
-# Gloo
+# Gloo Edge
 #----------------------------------------------------------------------------------
 
 GLOO_DIR=projects/gloo
@@ -342,7 +368,6 @@ $(GLOO_OUTPUT_DIR)/gloo-linux-$(GOARCH): $(GLOO_SOURCES)
 gloo: $(GLOO_OUTPUT_DIR)/gloo-linux-$(GOARCH)
 
 $(GLOO_OUTPUT_DIR)/Dockerfile.gloo: $(GLOO_DIR)/cmd/Dockerfile
-	cp hack/utils/oss_compliance/third_party_licenses.txt $(GLOO_OUTPUT_DIR)/third_party_licenses.txt
 	cp $< $@
 
 .PHONY: gloo-docker
@@ -350,10 +375,10 @@ gloo-docker: $(GLOO_OUTPUT_DIR)/gloo-linux-$(GOARCH) $(GLOO_OUTPUT_DIR)/Dockerfi
 	docker build $(GLOO_OUTPUT_DIR) -f $(GLOO_OUTPUT_DIR)/Dockerfile.gloo \
 		--build-arg GOARCH=$(GOARCH) \
 		--build-arg ENVOY_IMAGE=$(ENVOY_GLOO_IMAGE) \
-		-t $(IMAGE_REPO)/gloo:$(VERSION)
+		-t $(IMAGE_REPO)/gloo:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
-# SDS Server - gRPC server for serving Secret Discovery Service config for Gloo MTLS
+# SDS Server - gRPC server for serving Secret Discovery Service config for Gloo Edge MTLS
 #----------------------------------------------------------------------------------
 
 SDS_DIR=projects/sds
@@ -373,7 +398,7 @@ $(SDS_OUTPUT_DIR)/Dockerfile.sds: $(SDS_DIR)/cmd/Dockerfile
 sds-docker: $(SDS_OUTPUT_DIR)/sds-linux-$(GOARCH) $(SDS_OUTPUT_DIR)/Dockerfile.sds
 	docker build $(SDS_OUTPUT_DIR) -f $(SDS_OUTPUT_DIR)/Dockerfile.sds \
 		--build-arg GOARCH=$(GOARCH) \
-		-t $(IMAGE_REPO)/sds:$(VERSION)
+		-t $(IMAGE_REPO)/sds:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
 # Envoy init (BASE/SIDECAR)
@@ -400,31 +425,7 @@ gloo-envoy-wrapper-docker: $(ENVOYINIT_OUTPUT_DIR)/envoyinit-linux-$(GOARCH) $(E
 	docker build $(ENVOYINIT_OUTPUT_DIR) -f $(ENVOYINIT_OUTPUT_DIR)/Dockerfile.envoyinit \
 		--build-arg GOARCH=$(GOARCH) \
 		--build-arg ENVOY_IMAGE=$(ENVOY_GLOO_IMAGE) \
-		-t $(IMAGE_REPO)/gloo-envoy-wrapper:$(VERSION)
-
-#----------------------------------------------------------------------------------
-# Envoy init (WASM)
-#----------------------------------------------------------------------------------
-
-ENVOY_WASM_DIR=projects/envoyinit/cmd
-ENVOY_WASM_SOURCES=$(call get_sources,$(ENVOY_WASM_DIR))
-ENVOY_WASM_OUTPUT_DIR=$(OUTPUT_DIR)/$(ENVOY_WASM_DIR)
-
-$(ENVOY_WASM_OUTPUT_DIR)/envoywasm-linux-$(GOARCH): $(ENVOY_WASM_SOURCES)
-	$(GO_BUILD_FLAGS) GOOS=linux go build -ldflags=$(LDFLAGS) -gcflags=$(GCFLAGS) -o $@ $(ENVOY_WASM_DIR)/main.go
-
-.PHONY: envoywasm
-envoywasm: $(ENVOY_WASM_OUTPUT_DIR)/envoywasm-linux-$(GOARCH)
-
-$(ENVOY_WASM_OUTPUT_DIR)/Dockerfile.envoywasm: $(ENVOY_WASM_DIR)/Dockerfile.envoywasm
-	cp $< $@
-
-.PHONY: gloo-envoy-wasm-wrapper-docker
-gloo-envoy-wasm-wrapper-docker: $(ENVOY_WASM_OUTPUT_DIR)/envoywasm-linux-$(GOARCH) $(ENVOY_WASM_OUTPUT_DIR)/Dockerfile.envoywasm
-	docker build $(ENVOY_WASM_OUTPUT_DIR) -f $(ENVOY_WASM_OUTPUT_DIR)/Dockerfile.envoywasm \
-		--build-arg GOARCH=$(GOARCH) \
-		--build-arg ENVOY_IMAGE=$(ENVOY_GLOO_WASM_IMAGE) \
-		-t $(IMAGE_REPO)/gloo-envoy-wrapper:$(WASM_VERSION)
+		-t $(IMAGE_REPO)/gloo-envoy-wrapper:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
 # Certgen - Job for creating TLS Secrets in Kubernetes
@@ -447,7 +448,7 @@ $(CERTGEN_OUTPUT_DIR)/Dockerfile.certgen: $(CERTGEN_DIR)/Dockerfile
 certgen-docker: $(CERTGEN_OUTPUT_DIR)/certgen-linux-$(GOARCH) $(CERTGEN_OUTPUT_DIR)/Dockerfile.certgen
 	docker build $(CERTGEN_OUTPUT_DIR) -f $(CERTGEN_OUTPUT_DIR)/Dockerfile.certgen \
 		--build-arg GOARCH=$(GOARCH) \
-		-t $(IMAGE_REPO)/certgen:$(VERSION)
+		-t $(IMAGE_REPO)/certgen:$(VERSION) $(QUAY_EXPIRATION_LABEL)
 
 #----------------------------------------------------------------------------------
 # Build All
@@ -462,6 +463,13 @@ build: gloo glooctl gateway discovery envoyinit certgen ingress
 HELM_SYNC_DIR := $(OUTPUT_DIR)/helm
 HELM_DIR := install/helm/gloo
 HELM_BUCKET := gs://solo-public-helm
+
+# If this is not a release commit, push up helm chart to solo-public-tagged-helm chart repo with
+# name gloo-{{VERSION}}-{{TEST_ASSET_ID}}
+# e.g. gloo-v1.7.0-4300
+ifeq ($(RELEASE), "false")
+	HELM_BUCKET := gs://solo-public-tagged-helm
+endif
 
 # Creates Chart.yaml and values.yaml. See install/helm/README.md for more info.
 .PHONY: generate-helm-files
@@ -488,7 +496,8 @@ push-chart-to-registry: generate-helm-files
 
 .PHONY: fetch-package-and-save-helm
 fetch-package-and-save-helm: generate-helm-files
-ifeq ($(RELEASE),"true")
+ifeq ($(CREATE_ASSETS), "true")
+	@echo "Uploading helm chart to $(HELM_BUCKET) with name gloo-$(VERSION).tgz"
 	until $$(GENERATION=$$(gsutil ls -a $(HELM_BUCKET)/index.yaml | tail -1 | cut -f2 -d '#') && \
 					gsutil cp -v $(HELM_BUCKET)/index.yaml $(HELM_SYNC_DIR)/index.yaml && \
 					helm package --destination $(HELM_SYNC_DIR)/charts $(HELM_DIR) >> /dev/null && \
@@ -501,7 +510,7 @@ ifeq ($(RELEASE),"true")
 endif
 
 #----------------------------------------------------------------------------------
-# Build the Gloo Manifests that are published as release assets
+# Build the Gloo Edge Manifests that are published as release assets
 #----------------------------------------------------------------------------------
 
 .PHONY: render-manifests
@@ -516,8 +525,6 @@ endif
 
 define HELM_VALUES
 namespace:
-  create: true
-crds:
   create: true
 endef
 
@@ -557,16 +564,6 @@ upload-github-release-assets: print-git-info build-cli render-manifests
 	GO111MODULE=on go run ci/upload_github_release_assets.go $(ASSETS_ONLY_RELEASE)
 
 
-.PHONY: publish-docs
-publish-docs: generate-helm-files
-	cd docs && make docker-push-docs \
-		VERSION=$(VERSION) \
-		TAGGED_VERSION=$(TAGGED_VERSION) \
-		GCLOUD_PROJECT_ID=$(GCLOUD_PROJECT_ID) \
-		RELEASE=$(RELEASE) \
-		ON_DEFAULT_BRANCH=$(ON_DEFAULT_BRANCH)
-
-
 #----------------------------------------------------------------------------------
 # Docker
 #----------------------------------------------------------------------------------
@@ -576,28 +573,50 @@ publish-docs: generate-helm-files
 #---------
 
 DOCKER_IMAGES :=
-ifeq ($(RELEASE),"true")
+ifeq ($(CREATE_ASSETS),"true")
 	DOCKER_IMAGES := docker
 endif
 
-.PHONY: docker docker-push
-docker: discovery-docker gateway-docker gloo-docker \
- 		gloo-envoy-wrapper-docker gloo-envoy-wasm-wrapper-docker \
-		certgen-docker sds-docker ingress-docker access-logger-docker
+# check if all images are already built for RETAG_IMAGE_REGISTRY.
+# if so, retag them for the repository specified by IMAGE_REPO.
+# if not, build them with tags for the repository specified by IMAGE_REPO.
+.PHONY: docker
+docker:
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/gateway:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/ingress:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/discovery:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/gloo:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/gloo-envoy-wrapper:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/certgen:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/sds:$(VERSION) >/dev/null 2>&1 && \
+	docker image inspect $(RETAG_IMAGE_REGISTRY)/access-logger:$(VERSION) >/dev/null 2>&1 && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/gateway:$(VERSION) $(IMAGE_REPO)/gateway:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/ingress:$(VERSION) $(IMAGE_REPO)/ingress:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/discovery:$(VERSION) $(IMAGE_REPO)/discovery:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/gloo:$(VERSION) $(IMAGE_REPO)/gloo:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/gloo-envoy-wrapper:$(VERSION) $(IMAGE_REPO)/gloo-envoy-wrapper:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/certgen:$(VERSION) $(IMAGE_REPO)/certgen:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/sds:$(VERSION) $(IMAGE_REPO)/sds:$(VERSION) && \
+	docker tag $(RETAG_IMAGE_REGISTRY)/access-logger:$(VERSION) $(IMAGE_REPO)/access-logger:$(VERSION) || \
+	make docker-build
+
+.PHONY: docker-build docker-push
+docker-build: discovery-docker gateway-docker gloo-docker \
+		gloo-envoy-wrapper-docker certgen-docker sds-docker \
+		ingress-docker access-logger-docker
 
 # Depends on DOCKER_IMAGES, which is set to docker if RELEASE is "true", otherwise empty (making this a no-op).
-# This prevents executing the dependent targets if RELEASE is not true, while still enabling `make docker`
+# This prevents executing the dependent targets if RELEASE is not true, while still enabling `make docker-build`
 # to be used for local testing.
 # docker-push is intended to be run by CI
 .PHONY: docker-push
 docker-push: $(DOCKER_IMAGES)
-ifeq ($(RELEASE),"true")
+ifeq ($(CREATE_ASSETS), "true")
 	docker push $(IMAGE_REPO)/gateway:$(VERSION) && \
 	docker push $(IMAGE_REPO)/ingress:$(VERSION) && \
 	docker push $(IMAGE_REPO)/discovery:$(VERSION) && \
 	docker push $(IMAGE_REPO)/gloo:$(VERSION) && \
 	docker push $(IMAGE_REPO)/gloo-envoy-wrapper:$(VERSION) && \
-	docker push $(IMAGE_REPO)/gloo-envoy-wrapper:$(WASM_VERSION) && \
 	docker push $(IMAGE_REPO)/certgen:$(VERSION) && \
 	docker push $(IMAGE_REPO)/sds:$(VERSION) && \
 	docker push $(IMAGE_REPO)/access-logger:$(VERSION)
@@ -605,7 +624,7 @@ endif
 
 .PHONY: docker-push-extended
 docker-push-extended:
-ifeq ($(RELEASE),"true")
+ifeq ($(CREATE_ASSETS), "true")
 	ci/extended-docker/extended-docker.sh
 endif
 
@@ -618,7 +637,6 @@ push-kind-images: docker
 	kind load docker-image $(IMAGE_REPO)/discovery:$(VERSION) --name $(CLUSTER_NAME)
 	kind load docker-image $(IMAGE_REPO)/gloo:$(VERSION) --name $(CLUSTER_NAME)
 	kind load docker-image $(IMAGE_REPO)/gloo-envoy-wrapper:$(VERSION) --name $(CLUSTER_NAME)
-	kind load docker-image $(IMAGE_REPO)/gloo-envoy-wrapper:$(WASM_VERSION) --name $(CLUSTER_NAME)
 	kind load docker-image $(IMAGE_REPO)/certgen:$(VERSION) --name $(CLUSTER_NAME)
 	kind load docker-image $(IMAGE_REPO)/access-logger:$(VERSION) --name $(CLUSTER_NAME)
 	kind load docker-image $(IMAGE_REPO)/sds:$(VERSION) --name $(CLUSTER_NAME)
@@ -630,15 +648,14 @@ push-kind-images: docker
 #
 # The following targets are used to generate the assets on which the kube2e tests rely upon. The following actions are performed:
 #
-#   1. Generate Gloo value files
-#   2. Package the Gloo Helm chart to the _test directory (also generate an index file)
+#   1. Generate Gloo Edge value files
+#   2. Package the Gloo Edge Helm chart to the _test directory (also generate an index file)
 #
-# The Kube2e tests will use the generated Gloo Chart to install Gloo to the GKE test cluster.
+# The Kube2e tests will use the generated Gloo Edge Chart to install Gloo Edge to the GKE test cluster.
 
 .PHONY: build-test-assets
 build-test-assets: build-test-chart $(OUTPUT_DIR)/glooctl-linux-$(GOARCH) \
- 	$(OUTPUT_DIR)/glooctl-darwin-$(GOARCH)
-
+	$(OUTPUT_DIR)/glooctl-darwin-$(GOARCH)
 .PHONY: build-test-chart
 build-test-chart:
 	mkdir -p $(TEST_ASSET_DIR)
@@ -647,13 +664,53 @@ build-test-chart:
 	helm repo index $(TEST_ASSET_DIR)
 
 #----------------------------------------------------------------------------------
+# Security Scan
+#----------------------------------------------------------------------------------
+# Locally run the Trivy security scan to generate result report as markdown
+
+TRIVY_VERSION ?= $(shell curl --silent "https://api.github.com/repos/aquasecurity/trivy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+SCAN_DIR ?= $(OUTPUT_DIR)/scans
+
+ifeq ($(shell uname), Darwin)
+	machine ?= macOS
+else
+	machine ?= Linux
+endif
+
+# Local run for trivy security checks
+.PHONY: security-checks
+security-checks:
+	mkdir -p $(SCAN_DIR)/$(VERSION)
+
+	curl -Ls "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${machine}-64bit.tar.gz" | tar zx '*trivy' || { echo "Download/extract failed for trivy."; exit 1; };
+
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/gateway_cve_report.docgen $(IMAGE_REPO)/gateway:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/ingress_cve_report.docgen $(IMAGE_REPO)/ingress:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/discovery_cve_report.docgen $(IMAGE_REPO)/discovery:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/gloo_cve_report.docgen $(IMAGE_REPO)/gloo:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/gloo-envoy-wrapper_cve_report.docgen $(IMAGE_REPO)/gloo-envoy-wrapper:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/certgen_cve_report.docgen $(IMAGE_REPO)/certgen:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/sds_cve_report.docgen $(IMAGE_REPO)/sds:$(VERSION) && \
+	./trivy --exit-code 0 --severity HIGH,CRITICAL --no-progress --format template --template "@hack/utils/security_scan_report/markdown.tpl" -o $(SCAN_DIR)/$(VERSION)/access-logger_cve_report.docgen $(IMAGE_REPO)/access-logger:$(VERSION)
+
+SCAN_BUCKET ?= solo-gloo-security-scans/gloo
+
+.PHONY: publish-security-scan
+publish-security-scan:
+ifeq ($(RELEASE),"true")
+	gsutil cp -r $(SCAN_DIR)/$(VERSION)/$(SCAN_FILE) gs://$(SCAN_BUCKET)/$(VERSION)/$(SCAN_FILE)
+endif
+
+#----------------------------------------------------------------------------------
 # Third Party License Management
 #----------------------------------------------------------------------------------
 .PHONY: update-licenses
 update-licenses:
-# TODO(helm3): fix after we completely drop toml parsing in favor of go modules
-#	cd hack/utils/oss_compliance && GO111MODULE=on go run main.go
+	# check for GPL licenses, if there are any, this will fail
+	GO111MODULE=on go run hack/utils/oss_compliance/oss_compliance.go osagen -c "GNU General Public License v2.0,GNU General Public License v3.0,GNU Lesser General Public License v2.1,GNU Lesser General Public License v3.0,GNU Affero General Public License v3.0"
 
+	GO111MODULE=on go run hack/utils/oss_compliance/oss_compliance.go osagen -s "Mozilla Public License 2.0,GNU General Public License v2.0,GNU General Public License v3.0,GNU Lesser General Public License v2.1,GNU Lesser General Public License v3.0,GNU Affero General Public License v3.0"> docs/content/static/content/osa_provided.md
+	GO111MODULE=on go run hack/utils/oss_compliance/oss_compliance.go osagen -i "Mozilla Public License 2.0"> docs/content/static/content/osa_included.md
 
 #----------------------------------------------------------------------------------
 # Printing makefile variables utility

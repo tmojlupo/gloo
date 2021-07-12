@@ -1,3 +1,4 @@
+{{ define "gloo.deploymentSpec" }}
 {{- $image := .Values.gloo.deployment.image }}
 {{- $statsConfig := coalesce .Values.gloo.deployment.stats .Values.global.glooStats -}}
 {{- if .Values.global  }}
@@ -25,14 +26,24 @@ spec:
         {{ $key }}: {{ $value | quote }}
         {{- end }}
         {{- end }}
-      {{- if $statsConfig.enabled }}
       annotations:
+        {{- if $statsConfig.enabled }}
         prometheus.io/path: /metrics
         prometheus.io/port: "9091"
         prometheus.io/scrape: "true"
-      {{- end}}
+        {{- end}}
+        {{- if .Values.global.istioIntegration.disableAutoinjection }}
+        sidecar.istio.io/inject: "false"
+        {{- end }}
+        {{- if .Values.gloo.deployment.extraGlooAnnotations }}
+        {{- range $key, $value := .Values.gloo.deployment.extraGlooAnnotations }}
+        {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
     spec:
+      {{- include "gloo.pullSecret" $image | nindent 6 -}}
       serviceAccountName: gloo
+      {{- include "gloo.podSpecStandardFields" .Values.gloo.deployment | nindent 6 -}}
       volumes:
 {{- if .Values.global.glooMtls.enabled }}
       - name: gloo-mtls-certs
@@ -83,6 +94,10 @@ spec:
         - mountPath: /etc/envoy/ssl
           name: gloo-mtls-certs
           readOnly: true
+{{- if .Values.global.glooMtls.envoySidecarResources }}
+        resources:
+{{ toYaml .Values.global.glooMtls.envoySidecarResources | indent 10}}
+{{- end}}
       - name: sds
         image: {{ template "gloo.image" $sdsImage }}
         imagePullPolicy: {{ $sdsImage.pullPolicy }}
@@ -98,6 +113,10 @@ spec:
         - mountPath: /etc/envoy/ssl
           name: gloo-mtls-certs
           readOnly: true
+{{- if .Values.global.glooMtls.sdsResources }}
+        resources:
+{{ toYaml .Values.global.glooMtls.sdsResources | indent 10}}
+{{- end}}
 {{- end }}
       - image: {{template "gloo.image" $image }}
         imagePullPolicy: {{ $image.pullPolicy }}
@@ -159,10 +178,10 @@ spec:
           - name: DISABLE_USAGE_REPORTING
             value: "true"
         {{- end}}
-        {{- if .Values.global.wasm.enabled }}
-          - name: WASM_ENABLED
-            value: "true"
-        {{- end }}
+        {{- if .Values.gloo.logLevel }}
+          - name: LOG_LEVEL
+            value: {{ .Values.gloo.logLevel }}
+        {{- end}}
 {{- if not .Values.global.glooMtls.enabled }}
         readinessProbe:
           tcpSocket:
@@ -171,7 +190,7 @@ spec:
           periodSeconds: 2
           failureThreshold: 10
 {{- end }}
-      {{- if $image.pullSecret }}
-      imagePullSecrets:
-        - name: {{ $image.pullSecret }}
-      {{- end}}
+{{- end }} {{/* define "gloo.deploymentSpec "*/}}
+
+{{/* Render template with yaml overrides */}}
+{{- include "gloo.util.merge" (list . .Values.gloo.deployment.kubeResourceOverride "gloo.deploymentSpec") -}}

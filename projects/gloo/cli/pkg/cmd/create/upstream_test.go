@@ -1,6 +1,8 @@
 package create_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/argsutils"
@@ -14,12 +16,22 @@ import (
 
 var _ = Describe("Upstream", func() {
 
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+
 	BeforeEach(func() {
+		ctx, cancel = context.WithCancel(context.Background())
 		helpers.UseMemoryClients()
 	})
 
+	AfterEach(func() {
+		cancel()
+	})
+
 	getUpstream := func(name string) *v1.Upstream {
-		up, err := helpers.MustUpstreamClient().Read("gloo-system", name, clients.ReadOpts{})
+		up, err := helpers.MustUpstreamClient(ctx).Read("gloo-system", name, clients.ReadOpts{})
 		Expect(err).NotTo(HaveOccurred())
 		return up
 	}
@@ -169,7 +181,7 @@ var _ = Describe("Upstream", func() {
 		It("can print as kube yaml in dry-run", func() {
 			out, err := testutils.GlooctlOut("create upstream kube --dry-run --name kube-upstream --kube-service kube-service --kube-service-labels foo=bar,gloo=baz")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(`apiVersion: gloo.solo.io/v1
+			Expect(out).To(ContainSubstring(`apiVersion: gloo.solo.io/v1
 kind: Upstream
 metadata:
   creationTimestamp: null
@@ -190,7 +202,7 @@ status: {}
 		It("can print as solo-kit yaml in dry-run", func() {
 			out, err := testutils.GlooctlOut("create upstream kube --dry-run -oyaml --name kube-upstream --kube-service kube-service --kube-service-labels foo=bar,gloo=baz")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(`---
+			Expect(out).To(ContainSubstring(`---
 kube:
   selector:
     foo: bar
@@ -201,7 +213,6 @@ kube:
 metadata:
   name: kube-upstream
   namespace: gloo-system
-status: {}
 `))
 		})
 
@@ -224,7 +235,7 @@ status: {}
 			up := getUpstream(name)
 			consulSpec := up.UpstreamType.(*v1.Upstream_Consul).Consul
 			Expect(consulSpec.ServiceName).To(Equal(consulService))
-			Expect(consulSpec.ServiceTags).To(Equal(tags))
+			Expect(consulSpec.ServiceTags).To(ContainElements(tags))
 		}
 
 		It("should work with consul service name only", func() {

@@ -3,6 +3,8 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
@@ -28,12 +30,12 @@ type endpointClient struct {
 	rc clients.ResourceClient
 }
 
-func NewEndpointClient(rcFactory factory.ResourceClientFactory) (EndpointClient, error) {
-	return NewEndpointClientWithToken(rcFactory, "")
+func NewEndpointClient(ctx context.Context, rcFactory factory.ResourceClientFactory) (EndpointClient, error) {
+	return NewEndpointClientWithToken(ctx, rcFactory, "")
 }
 
-func NewEndpointClientWithToken(rcFactory factory.ResourceClientFactory, token string) (EndpointClient, error) {
-	rc, err := rcFactory.NewResourceClient(factory.NewResourceClientParams{
+func NewEndpointClientWithToken(ctx context.Context, rcFactory factory.ResourceClientFactory, token string) (EndpointClient, error) {
+	rc, err := rcFactory.NewResourceClient(ctx, factory.NewResourceClientParams{
 		ResourceType: &Endpoint{},
 		Token:        token,
 	})
@@ -104,7 +106,12 @@ func (client *endpointClient) Watch(namespace string, opts clients.WatchOpts) (<
 		for {
 			select {
 			case resourceList := <-resourcesChan:
-				endpointsChan <- convertToEndpoint(resourceList)
+				select {
+				case endpointsChan <- convertToEndpoint(resourceList):
+				case <-opts.Ctx.Done():
+					close(endpointsChan)
+					return
+				}
 			case <-opts.Ctx.Done():
 				close(endpointsChan)
 				return

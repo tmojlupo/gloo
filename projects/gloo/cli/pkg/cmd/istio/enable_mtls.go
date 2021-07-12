@@ -28,9 +28,6 @@ func EnableMTLS(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cob
 		Use:   "enable-mtls",
 		Short: "Enables Istio mTLS for a given upstream",
 		Long:  "Enables Istio mTLS for a given upstream, by adding an sslConfig which lets envoy know to get the certs via SDS",
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return nil
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := istioEnableMTLS(args, opts)
 			if err != nil {
@@ -47,7 +44,7 @@ func EnableMTLS(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cob
 }
 
 func istioEnableMTLS(args []string, opts *options.Options) error {
-	upClient := helpers.MustNamespacedUpstreamClient(opts.Metadata.GetNamespace())
+	upClient := helpers.MustNamespacedUpstreamClient(opts.Top.Ctx, opts.Metadata.GetNamespace())
 	up, err := upClient.Read(opts.Metadata.Namespace, opts.Istio.Upstream, clients.ReadOpts{})
 	if err != nil {
 		return errors.Wrapf(err, "Error reading upstream")

@@ -9,6 +9,10 @@ import (
 	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/reporters"
+	. "github.com/onsi/gomega"
+	errors "github.com/rotisserie/eris"
 	"github.com/solo-io/gloo/pkg/cliutil"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/check"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/options"
@@ -16,18 +20,16 @@ import (
 	"github.com/solo-io/go-utils/log"
 	"github.com/solo-io/go-utils/testutils"
 	"github.com/solo-io/go-utils/testutils/exec"
-	"github.com/solo-io/go-utils/testutils/helper"
+	"github.com/solo-io/k8s-utils/testutils/helper"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	errors "github.com/rotisserie/eris"
 	skhelpers "github.com/solo-io/solo-kit/test/helpers"
 )
 
 var (
 	testHelper       *helper.SoloTestHelper
 	installNamespace = "gloo-system"
+	ctx              context.Context
+	cancel           context.CancelFunc
 )
 
 func TestGlooMtls(t *testing.T) {
@@ -40,10 +42,12 @@ func TestGlooMtls(t *testing.T) {
 	skhelpers.SetupLog()
 	_ = os.Remove(cliutil.GetLogsPath())
 	skhelpers.RegisterPreFailHandler(helpers.KubeDumpOnFail(GinkgoWriter, installNamespace))
-	RunSpecs(t, "Gloo mTLS Suite")
+	junitReporter := reporters.NewJUnitReporter("junit.xml")
+	RunSpecsWithDefaultAndCustomReporters(t, "Gloo mTLS Suite", []Reporter{junitReporter})
 }
 
 var _ = BeforeSuite(func() {
+	ctx, cancel = context.WithCancel(context.Background())
 	cwd, err := os.Getwd()
 	Expect(err).NotTo(HaveOccurred())
 
@@ -61,7 +65,7 @@ var _ = BeforeSuite(func() {
 	values, cleanup := getHelmOverrides()
 	defer cleanup()
 
-	err = testHelper.InstallGloo(helper.GATEWAY, 5*time.Minute, helper.ExtraArgs("--values", values, "-v"))
+	err = testHelper.InstallGloo(ctx, helper.GATEWAY, 5*time.Minute, helper.ExtraArgs("--values", values, "-v"))
 	Expect(err).NotTo(HaveOccurred())
 	Eventually(func() error {
 		opts := &options.Options{
@@ -72,14 +76,11 @@ var _ = BeforeSuite(func() {
 				Namespace: testHelper.InstallNamespace,
 			},
 		}
-		ok, err := check.CheckResources(opts)
+		err := check.CheckResources(opts)
 		if err != nil {
-			return errors.Wrapf(err, "unable to run glooctl check")
+			return errors.Wrapf(err, "glooctl check detected a problem with the installation")
 		}
-		if ok {
-			return nil
-		}
-		return errors.New("glooctl check detected a problem with the installation")
+		return nil
 	}, 2*time.Minute, "5s").Should(BeNil())
 
 	// Print out the versions of CLI and server components
@@ -103,6 +104,7 @@ var _ = AfterSuite(func() {
 		EventuallyWithOffset(1, func() error {
 			return testutils.Kubectl("get", "namespace", testHelper.InstallNamespace)
 		}, "60s", "1s").Should(HaveOccurred())
+		cancel()
 	}
 })
 

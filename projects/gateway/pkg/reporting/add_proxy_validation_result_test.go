@@ -25,7 +25,7 @@ var _ = Describe("AddProxyValidationResult", func() {
 		ignored = "ignored"
 	)
 	BeforeEach(func() {
-		snap = samples.SimpleGatewaySnapshot(core.ResourceRef{ignored, ignored}, ignored)
+		snap = samples.SimpleGatewaySnapshot(&core.ResourceRef{Name: ignored, Namespace: ignored}, ignored)
 		tx := translator.NewTranslator([]translator.ListenerFactory{&translator.HttpTranslator{}, &translator.TcpTranslator{}}, translator.Opts{})
 		proxy, reports = tx.Translate(context.TODO(), ignored, ignored, snap, snap.Gateways)
 	})
@@ -45,7 +45,9 @@ var _ = Describe("AddProxyValidationResult", func() {
 				for _, route := range vHost.GetRouteReports() {
 					validation.AppendRouteError(route,
 						validationapi.RouteReport_Error_InvalidMatcherError,
-						"bad route")
+						"bad route",
+						"route-0",
+					)
 				}
 			}
 		}
@@ -63,7 +65,7 @@ var _ = Describe("AddProxyValidationResult", func() {
 			Expect(reports[vs].Errors).To(HaveOccurred())
 			Expect(reports[vs].Errors.Error()).To(ContainSubstring(`2 errors occurred:
 	* VirtualHost Error: DomainsNotUniqueError. Reason: bad vhost
-	* Route Error: InvalidMatcherError. Reason: bad route`))
+	* Route Error: InvalidMatcherError. Reason: bad route. Route Name: route-0`))
 		}
 	})
 })

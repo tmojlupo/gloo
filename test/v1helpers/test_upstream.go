@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gogo/protobuf/types"
+	"github.com/golang/protobuf/ptypes/wrappers"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
@@ -47,6 +47,11 @@ func NewTestHttpUpstreamWithReply(ctx context.Context, addr, reply string) *Test
 	return newTestUpstream(addr, []uint32{backendPort}, responses)
 }
 
+func NewTestHttpUpstreamWithReplyAndHealthReply(ctx context.Context, addr, reply, healthReply string) *TestUpstream {
+	backendPort, responses := runTestServerWithHealthReply(ctx, reply, healthReply, false)
+	return newTestUpstream(addr, []uint32{backendPort}, responses)
+}
+
 func NewTestHttpsUpstreamWithReply(ctx context.Context, addr, reply string) *TestUpstream {
 	backendPort, responses := runTestServer(ctx, reply, true)
 	return newTestUpstream(addr, []uint32{backendPort}, responses)
@@ -73,7 +78,7 @@ func NewTestGRPCUpstream(ctx context.Context, addr string, replicas int) *TestUp
 	}
 
 	us := newTestUpstream(addr, ports, received)
-	us.Upstream.UseHttp2 = &types.BoolValue{Value: true}
+	us.Upstream.UseHttp2 = &wrappers.BoolValue{Value: true}
 	us.GrpcServers = grpcServices
 	return us
 }
@@ -105,7 +110,7 @@ func newTestUpstream(addr string, ports []uint32, responses <-chan *ReceivedRequ
 		}
 	}
 	u := &gloov1.Upstream{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      fmt.Sprintf("local-%d", id),
 			Namespace: "default",
 		},
@@ -124,6 +129,10 @@ func newTestUpstream(addr string, ports []uint32, responses <-chan *ReceivedRequ
 }
 
 func runTestServer(ctx context.Context, reply string, serveTls bool) (uint32, <-chan *ReceivedRequest) {
+	return runTestServerWithHealthReply(ctx, reply, "OK", serveTls)
+}
+
+func runTestServerWithHealthReply(ctx context.Context, reply, healthReply string, serveTls bool) (uint32, <-chan *ReceivedRequest) {
 	bodyChan := make(chan *ReceivedRequest, 100)
 	handlerFunc := func(rw http.ResponseWriter, r *http.Request) {
 		var rr ReceivedRequest
@@ -164,7 +173,7 @@ func runTestServer(ctx context.Context, reply string, serveTls bool) (uint32, <-
 	mux := http.NewServeMux()
 	mux.Handle("/", http.HandlerFunc(handlerFunc))
 	mux.Handle("/health", http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		rw.Write([]byte("OK"))
+		rw.Write([]byte(healthReply))
 	}))
 
 	go func() {
@@ -200,6 +209,10 @@ func runTestServer(ctx context.Context, reply string, serveTls bool) (uint32, <-
 }
 
 func TestUpstreamReachable(envoyPort uint32, tu *TestUpstream, rootca *string) {
+	TestUpstreamReachableWithOffset(2, envoyPort, tu, rootca)
+}
+
+func TestUpstreamReachableWithOffset(offset int, envoyPort uint32, tu *TestUpstream, rootca *string) {
 	body := []byte("solo.io test")
 
 	ExpectHttpOK(body, rootca, envoyPort, "")
@@ -224,6 +237,18 @@ func TestUpstreamReachable(envoyPort uint32, tu *TestUpstream, rootca *string) {
 }
 
 func ExpectHttpOK(body []byte, rootca *string, envoyPort uint32, response string) {
+	ExpectHttpOKWithOffset(1, body, rootca, envoyPort, response)
+}
+
+func ExpectHttpOKWithOffset(offset int, body []byte, rootca *string, envoyPort uint32, response string) {
+	ExpectHttpStatusWithOffset(offset+1, body, rootca, envoyPort, response, http.StatusOK)
+}
+
+func ExpectHttpUnavailableWithOffset(offset int, body []byte, rootca *string, envoyPort uint32, response string) {
+	ExpectHttpStatusWithOffset(offset+1, body, rootca, envoyPort, response, http.StatusServiceUnavailable)
+}
+
+func ExpectHttpStatusWithOffset(offset int, body []byte, rootca *string, envoyPort uint32, response string, status int) {
 
 	var res *http.Response
 	EventuallyWithOffset(2, func() error {
@@ -255,8 +280,8 @@ func ExpectHttpOK(body []byte, rootca *string, envoyPort uint32, response string
 		if err != nil {
 			return err
 		}
-		if res.StatusCode != http.StatusOK {
-			return fmt.Errorf("%v is not OK", res.StatusCode)
+		if res.StatusCode != status {
+			return fmt.Errorf("received status code (%v) is not expected status code (%v)", res.StatusCode, status)
 		}
 
 		return nil
@@ -264,9 +289,9 @@ func ExpectHttpOK(body []byte, rootca *string, envoyPort uint32, response string
 
 	if response != "" {
 		body, err := ioutil.ReadAll(res.Body)
-		ExpectWithOffset(2, err).NotTo(HaveOccurred())
+		ExpectWithOffset(offset, err).NotTo(HaveOccurred())
 		defer res.Body.Close()
-		ExpectWithOffset(2, string(body)).To(Equal(response))
+		ExpectWithOffset(offset, string(body)).To(Equal(response))
 	}
 }
 

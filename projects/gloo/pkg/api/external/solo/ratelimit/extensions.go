@@ -1,7 +1,7 @@
 package v1alpha1
 
 import (
-	"log"
+	"context"
 
 	"github.com/rotisserie/eris"
 	skratelimit "github.com/solo-io/gloo/projects/gloo/api/external/solo/ratelimit"
@@ -12,12 +12,6 @@ import (
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
 	"github.com/solo-io/solo-kit/pkg/api/v2/reporter"
 )
-
-func init() {
-	if err := crd.AddCrd(RateLimitConfigCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	RateLimitConfigCrd = crd.NewCrd(
@@ -48,8 +42,8 @@ type kubeReporterClient struct {
 	skv2Client rlv1alpha1.RateLimitConfigClient
 }
 
-func NewRateLimitClients(rcFactory factory.ResourceClientFactory) (RateLimitConfigClient, reporter.ReporterResourceClient, error) {
-	rlClient, err := NewRateLimitConfigClient(rcFactory)
+func NewRateLimitClients(ctx context.Context, rcFactory factory.ResourceClientFactory) (RateLimitConfigClient, reporter.ReporterResourceClient, error) {
+	rlClient, err := NewRateLimitConfigClient(ctx, rcFactory)
 	if err != nil {
 		return nil, nil, err
 	}

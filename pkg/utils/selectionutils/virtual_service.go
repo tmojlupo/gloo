@@ -52,7 +52,7 @@ func (s *virtualServiceSelector) SelectOrBuildVirtualService(ctx context.Context
 	}
 
 	// Look for an existing virtual service with * domain
-	namespaces, err := s.namespaceLister.List()
+	namespaces, err := s.namespaceLister.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (s *virtualServiceSelector) SelectOrBuildVirtualService(ctx context.Context
 
 func (s *virtualServiceSelector) build(ctx context.Context, ref *core.ResourceRef) (*gatewayv1.VirtualService, error) {
 	virtualService := &gatewayv1.VirtualService{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Namespace: ref.GetNamespace(),
 			Name:      ref.GetName(),
 		},

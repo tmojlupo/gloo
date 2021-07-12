@@ -6,33 +6,27 @@ import (
 	"sync"
 	"time"
 
-	ratelimit "github.com/solo-io/gloo/projects/gloo/pkg/api/external/solo/ratelimit"
-
-	enterprise_gloo_solo_io "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
-	mock_consul "github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul/mocks"
-	"google.golang.org/grpc"
-
-	"github.com/solo-io/gloo/test/samples"
-
-	validationgrpc "github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
-	"github.com/solo-io/gloo/projects/gloo/pkg/utils/validation"
-
+	"github.com/golang/mock/gomock"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	ratelimit "github.com/solo-io/gloo/projects/gloo/pkg/api/external/solo/ratelimit"
+	validationgrpc "github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	enterprise_gloo_solo_io "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/bootstrap"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
-	. "github.com/solo-io/gloo/projects/gloo/pkg/validation"
-
-	"github.com/golang/mock/gomock"
-
+	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/registry"
+	"github.com/solo-io/gloo/projects/gloo/pkg/syncer/sanitizer"
+	. "github.com/solo-io/gloo/projects/gloo/pkg/translator"
+	mock_consul "github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul/mocks"
 	sslutils "github.com/solo-io/gloo/projects/gloo/pkg/utils"
+	"github.com/solo-io/gloo/projects/gloo/pkg/utils/validation"
+	. "github.com/solo-io/gloo/projects/gloo/pkg/validation"
+	"github.com/solo-io/gloo/test/samples"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/memory"
-
-	. "github.com/solo-io/gloo/projects/gloo/pkg/translator"
-
-	"github.com/solo-io/gloo/projects/gloo/pkg/bootstrap"
-	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/registry"
+	"github.com/solo-io/solo-kit/test/matchers"
+	"google.golang.org/grpc"
 )
 
 var _ = Describe("Validation Server", func() {
@@ -42,6 +36,7 @@ var _ = Describe("Validation Server", func() {
 		translator        Translator
 		params            plugins.Params
 		registeredPlugins []plugins.Plugin
+		xdsSanitizer      sanitizer.XdsSanitizers
 	)
 
 	BeforeEach(func() {
@@ -66,6 +61,12 @@ var _ = Describe("Validation Server", func() {
 			Ctx:      context.Background(),
 			Snapshot: samples.SimpleGlooSnapshot(),
 		}
+
+		routeReplacingSanitizer, _ := sanitizer.NewRouteReplacingSanitizer(settings.GetGloo().GetInvalidConfigPolicy())
+		xdsSanitizer = sanitizer.XdsSanitizers{
+			sanitizer.NewUpstreamRemovingSanitizer(),
+			routeReplacingSanitizer,
+		}
 	})
 
 	JustBeforeEach(func() {
@@ -78,11 +79,35 @@ var _ = Describe("Validation Server", func() {
 	Context("proxy validation", func() {
 		It("validates the requested proxy", func() {
 			proxy := params.Snapshot.Proxies[0]
-			s := NewValidator(context.TODO(), translator)
+			s := NewValidator(context.TODO(), translator, xdsSanitizer)
 			_ = s.Sync(context.TODO(), params.Snapshot)
 			rpt, err := s.ValidateProxy(context.TODO(), &validationgrpc.ProxyValidationServiceRequest{Proxy: proxy})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(rpt).To(Equal(&validationgrpc.ProxyValidationServiceResponse{ProxyReport: validation.MakeReport(proxy)}))
+			Expect(rpt).To(matchers.MatchProto(&validationgrpc.ProxyValidationServiceResponse{ProxyReport: validation.MakeReport(proxy)}))
+		})
+		It("updates the proxy report when sanitization causes a change", func() {
+			proxy := params.Snapshot.Proxies[0]
+			// Update proxy so that it includes an invalid definition - the nil destination type should
+			// raise an error since the destination type is not specified
+			errorRouteAction := &v1.Route_RouteAction{
+				RouteAction: &v1.RouteAction{
+					Destination: &v1.RouteAction_Single{
+						Single: &v1.Destination{
+							DestinationType: nil,
+						},
+					},
+				},
+			}
+			proxy.GetListeners()[0].GetHttpListener().GetVirtualHosts()[0].GetRoutes()[0].Action = errorRouteAction
+
+			s := NewValidator(context.TODO(), translator, xdsSanitizer)
+			_ = s.Sync(context.TODO(), params.Snapshot)
+			rpt, err := s.ValidateProxy(context.TODO(), &validationgrpc.ProxyValidationServiceRequest{Proxy: proxy})
+			routeError := rpt.GetProxyReport().GetListenerReports()[0].GetHttpListenerReport().GetVirtualHostReports()[0].GetRouteReports()[0].GetErrors()
+			routeWarning := rpt.GetProxyReport().GetListenerReports()[0].GetHttpListenerReport().GetVirtualHostReports()[0].GetRouteReports()[0].GetWarnings()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(routeError).To(BeEmpty())
+			Expect(routeWarning[0].Reason).To(Equal("no destination type specified"))
 		})
 	})
 
@@ -98,7 +123,7 @@ var _ = Describe("Validation Server", func() {
 
 			srv = grpc.NewServer()
 
-			v = NewValidator(context.TODO(), nil)
+			v = NewValidator(context.TODO(), nil, xdsSanitizer)
 
 			server := NewValidationServer()
 			server.SetValidator(v)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/solo-io/gloo/projects/gateway/pkg/reconciler"
+	"github.com/solo-io/solo-kit/pkg/utils/prototime"
 
 	"go.uber.org/zap"
 
@@ -16,7 +17,6 @@ import (
 	"github.com/solo-io/gloo/projects/gateway/pkg/translator"
 	gatewayvalidation "github.com/solo-io/gloo/projects/gateway/pkg/validation"
 
-	"github.com/gogo/protobuf/types"
 	"github.com/solo-io/gloo/pkg/utils"
 	v1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gateway/pkg/defaults"
@@ -72,15 +72,22 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 		return err
 	}
 
+	virtualHostOptionFactory, err := bootstrap.ConfigFactoryForSettings(params, v1.VirtualHostOptionCrd)
+	if err != nil {
+		return err
+	}
+
+	routeOptionFactory, err := bootstrap.ConfigFactoryForSettings(params, v1.RouteOptionCrd)
+	if err != nil {
+		return err
+	}
+
 	gatewayFactory, err := bootstrap.ConfigFactoryForSettings(params, v1.GatewayCrd)
 	if err != nil {
 		return err
 	}
 
-	refreshRate, err := types.DurationFromProto(settings.RefreshRate)
-	if err != nil {
-		return err
-	}
+	refreshRate := prototime.DurationFromProto(settings.RefreshRate)
 
 	writeNamespace := settings.DiscoveryNamespace
 	if writeNamespace == "" {
@@ -111,6 +118,7 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 			IgnoreProxyValidationFailure: validationCfg.GetIgnoreGlooValidationFailure(),
 			AlwaysAcceptResources:        alwaysAcceptResources,
 			AllowWarnings:                allowWarnings,
+			WarnOnRouteShortCircuiting:   validationCfg.GetWarnRouteShortCircuiting().GetValue(),
 		}
 		if validation.ProxyValidationServerAddress == "" {
 			validation.ProxyValidationServerAddress = defaults.GlooProxyValidationServerAddr
@@ -132,13 +140,15 @@ func Setup(ctx context.Context, kubeCache kube.SharedCache, inMemoryCache memory
 	}
 
 	opts := translator.Opts{
-		GlooNamespace:   settings.Metadata.Namespace,
-		WriteNamespace:  writeNamespace,
-		WatchNamespaces: watchNamespaces,
-		Gateways:        gatewayFactory,
-		VirtualServices: virtualServiceFactory,
-		RouteTables:     routeTableFactory,
-		Proxies:         proxyFactory,
+		GlooNamespace:      settings.Metadata.Namespace,
+		WriteNamespace:     writeNamespace,
+		WatchNamespaces:    watchNamespaces,
+		Gateways:           gatewayFactory,
+		VirtualServices:    virtualServiceFactory,
+		RouteTables:        routeTableFactory,
+		Proxies:            proxyFactory,
+		VirtualHostOptions: virtualHostOptionFactory,
+		RouteOptions:       routeOptionFactory,
 		WatchOpts: clients.WatchOpts{
 			Ctx:         ctx,
 			RefreshRate: refreshRate,
@@ -157,7 +167,7 @@ func RunGateway(opts translator.Opts) error {
 	opts.WatchOpts.Ctx = contextutils.WithLogger(opts.WatchOpts.Ctx, "gateway")
 	ctx := opts.WatchOpts.Ctx
 
-	gatewayClient, err := v1.NewGatewayClient(opts.Gateways)
+	gatewayClient, err := v1.NewGatewayClient(ctx, opts.Gateways)
 	if err != nil {
 		return err
 	}
@@ -165,7 +175,7 @@ func RunGateway(opts translator.Opts) error {
 		return err
 	}
 
-	virtualServiceClient, err := v1.NewVirtualServiceClient(opts.VirtualServices)
+	virtualServiceClient, err := v1.NewVirtualServiceClient(ctx, opts.VirtualServices)
 	if err != nil {
 		return err
 	}
@@ -173,7 +183,7 @@ func RunGateway(opts translator.Opts) error {
 		return err
 	}
 
-	routeTableClient, err := v1.NewRouteTableClient(opts.RouteTables)
+	routeTableClient, err := v1.NewRouteTableClient(ctx, opts.RouteTables)
 	if err != nil {
 		return err
 	}
@@ -181,7 +191,7 @@ func RunGateway(opts translator.Opts) error {
 		return err
 	}
 
-	proxyClient, err := gloov1.NewProxyClient(opts.Proxies)
+	proxyClient, err := gloov1.NewProxyClient(ctx, opts.Proxies)
 	if err != nil {
 		return err
 	}
@@ -189,7 +199,29 @@ func RunGateway(opts translator.Opts) error {
 		return err
 	}
 
-	rpt := reporter.NewReporter("gateway", gatewayClient.BaseClient(), virtualServiceClient.BaseClient(), routeTableClient.BaseClient())
+	virtualHostOptionClient, err := v1.NewVirtualHostOptionClient(ctx, opts.VirtualHostOptions)
+	if err != nil {
+		return err
+	}
+	if err := virtualHostOptionClient.Register(); err != nil {
+		return err
+	}
+
+	routeOptionClient, err := v1.NewRouteOptionClient(ctx, opts.RouteOptions)
+	if err != nil {
+		return err
+	}
+	if err := routeOptionClient.Register(); err != nil {
+		return err
+	}
+
+	rpt := reporter.NewReporter("gateway",
+		gatewayClient.BaseClient(),
+		virtualServiceClient.BaseClient(),
+		routeTableClient.BaseClient(),
+		virtualHostOptionClient.BaseClient(),
+		routeOptionClient.BaseClient(),
+	)
 	writeErrs := make(chan error)
 
 	txlator := translator.NewDefaultTranslator(opts)
@@ -223,7 +255,7 @@ func RunGateway(opts translator.Opts) error {
 		allowWarnings = opts.Validation.AllowWarnings
 	}
 
-	emitter := v1.NewApiEmitterWithEmit(virtualServiceClient, routeTableClient, gatewayClient, notifications)
+	emitter := v1.NewApiEmitterWithEmit(virtualServiceClient, routeTableClient, gatewayClient, virtualHostOptionClient, routeOptionClient, notifications)
 
 	validationSyncer := gatewayvalidation.NewValidator(gatewayvalidation.NewValidatorConfig(
 		txlator,

@@ -1,6 +1,7 @@
 package create_test
 
 import (
+	"context"
 	"sort"
 
 	. "github.com/onsi/ginkgo"
@@ -18,10 +19,13 @@ var _ = Describe("UpstreamGroup", func() {
 
 	var (
 		expectedDest []*v1.WeightedDestination
+		ctx          context.Context
+		cancel       context.CancelFunc
 	)
 
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 		us := &v1.Upstream{
 			UpstreamType: &v1.Upstream_Aws{
 				Aws: &aws.UpstreamSpec{
@@ -32,15 +36,15 @@ var _ = Describe("UpstreamGroup", func() {
 					},
 				},
 			},
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Namespace: "gloo-system",
 				Name:      "us1",
 			},
 		}
-		_, err := helpers.MustUpstreamClient().Write(us, clients.WriteOpts{})
+		_, err := helpers.MustUpstreamClient(ctx).Write(us, clients.WriteOpts{})
 		Expect(err).NotTo(HaveOccurred())
 		us.Metadata.Name = "us2"
-		_, err = helpers.MustUpstreamClient().Write(us, clients.WriteOpts{})
+		_, err = helpers.MustUpstreamClient(ctx).Write(us, clients.WriteOpts{})
 		Expect(err).NotTo(HaveOccurred())
 
 		expectedDest = []*v1.WeightedDestination{
@@ -70,10 +74,12 @@ var _ = Describe("UpstreamGroup", func() {
 	})
 
 	getUpstreamGroup := func(name string) *v1.UpstreamGroup {
-		ug, err := helpers.MustUpstreamGroupClient().Read("gloo-system", name, clients.ReadOpts{})
+		ug, err := helpers.MustUpstreamGroupClient(ctx).Read("gloo-system", name, clients.ReadOpts{})
 		Expect(err).NotTo(HaveOccurred())
 		return ug
 	}
+
+	AfterEach(func() { cancel() })
 
 	Context("Empty args and flags", func() {
 		It("should give clear error message", func() {
@@ -117,7 +123,7 @@ var _ = Describe("UpstreamGroup", func() {
 		It("can print as kube yaml in dry-run", func() {
 			out, err := testutils.GlooctlOut("create upstreamgroup test --namespace gloo-system --weighted-upstreams gloo-system.us1=2 --dry-run")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(out).To(Equal(`apiVersion: gloo.solo.io/v1
+			Expect(out).To(ContainSubstring(`apiVersion: gloo.solo.io/v1
 kind: UpstreamGroup
 metadata:
   creationTimestamp: null

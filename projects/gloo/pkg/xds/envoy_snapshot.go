@@ -20,13 +20,14 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/solo-io/solo-kit/pkg/api/v1/control-plane/cache"
+	"github.com/solo-io/solo-kit/pkg/api/v1/control-plane/resource"
 )
 
 // Snapshot is an internally consistent snapshot of xDS resources.
 // Consistently is important for the convergence as different resource types
 // from the snapshot may be delivered to the proxy in arbitrary order.
 type EnvoySnapshot struct {
-	// Endpoints are items in the EDS response payload.
+	// Endpoints are items in the EDS V3 response payload.
 	Endpoints cache.Resources
 
 	// Clusters are items in the CDS response payload.
@@ -42,11 +43,14 @@ type EnvoySnapshot struct {
 var _ cache.Snapshot = &EnvoySnapshot{}
 
 // NewSnapshot creates a snapshot from response types and a version.
-func NewSnapshot(version string,
+func NewSnapshot(
+	version string,
 	endpoints []cache.Resource,
 	clusters []cache.Resource,
 	routes []cache.Resource,
-	listeners []cache.Resource) *EnvoySnapshot {
+	listeners []cache.Resource,
+) *EnvoySnapshot {
+	// TODO: Copy resources
 	return &EnvoySnapshot{
 		Endpoints: cache.NewResources(version, endpoints),
 		Clusters:  cache.NewResources(version, clusters),
@@ -55,15 +59,28 @@ func NewSnapshot(version string,
 	}
 }
 
-func NewSnapshotFromResources(endpoints cache.Resources,
+func NewSnapshotFromResources(
+	endpoints cache.Resources,
 	clusters cache.Resources,
 	routes cache.Resources,
-	listeners cache.Resources) cache.Snapshot {
+	listeners cache.Resources,
+) cache.Snapshot {
+	// TODO: Copy resources and downgrade, maybe maintain hash to not do it too many times (https://github.com/solo-io/gloo/issues/4421)
 	return &EnvoySnapshot{
 		Endpoints: endpoints,
 		Clusters:  clusters,
 		Routes:    routes,
 		Listeners: listeners,
+	}
+}
+
+func NewEndpointsSnapshotFromResources(
+	endpoints cache.Resources,
+	clusters cache.Resources,
+) cache.Snapshot {
+	return &EnvoySnapshot{
+		Endpoints: endpoints,
+		Clusters:  clusters,
 	}
 }
 
@@ -79,7 +96,7 @@ func (s *EnvoySnapshot) Consistent() error {
 	if s == nil {
 		return errors.New("nil snapshot")
 	}
-	endpoints := GetResourceReferences(s.Clusters.Items)
+	endpoints := resource.GetResourceReferences(s.Clusters.Items)
 	if len(endpoints) != len(s.Endpoints.Items) {
 		return fmt.Errorf("mismatched endpoint reference and resource lengths: length of %v does not equal length of %v", endpoints, s.Endpoints.Items)
 	}
@@ -87,7 +104,7 @@ func (s *EnvoySnapshot) Consistent() error {
 		return err
 	}
 
-	routes := GetResourceReferences(s.Listeners.Items)
+	routes := resource.GetResourceReferences(s.Listeners.Items)
 	if len(routes) != len(s.Routes.Items) {
 		return fmt.Errorf("mismatched route reference and resource lengths: length of %v does not equal length of %v", routes, s.Routes.Items)
 	}
@@ -100,13 +117,13 @@ func (s *EnvoySnapshot) GetResources(typ string) cache.Resources {
 		return cache.Resources{}
 	}
 	switch typ {
-	case EndpointType:
+	case resource.EndpointTypeV3:
 		return s.Endpoints
-	case ClusterType:
+	case resource.ClusterTypeV3:
 		return s.Clusters
-	case RouteType:
+	case resource.RouteTypeV3:
 		return s.Routes
-	case ListenerType:
+	case resource.ListenerTypeV3:
 		return s.Listeners
 	}
 	return cache.Resources{}
@@ -142,10 +159,61 @@ func cloneItems(items map[string]cache.Resource) map[string]cache.Resource {
 	clonedItems := make(map[string]cache.Resource, len(items))
 	for k, v := range items {
 		resProto := v.ResourceProto()
-		// NOTE(marco): we have to use `github.com/golang/protobuf/proto.Clone()` to clone here,
-		// `github.com/gogo/protobuf/proto.Clone()` will panic!
 		resClone := proto.Clone(resProto)
-		clonedItems[k] = NewEnvoyResource(resClone)
+		clonedItems[k] = resource.NewEnvoyResource(resClone)
 	}
 	return clonedItems
+}
+
+// Equal checks is 2 snapshots are equal, important since reflect.DeepEqual no longer works with proto4
+func (this *EnvoySnapshot) Equal(that *EnvoySnapshot) bool {
+	if len(this.Clusters.Items) != len(that.Clusters.Items) || this.Clusters.Version != that.Clusters.Version {
+		return false
+	}
+	for key, thisVal := range this.Clusters.Items {
+		thatVal, ok := that.Clusters.Items[key]
+		if !ok {
+			return false
+		}
+		if !proto.Equal(thisVal.ResourceProto(), thatVal.ResourceProto()) {
+			return false
+		}
+	}
+	if len(this.Endpoints.Items) != len(that.Endpoints.Items) || this.Endpoints.Version != that.Endpoints.Version {
+		return false
+	}
+	for key, thisVal := range this.Endpoints.Items {
+		thatVal, ok := that.Endpoints.Items[key]
+		if !ok {
+			return false
+		}
+		if !proto.Equal(thisVal.ResourceProto(), thatVal.ResourceProto()) {
+			return false
+		}
+	}
+	if len(this.Routes.Items) != len(that.Routes.Items) || this.Routes.Version != that.Routes.Version {
+		return false
+	}
+	for key, thisVal := range this.Routes.Items {
+		thatVal, ok := that.Routes.Items[key]
+		if !ok {
+			return false
+		}
+		if !proto.Equal(thisVal.ResourceProto(), thatVal.ResourceProto()) {
+			return false
+		}
+	}
+	if len(this.Endpoints.Items) != len(that.Endpoints.Items) || this.Endpoints.Version != that.Endpoints.Version {
+		return false
+	}
+	for key, thisVal := range this.Endpoints.Items {
+		thatVal, ok := that.Endpoints.Items[key]
+		if !ok {
+			return false
+		}
+		if !proto.Equal(thisVal.ResourceProto(), thatVal.ResourceProto()) {
+			return false
+		}
+	}
+	return true
 }

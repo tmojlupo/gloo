@@ -3,6 +3,8 @@
 package v1alpha1
 
 import (
+	"context"
+
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
@@ -28,12 +30,12 @@ type ingressClient struct {
 	rc clients.ResourceClient
 }
 
-func NewIngressClient(rcFactory factory.ResourceClientFactory) (IngressClient, error) {
-	return NewIngressClientWithToken(rcFactory, "")
+func NewIngressClient(ctx context.Context, rcFactory factory.ResourceClientFactory) (IngressClient, error) {
+	return NewIngressClientWithToken(ctx, rcFactory, "")
 }
 
-func NewIngressClientWithToken(rcFactory factory.ResourceClientFactory, token string) (IngressClient, error) {
-	rc, err := rcFactory.NewResourceClient(factory.NewResourceClientParams{
+func NewIngressClientWithToken(ctx context.Context, rcFactory factory.ResourceClientFactory, token string) (IngressClient, error) {
+	rc, err := rcFactory.NewResourceClient(ctx, factory.NewResourceClientParams{
 		ResourceType: &Ingress{},
 		Token:        token,
 	})
@@ -104,7 +106,12 @@ func (client *ingressClient) Watch(namespace string, opts clients.WatchOpts) (<-
 		for {
 			select {
 			case resourceList := <-resourcesChan:
-				ingressesChan <- convertToIngress(resourceList)
+				select {
+				case ingressesChan <- convertToIngress(resourceList):
+				case <-opts.Ctx.Done():
+					close(ingressesChan)
+					return
+				}
 			case <-opts.Ctx.Done():
 				close(ingressesChan)
 				return

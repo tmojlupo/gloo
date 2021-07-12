@@ -34,7 +34,7 @@ func (m *VmConfig) Hash(hasher hash.Hash64) (uint64, error) {
 		hasher = fnv.New64()
 	}
 	var err error
-	if _, err = hasher.Write([]byte("envoy.extensions.wasm.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/wasm/v3.VmConfig")); err != nil {
+	if _, err = hasher.Write([]byte("solo.io.envoy.extensions.wasm.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/wasm/v3.VmConfig")); err != nil {
 		return 0, err
 	}
 
@@ -47,34 +47,51 @@ func (m *VmConfig) Hash(hasher hash.Hash64) (uint64, error) {
 	}
 
 	if h, ok := interface{}(m.GetCode()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("Code")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetCode(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetCode(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("Code")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}
 	}
 
 	if h, ok := interface{}(m.GetConfiguration()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("Configuration")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetConfiguration(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetConfiguration(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("Configuration")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}
 	}
 
 	err = binary.Write(hasher, binary.LittleEndian, m.GetAllowPrecompiled())
+	if err != nil {
+		return 0, err
+	}
+
+	err = binary.Write(hasher, binary.LittleEndian, m.GetNackOnCodeCacheMiss())
 	if err != nil {
 		return 0, err
 	}
@@ -91,7 +108,7 @@ func (m *PluginConfig) Hash(hasher hash.Hash64) (uint64, error) {
 		hasher = fnv.New64()
 	}
 	var err error
-	if _, err = hasher.Write([]byte("envoy.extensions.wasm.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/wasm/v3.PluginConfig")); err != nil {
+	if _, err = hasher.Write([]byte("solo.io.envoy.extensions.wasm.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/wasm/v3.PluginConfig")); err != nil {
 		return 0, err
 	}
 
@@ -104,14 +121,20 @@ func (m *PluginConfig) Hash(hasher hash.Hash64) (uint64, error) {
 	}
 
 	if h, ok := interface{}(m.GetConfiguration()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("Configuration")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetConfiguration(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetConfiguration(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("Configuration")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}
@@ -127,14 +150,20 @@ func (m *PluginConfig) Hash(hasher hash.Hash64) (uint64, error) {
 	case *PluginConfig_VmConfig:
 
 		if h, ok := interface{}(m.GetVmConfig()).(safe_hasher.SafeHasher); ok {
+			if _, err = hasher.Write([]byte("VmConfig")); err != nil {
+				return 0, err
+			}
 			if _, err = h.Hash(hasher); err != nil {
 				return 0, err
 			}
 		} else {
-			if val, err := hashstructure.Hash(m.GetVmConfig(), nil); err != nil {
+			if fieldValue, err := hashstructure.Hash(m.GetVmConfig(), nil); err != nil {
 				return 0, err
 			} else {
-				if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+				if _, err = hasher.Write([]byte("VmConfig")); err != nil {
+					return 0, err
+				}
+				if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 					return 0, err
 				}
 			}
@@ -154,19 +183,25 @@ func (m *WasmService) Hash(hasher hash.Hash64) (uint64, error) {
 		hasher = fnv.New64()
 	}
 	var err error
-	if _, err = hasher.Write([]byte("envoy.extensions.wasm.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/wasm/v3.WasmService")); err != nil {
+	if _, err = hasher.Write([]byte("solo.io.envoy.extensions.wasm.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/wasm/v3.WasmService")); err != nil {
 		return 0, err
 	}
 
 	if h, ok := interface{}(m.GetConfig()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("Config")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetConfig(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetConfig(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("Config")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}

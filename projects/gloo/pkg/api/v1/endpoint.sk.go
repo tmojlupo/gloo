@@ -16,14 +16,14 @@ import (
 
 func NewEndpoint(namespace, name string) *Endpoint {
 	endpoint := &Endpoint{}
-	endpoint.SetMetadata(core.Metadata{
+	endpoint.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return endpoint
 }
 
-func (r *Endpoint) SetMetadata(meta core.Metadata) {
+func (r *Endpoint) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
@@ -135,12 +135,6 @@ var (
 		false,
 		&Endpoint{})
 )
-
-func init() {
-	if err := crd.AddCrd(EndpointCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	EndpointGVK = schema.GroupVersionKind{

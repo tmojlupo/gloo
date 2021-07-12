@@ -8,16 +8,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/cors"
-	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
-
-	"github.com/solo-io/gloo/pkg/utils"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/cors"
+	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
 	"github.com/solo-io/gloo/test/services"
 	"github.com/solo-io/gloo/test/v1helpers"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
@@ -71,7 +68,7 @@ var _ = Describe("CORS", func() {
 				td.per.envoyInstance.LocalAddr(),
 				td.per.envoyInstance.AdminPort)
 
-			err = td.per.envoyInstance.Run(td.testClients.GlooPort)
+			err = td.per.envoyInstance.RunWithRoleAndRestXds(services.DefaultProxyName, td.testClients.GlooPort, td.testClients.RestXdsPort)
 			Expect(err).NotTo(HaveOccurred())
 
 			td.per.up = td.setupUpstream()
@@ -140,7 +137,7 @@ func (td *corsTestData) getGlooCorsProxy(cors *cors.CorsPolicy) (*gloov1.Proxy, 
 
 func (ptd *perCorsTestData) getGlooCorsProxyWithVersion(resourceVersion string, cors *cors.CorsPolicy) *gloov1.Proxy {
 	return &gloov1.Proxy{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:            "proxy",
 			Namespace:       "default",
 			ResourceVersion: resourceVersion,
@@ -160,7 +157,7 @@ func (ptd *perCorsTestData) getGlooCorsProxyWithVersion(resourceVersion string, 
 									Destination: &gloov1.RouteAction_Single{
 										Single: &gloov1.Destination{
 											DestinationType: &gloov1.Destination_Upstream{
-												Upstream: utils.ResourceRefPtr(ptd.up.Metadata.Ref()),
+												Upstream: ptd.up.Metadata.Ref(),
 											},
 										},
 									},

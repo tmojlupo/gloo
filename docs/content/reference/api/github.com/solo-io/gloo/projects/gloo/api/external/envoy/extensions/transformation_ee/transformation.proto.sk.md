@@ -37,9 +37,9 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `transformations` | [[]envoy.config.filter.http.transformation_ee.v2.TransformationRule](../transformation.proto.sk/#transformationrule) | Specifies transformations based on the route matches. The first matched transformation will be applied. If there are overlapped match conditions, please put the most specific match first. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `transformations` | [[]envoy.config.filter.http.transformation_ee.v2.TransformationRule](../transformation.proto.sk/#transformationrule) | Specifies transformations based on the route matches. The first matched transformation will be applied. If there are overlapped match conditions, please put the most specific match first. |
 
 
 
@@ -50,15 +50,15 @@ weight: 5
 
 
 ```yaml
-"match": .envoy.api.v2.route.RouteMatch
+"match": .solo.io.envoy.api.v2.route.RouteMatch
 "routeTransformations": .envoy.config.filter.http.transformation_ee.v2.RouteTransformations
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `match` | [.envoy.api.v2.route.RouteMatch](../../../../../../../../../../../envoy/api/v2/route/route.proto.sk/#routematch) | The route matching parameter. Only when the match is satisfied, the "requires" field will apply. For example: following match will match all requests. .. code-block:: yaml match: prefix: /. |  |
-| `routeTransformations` | [.envoy.config.filter.http.transformation_ee.v2.RouteTransformations](../transformation.proto.sk/#routetransformations) | transformation to perform. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `match` | [.solo.io.envoy.api.v2.route.RouteMatch](../../../../../../../../../../../envoy/api/v2/route/route.proto.sk/#routematch) | The route matching parameter. Only when the match is satisfied, the "requires" field will apply. For example: following match will match all requests. .. code-block:: yaml match: prefix: /. |
+| `routeTransformations` | [.envoy.config.filter.http.transformation_ee.v2.RouteTransformations](../transformation.proto.sk/#routetransformations) | transformation to perform. |
 
 
 
@@ -72,14 +72,16 @@ weight: 5
 "requestTransformation": .envoy.config.filter.http.transformation_ee.v2.Transformation
 "clearRouteCache": bool
 "responseTransformation": .envoy.config.filter.http.transformation_ee.v2.Transformation
+"onStreamCompletionTransformation": .envoy.config.filter.http.transformation_ee.v2.Transformation
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `requestTransformation` | [.envoy.config.filter.http.transformation_ee.v2.Transformation](../transformation.proto.sk/#transformation) |  |  |
-| `clearRouteCache` | `bool` | clear the route cache if the request transformation was applied. |  |
-| `responseTransformation` | [.envoy.config.filter.http.transformation_ee.v2.Transformation](../transformation.proto.sk/#transformation) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `requestTransformation` | [.envoy.config.filter.http.transformation_ee.v2.Transformation](../transformation.proto.sk/#transformation) |  |
+| `clearRouteCache` | `bool` | clear the route cache if the request transformation was applied. |
+| `responseTransformation` | [.envoy.config.filter.http.transformation_ee.v2.Transformation](../transformation.proto.sk/#transformation) |  |
+| `onStreamCompletionTransformation` | [.envoy.config.filter.http.transformation_ee.v2.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation in the onStreamComplete callback (for modifying headers and dynamic metadata for access logs). |
 
 
 
@@ -94,9 +96,9 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `dlpTransformation` | [.envoy.config.filter.http.transformation_ee.v2.DlpTransformation](../transformation.proto.sk/#dlptransformation) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `dlpTransformation` | [.envoy.config.filter.http.transformation_ee.v2.DlpTransformation](../transformation.proto.sk/#dlptransformation) |  |
 
 
 
@@ -108,12 +110,16 @@ weight: 5
 
 ```yaml
 "actions": []envoy.config.filter.http.transformation_ee.v2.Action
+"enableHeaderTransformation": bool
+"enableDynamicMetadataTransformation": bool
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `actions` | [[]envoy.config.filter.http.transformation_ee.v2.Action](../transformation.proto.sk/#action) | list of actions to apply. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `actions` | [[]envoy.config.filter.http.transformation_ee.v2.Action](../transformation.proto.sk/#action) | list of actions to apply. |
+| `enableHeaderTransformation` | `bool` | If true, headers will be transformed. Should only be true for the on_stream_complete_transformation route transformation type. |
+| `enableDynamicMetadataTransformation` | `bool` | If true, dynamic metadata will be transformed. Should only be used for the on_stream_complete_transformation route transformation type. |
 
 
 
@@ -127,18 +133,18 @@ weight: 5
 "name": string
 "regex": []string
 "shadow": bool
-"percent": .envoy.type.Percent
+"percent": .solo.io.envoy.type.Percent
 "maskChar": string
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `name` | `string` | Identifier for this action. Used mostly to help ID specific actions in logs. If left null will default to unknown. |  |
-| `regex` | `[]string` | List of regexes to apply to the response body to match data which should be masked They will be applied iteratively in the order which they are specified. |  |
-| `shadow` | `bool` | If specified, this rule will not actually be applied, but only logged. |  |
-| `percent` | [.envoy.type.Percent](../../../../../../../../../../../envoy/type/percent.proto.sk/#percent) | The percent of the string which should be masked. If not set, defaults to 75%. |  |
-| `maskChar` | `string` | The character which should overwrite the masked data If left empty, defaults to "X". |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `name` | `string` | Identifier for this action. Used mostly to help ID specific actions in logs. If left null will default to unknown. |
+| `regex` | `[]string` | List of regexes to apply to the response body to match data which should be masked They will be applied iteratively in the order which they are specified. |
+| `shadow` | `bool` | If specified, this rule will not actually be applied, but only logged. |
+| `percent` | [.solo.io.envoy.type.Percent](../../../../../../../../../solo-kit/api/external/envoy/type/percent.proto.sk/#percent) | The percent of the string which should be masked. If not set, defaults to 75%. |
+| `maskChar` | `string` | The character which should overwrite the masked data If left empty, defaults to "X". |
 
 
 

@@ -1,29 +1,32 @@
 ---
 title: RateLimitConfigs (Enterprise)
-description: Powerful, reusable configuration for Gloo Enterprise's rate-limit service.
+description: Powerful, reusable configuration for Gloo Edge Enterprise's rate-limit service.
 weight: 20
 ---
 
 {{% notice note %}}
-Rate limit configuration via `RateLimitConfig` resources was introduced with **Gloo Enterprise**, release `v1.5.0-beta3`. 
+Rate limit configuration via `RateLimitConfig` resources was introduced with **Gloo Edge Enterprise**, release `v1.5.0-beta3`. 
 If you are using an earlier version, this feature will not be available.
 {{% /notice %}}
 
-As we saw in the [Envoy API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}}), 
-Gloo Enterprise exposes a fine-grained API that allows you to configure a vast number of rate limiting use cases.
+As we saw in the [Envoy API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}})
+and [Set-Style API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/set/" %}}), 
+Gloo Edge Enterprise exposes a fine-grained API that allows you to configure a vast number of rate limiting use cases.
 The two main objects that make up the API are:
-1. the [`descriptors`]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy//#descriptors" %}}), 
+1. the [`descriptors`]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy//#descriptors" %}})
+and/or [`setDescriptors`]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/set//#setdescriptors" %}}), 
   which configure the rate limit server and are defined on the global `Settings` resource, and
-2. the [`actions`]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy//#actions" %}}) that 
+2. the [`actions`]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy//#actions" %}})
+and/or [`setActions`]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/set//#setactions" %}})that 
   determine how Envoy composes the descriptors that are sent to the server to check whether a request should be 
-  rate-limited; `actions` are defined either on the `Route` or on the `VirtualHost` `options`.
+  rate-limited; `actions` and `setActions` are defined either on the `Route` or on the `VirtualHost` `options`.
   
 Although powerful, this API has some drawbacks:
-- The `descriptors` that define the rate limit policies you want to enforce are defined in a single, central location. 
+- The `descriptors`/`setDescriptors` that define the rate limit policies you want to enforce are defined in a single, central location. 
   The global nature of the `Settings` does not guarantee isolation between different rate limits: if you make a mistake 
   while updating a policy, you might end up impacting other policies. This centralized configuration also makes it 
   harder to safely manage you rate limit policies in an automated fashion.
-- Since `actions` are defined directly on your `Virtual Services`, your rate limits are tightly coupled to your routing 
+- Since `actions`/`setActions` are defined directly on your `Virtual Services`, your rate limits are tightly coupled to your routing 
   configuration. If you need to apply the same policy on different routes, you will need to redefine the same 
   configuration in multiple places. This can be a significant source of configuration bloat, especially if your policies 
   are complex.
@@ -31,10 +34,10 @@ Although powerful, this API has some drawbacks:
 To address these shortcomings, we introduced a new custom resource.
 
 ### RateLimitConfig resources
-Starting with Gloo Enterprise `v1.5.0-beta3` you can define you rate limits by creating `RateLimitConfig` resources. 
-A `RateLimitConfig` resource represents a self-contained rate limit policy; this means that Gloo will use the resource 
-to configure both the Envoy proxies and the Gloo Enterprise rate limit server they communicate with. 
-Gloo guarantees that rate limit rules defined on different `RateLimitConfig` resources are completely independent of each other.
+Starting with Gloo Edge Enterprise `v1.5.0-beta3` you can define rate limits by creating `RateLimitConfig` resources. 
+A `RateLimitConfig` resource represents a self-contained rate limit policy; this means that Gloo Edge will use the resource 
+to configure both the Envoy proxies and the Gloo Edge Enterprise rate limit server they communicate with. 
+Gloo Edge guarantees that rate limit rules defined on different `RateLimitConfig` resources are completely independent of each other.
 
 Here is a simple example of a `RateLimitConfig` resource:
 
@@ -55,7 +58,7 @@ spec:
     rateLimits:
     - actions:
       - genericKey:
-          descriptorValue: counters
+          descriptorValue: counter
 ```
 
 Once an `RateLimitConfig` is created, it can be used to enforce rate limits on your `VirtualService`s (or on the 
@@ -84,21 +87,24 @@ is implemented, but we are planning on adding more high-level configuration form
 (e.g. limiting requests based on the presence and value of a header, or on a per-upstream, per-client basis, etc.).
 
 The `raw` configuration allows you to specify rate limit policies using the raw configuration formats used by the 
-server and the client (Envoy). It consists of two elements:
+server and the client (Envoy). It consists of three elements:
 
-- a list of `descriptors`, and
+- a list of `descriptors`,
+- a list of `setDescriptors`, and
 - a list of `rateLimits`.
 
-These two objects have the exact some format as the `descriptors` and `ratelimits` that are explained in detail in the 
-[Envoy API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}}). 
+These objects have the exact same format as the `descriptors`, `setDescriptors`, and `ratelimits` that are explained in detail in the 
+[Envoy API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}})
+and [Set-Style API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/set/" %}}). 
 
 ### Example
 Let's run through an example that uses `RateLimitConfig` resources to enforce rate limit policies on your `Virtual Services`. 
 As mentioned earlier, all the examples that are listed in the [Envoy API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}}) 
+and [Set-Style API guide]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/set/" %}})
 apply to `RateLimitConfig`s as well, so please be sure to check them out.
 
 #### Initial setup
-First, we need to install Gloo Enterprise (minimum version `1.5.0-beta3`). Please refer to the corresponding
+First, we need to install Gloo Edge Enterprise (minimum version `1.5.0-beta3`). Please refer to the corresponding
 [installation guide]({{< versioned_link_path fromRoot="/installation/enterprise" >}}) for details.
  
 Let's also deploy a simple application which returns "Hello World" when receiving HTTP requests:
@@ -266,7 +272,7 @@ Let's see what each of these resources represents:
   the counter will be increased. After the counter has been increased **4 times within a 1-minute time window**, successive 
   requests in the same time window will be rejected with a `429` response code;
 - `per-upstream-counter` defines a set of counters. Each counter tracks requests to a specific `cluster` (the Envoy 
-  equivalent of a Gloo `Upstream`). After an `Upstream` has received **3 requests within a 1-minute time window**, successive 
+  equivalent of a Gloo Edge `Upstream`). After an `Upstream` has received **3 requests within a 1-minute time window**, successive 
   requests to the same upstream in the same time window will be rejected with a `429` response code.
   
 Now let's apply these policies to our `VirtualService`:
@@ -314,7 +320,7 @@ the `VirtualHost`. This will cause requests to be rate-limited either when:
 - one of the two upstreams is hit more than **3 times within a minute**, or
 - the aggregate of both upstreams is hit more than **4 times within a minute**.
 
-You can verify that Gloo has been correctly configured by port-forwarding the rate limit server and requesting a 
+You can verify that Gloo Edge has been correctly configured by port-forwarding the rate limit server and requesting a 
 config dump. First run:
 
 ```shell script
@@ -353,7 +359,7 @@ On the **fourth attempt** you should receive the following response:
 < content-length: 0
 ```
 
-This demonstrates that the per-upstream rate limit in enforced. Now let's wait for a minute for the counter to reset 
+This demonstrates that the per-upstream rate limit is enforced. Now let's wait for a minute for the counter to reset 
 and then submit the same command again, but this time only **2 times**:
 
 ```shell script

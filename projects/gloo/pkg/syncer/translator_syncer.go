@@ -3,8 +3,10 @@ package syncer
 import (
 	"context"
 
+	"github.com/rotisserie/eris"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/ratelimit"
 	"github.com/solo-io/gloo/projects/gloo/pkg/syncer/sanitizer"
+	"github.com/solo-io/go-utils/contextutils"
 
 	"github.com/hashicorp/go-multierror"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
@@ -29,17 +31,36 @@ type translatorSyncer struct {
 }
 
 type TranslatorSyncerExtensionParams struct {
-	Reporter                 reporter.Reporter
 	RateLimitServiceSettings ratelimit.ServiceSettings
 }
 
 type TranslatorSyncerExtensionFactory func(context.Context, TranslatorSyncerExtensionParams) (TranslatorSyncerExtension, error)
 
-type TranslatorSyncerExtension interface {
-	Sync(ctx context.Context, snap *v1.ApiSnapshot, xdsCache envoycache.SnapshotCache) (string, error)
+type UpgradeableTranslatorSyncerExtension interface {
+	ExtensionName() string
+	IsUpgrade() bool
 }
 
-func NewTranslatorSyncer(translator translator.Translator, xdsCache envoycache.SnapshotCache, xdsHasher *xds.ProxyKeyHasher, sanitizer sanitizer.XdsSanitizer, reporter reporter.Reporter, devMode bool, extensions []TranslatorSyncerExtension, settings *v1.Settings) v1.ApiSyncer {
+type TranslatorSyncerExtension interface {
+	Sync(
+		ctx context.Context,
+		snap *v1.ApiSnapshot,
+		settings *v1.Settings,
+		xdsCache envoycache.SnapshotCache,
+		reports reporter.ResourceReports,
+	) (string, error)
+}
+
+func NewTranslatorSyncer(
+	translator translator.Translator,
+	xdsCache envoycache.SnapshotCache,
+	xdsHasher *xds.ProxyKeyHasher,
+	sanitizer sanitizer.XdsSanitizer,
+	reporter reporter.Reporter,
+	devMode bool,
+	extensions []TranslatorSyncerExtension,
+	settings *v1.Settings,
+) v1.ApiSyncer {
 	s := &translatorSyncer{
 		translator: translator,
 		xdsCache:   xdsCache,
@@ -59,18 +80,28 @@ func NewTranslatorSyncer(translator translator.Translator, xdsCache envoycache.S
 }
 
 func (s *translatorSyncer) Sync(ctx context.Context, snap *v1.ApiSnapshot) error {
+	logger := contextutils.LoggerFrom(ctx)
 	var multiErr *multierror.Error
-	err := s.syncEnvoy(ctx, snap)
+	reports := make(reporter.ResourceReports)
+	err := s.syncEnvoy(ctx, snap, reports)
 	if err != nil {
 		multiErr = multierror.Append(multiErr, err)
 	}
 	s.extensionKeys = map[string]struct{}{}
 	for _, extension := range s.extensions {
-		nodeID, err := extension.Sync(ctx, snap, s.xdsCache)
+		intermediateReports := make(reporter.ResourceReports)
+		nodeID, err := extension.Sync(ctx, snap, s.settings, s.xdsCache, intermediateReports)
 		if err != nil {
 			multiErr = multierror.Append(multiErr, err)
 		}
+		reports.Merge(intermediateReports)
 		s.extensionKeys[nodeID] = struct{}{}
 	}
+
+	if err := s.reporter.WriteReports(ctx, reports, nil); err != nil {
+		logger.Debugf("Failed writing report for proxies: %v", err)
+		multiErr = multierror.Append(multiErr, eris.Wrapf(err, "writing reports"))
+	}
+
 	return multiErr.ErrorOrNil()
 }

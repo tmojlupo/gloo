@@ -2,33 +2,52 @@ package translator
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
+	errors "github.com/rotisserie/eris"
 
-	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
 	envoyal "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
-	"github.com/gogo/protobuf/proto"
-	"github.com/gogo/protobuf/types"
+	envoy_config_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
+	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
+	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 )
 
 // returns the name of the cluster created for a given upstream
-func UpstreamToClusterName(upstream core.ResourceRef) string {
+func UpstreamToClusterName(upstream *core.ResourceRef) string {
 
 	// For non-namespaced resources, return only name
-	if upstream.Namespace == "" {
-		return upstream.Name
+	if upstream.GetNamespace() == "" {
+		return upstream.GetName()
 	}
 
 	// Don't use dots in the name as it messes up prometheus stats
-	return fmt.Sprintf("%s_%s", upstream.Name, upstream.Namespace)
+	return fmt.Sprintf("%s_%s", upstream.GetName(), upstream.GetNamespace())
 }
 
-func NewFilterWithTypedConfig(name string, config proto.Message) (*envoylistener.Filter, error) {
+// returns the ref of the upstream for a given cluster
+func ClusterToUpstreamRef(cluster string) (*core.ResourceRef, error) {
 
-	s := &envoylistener.Filter{
+	split := strings.Split(cluster, "_")
+	if len(split) > 2 || len(split) < 1 {
+		return nil, errors.Errorf("unable to convert cluster %s back to upstream ref", cluster)
+	}
+
+	ref := &core.ResourceRef{
+		Name: split[0],
+	}
+
+	if len(split) == 2 {
+		ref.Namespace = split[1]
+	}
+	return ref, nil
+}
+
+func NewFilterWithTypedConfig(name string, config proto.Message) (*envoy_config_listener_v3.Filter, error) {
+
+	s := &envoy_config_listener_v3.Filter{
 		Name: name,
 	}
 
@@ -36,10 +55,10 @@ func NewFilterWithTypedConfig(name string, config proto.Message) (*envoylistener
 		marshalledConf, err := utils.MessageToAny(config)
 		if err != nil {
 			// this should NEVER HAPPEN!
-			return &envoylistener.Filter{}, err
+			return &envoy_config_listener_v3.Filter{}, err
 		}
 
-		s.ConfigType = &envoylistener.Filter_TypedConfig{
+		s.ConfigType = &envoy_config_listener_v3.Filter_TypedConfig{
 			TypedConfig: marshalledConf,
 		}
 	}
@@ -65,18 +84,6 @@ func NewAccessLogWithConfig(name string, config proto.Message) (envoyal.AccessLo
 	}
 
 	return s, nil
-}
-
-func ParseTypedGogoConfig(c gogoTypedConfigObject, config proto.Message) error {
-	any := c.GetTypedConfig()
-	if any != nil {
-		return types.UnmarshalAny(any, config)
-	}
-	return nil
-}
-
-type gogoTypedConfigObject interface {
-	GetTypedConfig() *types.Any
 }
 
 func ParseTypedConfig(c typedConfigObject, config proto.Message) error {

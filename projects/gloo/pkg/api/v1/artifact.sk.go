@@ -16,14 +16,14 @@ import (
 
 func NewArtifact(namespace, name string) *Artifact {
 	artifact := &Artifact{}
-	artifact.SetMetadata(core.Metadata{
+	artifact.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return artifact
 }
 
-func (r *Artifact) SetMetadata(meta core.Metadata) {
+func (r *Artifact) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
@@ -135,12 +135,6 @@ var (
 		false,
 		&Artifact{})
 )
-
-func init() {
-	if err := crd.AddCrd(ArtifactCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	ArtifactGVK = schema.GroupVersionKind{

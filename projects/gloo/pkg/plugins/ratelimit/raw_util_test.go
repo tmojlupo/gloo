@@ -3,78 +3,29 @@ package ratelimit_test
 import (
 	"fmt"
 
-	envoyvhostratelimit "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	envoy_type_matcher_v3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 
-	"github.com/gogo/protobuf/jsonpb"
-	"github.com/gogo/protobuf/types"
-	regexutils "github.com/solo-io/gloo/pkg/utils/regexutils"
+	envoy_config_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	golangjsonpb "github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/ptypes/wrappers"
+	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/extensions/table"
+	. "github.com/onsi/gomega"
 	. "github.com/solo-io/gloo/projects/gloo/pkg/plugins/ratelimit"
 	gloorl "github.com/solo-io/solo-apis/pkg/api/ratelimit.solo.io/v1alpha1"
 )
 
 var _ = Describe("RawUtil", func() {
 
-	Context("should convert protos to the same thing till we properly vendor them", func() {
-		It("should convert source cluster", func() {
-			inactions := []*gloorl.Action{{
-				ActionSpecifier: &gloorl.Action_SourceCluster_{
-					SourceCluster: &gloorl.Action_SourceCluster{},
-				},
-			}}
-			ExpectActionsSame(inactions)
-		})
-		It("should convert dest cluster", func() {
-			inactions := []*gloorl.Action{{
-				ActionSpecifier: &gloorl.Action_DestinationCluster_{
-					DestinationCluster: &gloorl.Action_DestinationCluster{},
-				},
-			}}
-			ExpectActionsSame(inactions)
-		})
-		It("should convert generic key", func() {
-			inactions := []*gloorl.Action{{
-				ActionSpecifier: &gloorl.Action_GenericKey_{
-					GenericKey: &gloorl.Action_GenericKey{
-						DescriptorValue: "somevalue",
-					},
-				},
-			}}
-			ExpectActionsSame(inactions)
-		})
-		It("should convert remote address", func() {
-			inactions := []*gloorl.Action{{
-				ActionSpecifier: &gloorl.Action_RemoteAddress_{
-					RemoteAddress: &gloorl.Action_RemoteAddress{},
-				},
-			}}
-			ExpectActionsSame(inactions)
-		})
-		It("should convert request headers", func() {
-			inactions := []*gloorl.Action{{
-				ActionSpecifier: &gloorl.Action_RequestHeaders_{
-					RequestHeaders: &gloorl.Action_RequestHeaders{
-						DescriptorKey: "key",
-						HeaderName:    "name",
-					},
-				},
-			}}
-			ExpectActionsSame(inactions)
-		})
-		It("should convert headermatch", func() {
-			m := []*gloorl.Action_HeaderValueMatch_HeaderMatcher{{
+	var (
+		hm = []*gloorl.Action_HeaderValueMatch_HeaderMatcher{
+			{
 				HeaderMatchSpecifier: &gloorl.Action_HeaderValueMatch_HeaderMatcher_ExactMatch{
 					ExactMatch: "e",
 				},
 				Name: "test",
-			}, {
-				HeaderMatchSpecifier: &gloorl.Action_HeaderValueMatch_HeaderMatcher_RegexMatch{
-					RegexMatch: "r",
-				},
-				Name:        "test",
-				InvertMatch: true,
-			}, {
+			},
+			{
 				HeaderMatchSpecifier: &gloorl.Action_HeaderValueMatch_HeaderMatcher_PresentMatch{
 					PresentMatch: true,
 				},
@@ -99,59 +50,241 @@ var _ = Describe("RawUtil", func() {
 				},
 				Name: "test",
 			},
-			}
+		}
+	)
 
-			inactions := []*gloorl.Action{{
-				ActionSpecifier: &gloorl.Action_HeaderValueMatch_{
-					HeaderValueMatch: &gloorl.Action_HeaderValueMatch{
+	// note: this is no longer a straight conversion, see the other context below for other tests
+	DescribeTable(
+		"should convert protos to the same thing till we properly vendor them",
+		func(actions []*gloorl.Action) {
+			out := ConvertActions(nil, actions)
+
+			Expect(len(actions)).To(Equal(len(out)))
+			for i := range actions {
+				golangjson := golangjsonpb.Marshaler{}
+
+				ins, _ := golangjson.MarshalToString(actions[i])
+				outs, _ := golangjson.MarshalToString(out[i])
+				fmt.Fprintf(GinkgoWriter, "Compare \n%s\n\n%s", ins, outs)
+				remarshalled := new(envoy_config_route_v3.RateLimit_Action)
+				err := golangjsonpb.UnmarshalString(ins, remarshalled)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(remarshalled).To(Equal(out[i]))
+			}
+		},
+		Entry("should convert source cluster",
+			[]*gloorl.Action{{
+				ActionSpecifier: &gloorl.Action_SourceCluster_{
+					SourceCluster: &gloorl.Action_SourceCluster{},
+				},
+			}},
+		),
+		Entry("should convert dest cluster",
+			[]*gloorl.Action{{
+				ActionSpecifier: &gloorl.Action_DestinationCluster_{
+					DestinationCluster: &gloorl.Action_DestinationCluster{},
+				},
+			}},
+		),
+		Entry("should convert generic key",
+			[]*gloorl.Action{{
+				ActionSpecifier: &gloorl.Action_GenericKey_{
+					GenericKey: &gloorl.Action_GenericKey{
 						DescriptorValue: "somevalue",
-						ExpectMatch:     &types.BoolValue{Value: true},
-						Headers:         m,
 					},
 				},
-			}, {
-				ActionSpecifier: &gloorl.Action_HeaderValueMatch_{
-					HeaderValueMatch: &gloorl.Action_HeaderValueMatch{
-						DescriptorValue: "someothervalue",
-						ExpectMatch:     &types.BoolValue{Value: false},
-						Headers:         m,
+			}},
+		),
+		Entry("should convert remote address",
+			[]*gloorl.Action{{
+				ActionSpecifier: &gloorl.Action_RemoteAddress_{
+					RemoteAddress: &gloorl.Action_RemoteAddress{},
+				},
+			}},
+		),
+		Entry("should convert request headers",
+			[]*gloorl.Action{{
+				ActionSpecifier: &gloorl.Action_RequestHeaders_{
+					RequestHeaders: &gloorl.Action_RequestHeaders{
+						DescriptorKey: "key",
+						HeaderName:    "name",
+					},
+				},
+			}},
+		),
+		Entry("should convert headermatch",
+			[]*gloorl.Action{
+				{
+					ActionSpecifier: &gloorl.Action_HeaderValueMatch_{
+						HeaderValueMatch: &gloorl.Action_HeaderValueMatch{
+							DescriptorValue: "somevalue",
+							ExpectMatch:     &wrappers.BoolValue{Value: true},
+							Headers:         hm,
+						},
+					},
+				}, {
+					ActionSpecifier: &gloorl.Action_HeaderValueMatch_{
+						HeaderValueMatch: &gloorl.Action_HeaderValueMatch{
+							DescriptorValue: "someothervalue",
+							ExpectMatch:     &wrappers.BoolValue{Value: false},
+							Headers:         hm,
+						},
 					},
 				},
 			},
+		),
+		Entry("should convert metadata",
+			[]*gloorl.Action{
+				{
+					ActionSpecifier: &gloorl.Action_Metadata{
+						Metadata: &gloorl.Action_MetaData{
+							DescriptorKey: "some-key",
+							MetadataKey: &gloorl.Action_MetaData_MetadataKey{
+								Key: "io.solo.some.filter",
+								Path: []*gloorl.Action_MetaData_MetadataKey_PathSegment{
+									{
+										Segment: &gloorl.Action_MetaData_MetadataKey_PathSegment_Key{
+											Key: "foo",
+										},
+									},
+								},
+							},
+							DefaultValue: "nothing",
+							Source:       gloorl.Action_MetaData_ROUTE_ENTRY,
+						},
+					},
+				},
+				{
+					ActionSpecifier: &gloorl.Action_Metadata{
+						Metadata: &gloorl.Action_MetaData{
+							DescriptorKey: "some-other-key",
+							MetadataKey: &gloorl.Action_MetaData_MetadataKey{
+								Key: "io.solo.some.other.filter",
+								// no path here
+							},
+						},
+					},
+				},
+			},
+		),
+	)
+
+	// Needs to be separate because the yaml is no longer compatible
+	Context("special cases - not a straight conversion", func() {
+
+		It("works with regex", func() {
+			actions := []*gloorl.Action{
+				{
+					ActionSpecifier: &gloorl.Action_HeaderValueMatch_{
+						HeaderValueMatch: &gloorl.Action_HeaderValueMatch{
+							DescriptorValue: "someothervalue",
+							ExpectMatch:     &wrappers.BoolValue{Value: false},
+							Headers: []*gloorl.Action_HeaderValueMatch_HeaderMatcher{
+								{
+									HeaderMatchSpecifier: &gloorl.Action_HeaderValueMatch_HeaderMatcher_RegexMatch{
+										RegexMatch: "hello",
+									},
+									Name: "test",
+								},
+							},
+						},
+					},
+				},
 			}
-			ExpectActionsSame(inactions)
+
+			out := ConvertActions(nil, actions)
+
+			expected := []*envoy_config_route_v3.RateLimit_Action{
+				{
+					ActionSpecifier: &envoy_config_route_v3.RateLimit_Action_HeaderValueMatch_{
+						HeaderValueMatch: &envoy_config_route_v3.RateLimit_Action_HeaderValueMatch{
+							DescriptorValue: "someothervalue",
+							ExpectMatch: &wrappers.BoolValue{
+								Value: false,
+							},
+							Headers: []*envoy_config_route_v3.HeaderMatcher{
+								{
+									Name: "test",
+									HeaderMatchSpecifier: &envoy_config_route_v3.HeaderMatcher_SafeRegexMatch{
+										SafeRegexMatch: &envoy_type_matcher_v3.RegexMatcher{
+											EngineType: &envoy_type_matcher_v3.RegexMatcher_GoogleRe2{
+												GoogleRe2: &envoy_type_matcher_v3.RegexMatcher_GoogleRE2{
+													MaxProgramSize: nil,
+												},
+											},
+											Regex: "hello",
+										},
+									},
+									InvertMatch: false,
+								},
+							},
+						},
+					},
+				},
+			}
+
+			Expect(out).To(Equal(expected))
+
+		})
+
+		It("works with set actions and request headers", func() {
+			actions := []*gloorl.Action{
+				{
+					// our special generic key that signals to treat the rest of the actions as a set
+					ActionSpecifier: &gloorl.Action_GenericKey_{
+						GenericKey: &gloorl.Action_GenericKey{DescriptorValue: SetDescriptorValue},
+					},
+				},
+				{
+					ActionSpecifier: &gloorl.Action_RequestHeaders_{
+						RequestHeaders: &gloorl.Action_RequestHeaders{
+							HeaderName:    "x-foo",
+							DescriptorKey: "foo",
+						},
+					},
+				},
+				{
+					ActionSpecifier: &gloorl.Action_RequestHeaders_{
+						RequestHeaders: &gloorl.Action_RequestHeaders{
+							HeaderName:    "x-bar",
+							DescriptorKey: "bar",
+						},
+					},
+				},
+			}
+
+			out := ConvertActions(nil, actions)
+
+			expected := []*envoy_config_route_v3.RateLimit_Action{
+				{
+					ActionSpecifier: &envoy_config_route_v3.RateLimit_Action_GenericKey_{
+						GenericKey: &envoy_config_route_v3.RateLimit_Action_GenericKey{DescriptorValue: SetDescriptorValue},
+					},
+				},
+				{
+					ActionSpecifier: &envoy_config_route_v3.RateLimit_Action_RequestHeaders_{
+						RequestHeaders: &envoy_config_route_v3.RateLimit_Action_RequestHeaders{
+							HeaderName:    "x-foo",
+							DescriptorKey: "foo",
+							SkipIfAbsent:  true, // important, or else rate-limit server won't get requests if some headers are missing from a request
+						},
+					},
+				},
+				{
+					ActionSpecifier: &envoy_config_route_v3.RateLimit_Action_RequestHeaders_{
+						RequestHeaders: &envoy_config_route_v3.RateLimit_Action_RequestHeaders{
+							HeaderName:    "x-bar",
+							DescriptorKey: "bar",
+							SkipIfAbsent:  true, // important, or else rate-limit server won't get requests if some headers are missing from a request
+						},
+					},
+				},
+			}
+
+			Expect(out).To(Equal(expected))
+
 		})
 
 	})
 
 })
-
-func ExpectActionsSame(actions []*gloorl.Action) {
-	out := ConvertActions(nil, actions)
-
-	ExpectWithOffset(1, len(actions)).To(Equal(len(out)))
-	for i := range actions {
-
-		jase := jsonpb.Marshaler{}
-		ins, _ := jase.MarshalToString(actions[i])
-		outs, _ := jase.MarshalToString(out[i])
-		fmt.Fprintf(GinkgoWriter, "Compare \n%s\n\n%s", ins, outs)
-		remarshalled := new(envoyvhostratelimit.RateLimit_Action)
-		err := jsonpb.UnmarshalString(ins, remarshalled)
-
-		// regex api is different. fix that.
-		if headers := remarshalled.GetHeaderValueMatch().GetHeaders(); headers != nil {
-			for _, h := range headers {
-				if regex := h.GetRegexMatch(); regex != "" {
-					h.HeaderMatchSpecifier = &envoyvhostratelimit.HeaderMatcher_SafeRegexMatch{
-						SafeRegexMatch: regexutils.NewRegex(nil, regex),
-					}
-				}
-			}
-		}
-
-		ExpectWithOffset(1, err).NotTo(HaveOccurred())
-		ExpectWithOffset(1, remarshalled).To(Equal(out[i]))
-	}
-
-}

@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 
-	"github.com/gogo/protobuf/types"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	gatewaydefaults "github.com/solo-io/gloo/projects/gateway/pkg/defaults"
 
 	. "github.com/onsi/ginkgo"
@@ -53,11 +53,11 @@ var _ = Describe("Staged Transformation", func() {
 
 		// this upstream doesn't need to exist - in fact, we want ext auth to fail.
 		extauthn := &gloov1.Upstream{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "extauth-server",
 				Namespace: "default",
 			},
-			UseHttp2: &types.BoolValue{Value: true},
+			UseHttp2: &wrappers.BoolValue{Value: true},
 			UpstreamType: &gloov1.Upstream_Static{
 				Static: &gloov1static.UpstreamSpec{
 					Hosts: []*gloov1static.Host{{
@@ -75,7 +75,7 @@ var _ = Describe("Staged Transformation", func() {
 			NsToWatch: []string{"default", ns},
 			Settings: &gloov1.Settings{
 				Extauth: &extauthv1.Settings{
-					ExtauthzServerRef: &ref,
+					ExtauthzServerRef: ref,
 				},
 			},
 			WhatToRun: services.What{
@@ -89,7 +89,7 @@ var _ = Describe("Staged Transformation", func() {
 		_, err = testClients.UpstreamClient.Write(extauthn, clients.WriteOpts{})
 		Expect(err).NotTo(HaveOccurred())
 
-		err = envoyInstance.RunWithRole(ns+"~"+gatewaydefaults.GatewayProxyName, testClients.GlooPort)
+		err = envoyInstance.RunWithRoleAndRestXds(ns+"~"+gatewaydefaults.GatewayProxyName, testClients.GlooPort, testClients.RestXdsPort)
 		Expect(err).NotTo(HaveOccurred())
 
 		up = tu.Upstream
@@ -142,8 +142,8 @@ var _ = Describe("Staged Transformation", func() {
 								Value: "200",
 							},
 						},
-						ResponseTransformation: &envoytransformation.Transformation{
-							TransformationType: &envoytransformation.Transformation_TransformationTemplate{
+						ResponseTransformation: &transformation.Transformation{
+							TransformationType: &transformation.Transformation_TransformationTemplate{
 								TransformationTemplate: &envoytransformation.TransformationTemplate{
 									ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
 									BodyTransformation: &envoytransformation.TransformationTemplate_Body{
@@ -165,8 +165,8 @@ var _ = Describe("Staged Transformation", func() {
 								Value: "200",
 							},
 						},
-						ResponseTransformation: &envoytransformation.Transformation{
-							TransformationType: &envoytransformation.Transformation_TransformationTemplate{
+						ResponseTransformation: &transformation.Transformation{
+							TransformationType: &transformation.Transformation_TransformationTemplate{
 								TransformationTemplate: &envoytransformation.TransformationTemplate{
 									ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
 									BodyTransformation: &envoytransformation.TransformationTemplate_Body{
@@ -192,8 +192,8 @@ var _ = Describe("Staged Transformation", func() {
 				Early: &transformation.RequestResponseTransformations{
 					ResponseTransforms: []*transformation.ResponseMatch{{
 						ResponseCodeDetails: "ext_authz_error",
-						ResponseTransformation: &envoytransformation.Transformation{
-							TransformationType: &envoytransformation.Transformation_TransformationTemplate{
+						ResponseTransformation: &transformation.Transformation{
+							TransformationType: &transformation.Transformation_TransformationTemplate{
 								TransformationTemplate: &envoytransformation.TransformationTemplate{
 									ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
 									BodyTransformation: &envoytransformation.TransformationTemplate_Body{
@@ -213,6 +213,94 @@ var _ = Describe("Staged Transformation", func() {
 			body := []byte("test")
 			v1helpers.ExpectHttpOK(body, nil, envoyPort, "test")
 		})
+
+		It("should allow multiple header values for the same header when using HeadersToAppend", func() {
+			setProxy(&transformation.TransformationStages{
+				Regular: &transformation.RequestResponseTransformations{
+					ResponseTransforms: []*transformation.ResponseMatch{{
+						ResponseTransformation: &transformation.Transformation{
+							TransformationType: &transformation.Transformation_TransformationTemplate{
+								TransformationTemplate: &envoytransformation.TransformationTemplate{
+									ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
+									Headers: map[string]*envoytransformation.InjaTemplate{
+										"x-custom-header": {Text: "original header"},
+									},
+									HeadersToAppend: []*envoytransformation.TransformationTemplate_HeaderToAppend{
+										{
+											Key:   "x-custom-header",
+											Value: &envoytransformation.InjaTemplate{Text: "{{upper(\"appended header 1\")}}"},
+										},
+										{
+											Key:   "x-custom-header",
+											Value: &envoytransformation.InjaTemplate{Text: "{{upper(\"appended header 2\")}}"},
+										},
+									},
+								},
+							},
+						},
+					}},
+				},
+			})
+			TestUpstreamReachable()
+
+			var client http.Client
+			res, err := client.Post(fmt.Sprintf("http://%s:%d/1", "localhost", envoyPort), "application/octet-stream", nil)
+			Expect(err).NotTo(HaveOccurred())
+			fmt.Printf("%+v\n", res.Header)
+			Expect(res.Header["X-Custom-Header"]).To(ContainElements("original header", "APPENDED HEADER 1", "APPENDED HEADER 2"))
+		})
+
+		It("should apply transforms from most specific level only", func() {
+			vhostTransform := &transformation.TransformationStages{
+				Regular: &transformation.RequestResponseTransformations{
+					ResponseTransforms: []*transformation.ResponseMatch{{
+						ResponseTransformation: &transformation.Transformation{
+							TransformationType: &transformation.Transformation_TransformationTemplate{
+								TransformationTemplate: &envoytransformation.TransformationTemplate{
+									ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
+									Headers: map[string]*envoytransformation.InjaTemplate{
+										"x-solo-1": {Text: "vhost header"},
+									},
+								},
+							},
+						},
+					}},
+				},
+			}
+			setProxyWithModifier(vhostTransform, func(vhost *gloov1.VirtualHost) {
+				vhost.GetRoutes()[0].Options = &gloov1.RouteOptions{
+					StagedTransformations: &transformation.TransformationStages{
+						Regular: &transformation.RequestResponseTransformations{
+							ResponseTransforms: []*transformation.ResponseMatch{{
+								ResponseTransformation: &transformation.Transformation{
+									TransformationType: &transformation.Transformation_TransformationTemplate{
+										TransformationTemplate: &envoytransformation.TransformationTemplate{
+											ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
+											Headers: map[string]*envoytransformation.InjaTemplate{
+												"x-solo-2": {Text: "route header"},
+											},
+										},
+									},
+								},
+							}},
+						},
+					},
+				}
+			})
+			TestUpstreamReachable()
+			var response *http.Response
+			Eventually(func() error {
+				var err error
+				response, err = http.DefaultClient.Get(fmt.Sprintf("http://localhost:%d/1", envoyPort))
+				return err
+			}, "30s", "1s").ShouldNot(HaveOccurred())
+			// Only route level transformations should be applied here due to the nature of envoy choosing
+			// the most specific config (weighted cluster > route > vhost)
+			// This behaviour can be overridden (in the control plane) by using `inheritableTransformations` to merge
+			// transformations down to the route level.
+			Expect(response.Header.Get("x-solo-2")).To(Equal("route header"))
+			Expect(response.Header.Get("x-solo-1")).To(BeEmpty())
+		})
 	})
 
 	Context("with auth", func() {
@@ -228,8 +316,8 @@ var _ = Describe("Staged Transformation", func() {
 				Early: &transformation.RequestResponseTransformations{
 					ResponseTransforms: []*transformation.ResponseMatch{{
 						ResponseCodeDetails: "ext_authz_error",
-						ResponseTransformation: &envoytransformation.Transformation{
-							TransformationType: &envoytransformation.Transformation_TransformationTemplate{
+						ResponseTransformation: &transformation.Transformation{
+							TransformationType: &transformation.Transformation_TransformationTemplate{
 								TransformationTemplate: &envoytransformation.TransformationTemplate{
 									ParseBodyBehavior: envoytransformation.TransformationTemplate_DontParse,
 									BodyTransformation: &envoytransformation.TransformationTemplate_Body{

@@ -4,26 +4,24 @@ import (
 	"context"
 	"time"
 
-	matchers2 "github.com/solo-io/gloo/test/matchers"
-
-	envoycore_sk "github.com/solo-io/solo-kit/pkg/api/external/envoy/api/v2/core"
-
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/headers"
-
-	"github.com/solo-io/gloo/projects/knative/api/external/knative"
-	v1alpha12 "github.com/solo-io/gloo/projects/knative/pkg/api/external/knative"
-
+	"github.com/golang/protobuf/ptypes"
+	"github.com/golang/protobuf/ptypes/duration"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/headers"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/retries"
+	"github.com/solo-io/gloo/projects/knative/api/external/knative"
+	v1alpha12 "github.com/solo-io/gloo/projects/knative/pkg/api/external/knative"
 	v1 "github.com/solo-io/gloo/projects/knative/pkg/api/v1"
+	envoycore_sk "github.com/solo-io/solo-kit/pkg/api/external/envoy/api/v2/core"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	. "github.com/solo-io/solo-kit/test/matchers"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	"knative.dev/serving/pkg/apis/networking/v1alpha1"
+	"knative.dev/networking/pkg/apis/networking/v1alpha1"
 )
 
 var _ = Describe("Translate", func() {
@@ -58,9 +56,9 @@ var _ = Describe("Translate", func() {
 											},
 										},
 									},
-									AppendHeaders: map[string]string{"add": "me"},
-									Timeout:       &metav1.Duration{Duration: time.Nanosecond}, // good luck
-									Retries: &v1alpha1.HTTPRetry{
+									AppendHeaders:     map[string]string{"add": "me"},
+									DeprecatedTimeout: &metav1.Duration{Duration: time.Nanosecond}, // good luck
+									DeprecatedRetries: &v1alpha1.HTTPRetry{
 										Attempts:      14,
 										PerTryTimeout: &metav1.Duration{Duration: time.Microsecond},
 									},
@@ -86,9 +84,9 @@ var _ = Describe("Translate", func() {
 											},
 										},
 									},
-									AppendHeaders: map[string]string{"add": "me"},
-									Timeout:       &metav1.Duration{Duration: time.Nanosecond}, // good luck
-									Retries: &v1alpha1.HTTPRetry{
+									AppendHeaders:     map[string]string{"add": "me"},
+									DeprecatedTimeout: &metav1.Duration{Duration: time.Nanosecond}, // good luck
+									DeprecatedRetries: &v1alpha1.HTTPRetry{
 										Attempts:      14,
 										PerTryTimeout: &metav1.Duration{Duration: time.Microsecond},
 									},
@@ -130,9 +128,9 @@ var _ = Describe("Translate", func() {
 											},
 										},
 									},
-									AppendHeaders: map[string]string{"add": "me"},
-									Timeout:       &metav1.Duration{Duration: time.Nanosecond}, // good luck
-									Retries: &v1alpha1.HTTPRetry{
+									AppendHeaders:     map[string]string{"add": "me"},
+									DeprecatedTimeout: &metav1.Duration{Duration: time.Nanosecond}, // good luck
+									DeprecatedRetries: &v1alpha1.HTTPRetry{
 										Attempts:      14,
 										PerTryTimeout: &metav1.Duration{Duration: time.Microsecond},
 									},
@@ -195,7 +193,7 @@ var _ = Describe("Translate", func() {
 																	Destination: &gloov1.Destination{
 																		DestinationType: &gloov1.Destination_Kube{
 																			Kube: &gloov1.KubernetesServiceDestination{
-																				Ref: core.ResourceRef{
+																				Ref: &core.ResourceRef{
 																					Name:      "peteszah-service",
 																					Namespace: "peteszah-service-namespace",
 																				},
@@ -249,7 +247,7 @@ var _ = Describe("Translate", func() {
 																	Destination: &gloov1.Destination{
 																		DestinationType: &gloov1.Destination_Kube{
 																			Kube: &gloov1.KubernetesServiceDestination{
-																				Ref: core.ResourceRef{
+																				Ref: &core.ResourceRef{
 																					Name:      "peteszah-service",
 																					Namespace: "peteszah-service-namespace",
 																				},
@@ -312,7 +310,7 @@ var _ = Describe("Translate", func() {
 																	Destination: &gloov1.Destination{
 																		DestinationType: &gloov1.Destination_Kube{
 																			Kube: &gloov1.KubernetesServiceDestination{
-																				Ref: core.ResourceRef{
+																				Ref: &core.ResourceRef{
 																					Name:      "peteszah-service",
 																					Namespace: "peteszah-service-namespace",
 																				},
@@ -358,13 +356,12 @@ var _ = Describe("Translate", func() {
 					},
 				},
 			},
-			Status: core.Status{},
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "test",
 				Namespace: "example",
 			},
 		}
-		Expect(proxy).To(matchers2.BeEquivalentToDiff(expected))
+		Expect(proxy).To(MatchProto(expected))
 	})
 
 	It("renders proxies on ssl config based on annotations", func() {
@@ -424,7 +421,7 @@ var _ = Describe("Translate", func() {
 	})
 })
 
-func durptr(d int) *time.Duration {
+func durptr(d int) *duration.Duration {
 	dur := time.Duration(d)
-	return &dur
+	return ptypes.DurationProto(dur)
 }

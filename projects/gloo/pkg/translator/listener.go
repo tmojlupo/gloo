@@ -4,32 +4,31 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
-	"strings"
 
-	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
-
-	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-
-	"github.com/gogo/protobuf/proto"
-
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	envoylistener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
+	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_config_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	"github.com/gogo/protobuf/types"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
+	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	validationapi "github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
+	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/utils/validation"
 	"github.com/solo-io/go-utils/contextutils"
 )
 
-func (t *translatorInstance) computeListener(params plugins.Params, proxy *v1.Proxy, listener *v1.Listener, listenerReport *validationapi.ListenerReport) *envoyapi.Listener {
+func (t *translatorInstance) computeListener(
+	params plugins.Params,
+	proxy *v1.Proxy,
+	listener *v1.Listener,
+	listenerReport *validationapi.ListenerReport,
+) *envoy_config_listener_v3.Listener {
 	params.Ctx = contextutils.WithLogger(params.Ctx, "compute_listener."+listener.Name)
 
 	validateListenerPorts(proxy, listenerReport)
-	var filterChains []*envoylistener.FilterChain
+	var filterChains []*envoy_config_listener_v3.FilterChain
 	switch listener.GetListenerType().(type) {
 	case *v1.Listener_HttpListener:
 		// run the http filter chain plugins and listener plugins
@@ -58,14 +57,14 @@ func (t *translatorInstance) computeListener(params plugins.Params, proxy *v1.Pr
 
 	CheckForDuplicateFilterChainMatches(filterChains, listenerReport)
 
-	out := &envoyapi.Listener{
+	out := &envoy_config_listener_v3.Listener{
 		Name: listener.Name,
-		Address: &envoycore.Address{
-			Address: &envoycore.Address_SocketAddress{
-				SocketAddress: &envoycore.SocketAddress{
-					Protocol: envoycore.SocketAddress_TCP,
+		Address: &envoy_config_core_v3.Address{
+			Address: &envoy_config_core_v3.Address_SocketAddress{
+				SocketAddress: &envoy_config_core_v3.SocketAddress{
+					Protocol: envoy_config_core_v3.SocketAddress_TCP,
 					Address:  listener.BindAddress,
-					PortSpecifier: &envoycore.SocketAddress_PortValue{
+					PortSpecifier: &envoy_config_core_v3.SocketAddress_PortValue{
 						PortValue: listener.BindPort,
 					},
 					Ipv4Compat: true,
@@ -91,7 +90,7 @@ func (t *translatorInstance) computeListener(params plugins.Params, proxy *v1.Pr
 	return out
 }
 
-func (t *translatorInstance) computeListenerFilters(params plugins.Params, listener *v1.Listener, listenerReport *validationapi.ListenerReport) []*envoylistener.Filter {
+func (t *translatorInstance) computeListenerFilters(params plugins.Params, listener *v1.Listener, listenerReport *validationapi.ListenerReport) []*envoy_config_listener_v3.Filter {
 	var listenerFilters []plugins.StagedListenerFilter
 	// run the Listener Filter Plugins
 	for _, plug := range t.plugins {
@@ -122,13 +121,11 @@ func (t *translatorInstance) computeListenerFilters(params plugins.Params, liste
 	}
 
 	// Check that we don't refer to nonexistent auth config
-	for _, vHost := range httpListener.HttpListener.GetVirtualHosts() {
+	for i, vHost := range httpListener.HttpListener.GetVirtualHosts() {
 		acRef := vHost.GetOptions().GetExtauth().GetConfigRef()
 		if acRef != nil {
 			if _, err := params.Snapshot.AuthConfigs.Find(acRef.GetNamespace(), acRef.GetName()); err != nil {
-				validation.AppendHTTPListenerError(
-					httpListenerReport, validationapi.HttpListenerReport_Error_ProcessingError,
-					"auth config not found: "+acRef.String())
+				validation.AppendVirtualHostError(httpListenerReport.VirtualHostReports[i], validationapi.VirtualHostReport_Error_ProcessingError, "auth config not found: "+acRef.String())
 			}
 		}
 	}
@@ -146,16 +143,21 @@ func (t *translatorInstance) computeListenerFilters(params plugins.Params, liste
 
 // create a duplicate of the listener filter chain for each ssl cert we want to serve
 // if there is no SSL config on the listener, the envoy listener will have one insecure filter chain
-func (t *translatorInstance) computeFilterChainsFromSslConfig(snap *v1.ApiSnapshot, listener *v1.Listener, listenerFilters []*envoylistener.Filter, listenerReport *validationapi.ListenerReport) []*envoylistener.FilterChain {
+func (t *translatorInstance) computeFilterChainsFromSslConfig(
+	snap *v1.ApiSnapshot,
+	listener *v1.Listener,
+	listenerFilters []*envoy_config_listener_v3.Filter,
+	listenerReport *validationapi.ListenerReport,
+) []*envoy_config_listener_v3.FilterChain {
 	// if no ssl config is provided, return a single insecure filter chain
 	if len(listener.SslConfigurations) == 0 {
-		return []*envoylistener.FilterChain{{
+		return []*envoy_config_listener_v3.FilterChain{{
 			Filters:       listenerFilters,
-			UseProxyProto: gogoutils.BoolGogoToProto(listener.UseProxyProto),
+			UseProxyProto: listener.GetUseProxyProto(),
 		}}
 	}
 
-	var secureFilterChains []*envoylistener.FilterChain
+	var secureFilterChains []*envoy_config_listener_v3.FilterChain
 
 	for _, sslConfig := range mergeSslConfigs(listener.SslConfigurations) {
 		// get secrets
@@ -173,8 +175,7 @@ func (t *translatorInstance) computeFilterChainsFromSslConfig(snap *v1.ApiSnapsh
 }
 
 func mergeSslConfigs(sslConfigs []*v1.SslConfig) []*v1.SslConfig {
-	// we can merge ssl config if:
-	// they have the same SslSecrets and VerifySubjectAltName
+	// we can merge ssl config if they look the same except for SNI domains.
 	// combine SNI information.
 	// return merged result
 
@@ -184,40 +185,42 @@ func mergeSslConfigs(sslConfigs []*v1.SslConfig) []*v1.SslConfig {
 
 	for _, sslConfig := range sslConfigs {
 
-		key := ""
-		switch sslCfg := sslConfig.SslSecrets.(type) {
-		case *v1.SslConfig_SecretRef:
-			key = sslCfg.SecretRef.GetName() + "," + sslCfg.SecretRef.GetNamespace()
-		case *v1.SslConfig_SslFiles:
-			key = sslCfg.SslFiles.GetTlsCert() + "," + sslCfg.SslFiles.GetTlsKey() + "," + sslCfg.SslFiles.GetRootCa()
-		default:
-			result = append(result, sslConfig)
-			continue
-		}
+		// make sure ssl configs are only different by sni domains
+		sslConfigCopy := proto.Clone(sslConfig).(*v1.SslConfig)
+		sslConfigCopy.SniDomains = nil
+		hash, _ := sslConfigCopy.Hash(nil)
 
-		tmp := make([]string, len(sslConfig.VerifySubjectAltName))
-		copy(tmp, sslConfig.VerifySubjectAltName)
-		sort.Strings(tmp)
-		key = key + ";" + strings.Join(tmp, ",")
+		key := fmt.Sprintf("%d", hash)
 
 		if matchingCfg, ok := mergedSslSecrets[key]; ok {
-			matchingCfg.SslSecrets = sslConfig.SslSecrets
-			matchingCfg.VerifySubjectAltName = sslConfig.VerifySubjectAltName
 			if len(matchingCfg.SniDomains) == 0 || len(sslConfig.SniDomains) == 0 {
 				// if either of the configs match on everything; then match on everything
 				matchingCfg.SniDomains = nil
 			} else {
-				matchingCfg.SniDomains = append(mergedSslSecrets[key].SniDomains, sslConfig.SniDomains...)
+				matchingCfg.SniDomains = merge(matchingCfg.SniDomains, sslConfig.SniDomains...)
 			}
 		} else {
-			cfgCopy := *sslConfig
-			ptrToCopy := &cfgCopy
+			ptrToCopy := proto.Clone(sslConfig).(*v1.SslConfig)
 			mergedSslSecrets[key] = ptrToCopy
 			result = append(result, ptrToCopy)
 		}
 	}
 
 	return result
+}
+
+func merge(values []string, newvalues ...string) []string {
+	existing := map[string]bool{}
+	for _, v := range values {
+		existing[v] = true
+	}
+
+	for _, v := range newvalues {
+		if _, ok := existing[v]; !ok {
+			values = append(values, v)
+		}
+	}
+	return values
 }
 
 func validateListenerPorts(proxy *v1.Proxy, listenerReport *validationapi.ListenerReport) {
@@ -240,32 +243,37 @@ func validateListenerPorts(proxy *v1.Proxy, listenerReport *validationapi.Listen
 	}
 }
 
-func newSslFilterChain(downstreamConfig *envoyauth.DownstreamTlsContext, sniDomains []string, useProxyProto *types.BoolValue, listenerFilters []*envoylistener.Filter) *envoylistener.FilterChain {
+func newSslFilterChain(
+	downstreamConfig *envoyauth.DownstreamTlsContext,
+	sniDomains []string,
+	useProxyProto *wrappers.BoolValue,
+	listenerFilters []*envoy_config_listener_v3.Filter,
+) *envoy_config_listener_v3.FilterChain {
 
 	// copy listenerFilter so we can modify filter chain later without changing the filters on all of them!
-	listenerFiltersCopy := make([]*envoylistener.Filter, len(listenerFilters))
+	listenerFiltersCopy := make([]*envoy_config_listener_v3.Filter, len(listenerFilters))
 	for i, lf := range listenerFilters {
-		listenerFiltersCopy[i] = proto.Clone(lf).(*envoylistener.Filter)
+		listenerFiltersCopy[i] = proto.Clone(lf).(*envoy_config_listener_v3.Filter)
 	}
 
-	return &envoylistener.FilterChain{
-		FilterChainMatch: &envoylistener.FilterChainMatch{
+	return &envoy_config_listener_v3.FilterChain{
+		FilterChainMatch: &envoy_config_listener_v3.FilterChainMatch{
 			ServerNames: sniDomains,
 		},
 		Filters: listenerFiltersCopy,
 
-		TransportSocket: &envoycore.TransportSocket{
+		TransportSocket: &envoy_config_core_v3.TransportSocket{
 			Name:       wellknown.TransportSocketTls,
-			ConfigType: &envoycore.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(downstreamConfig)},
+			ConfigType: &envoy_config_core_v3.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(downstreamConfig)},
 		},
 
-		UseProxyProto: gogoutils.BoolGogoToProto(useProxyProto),
+		UseProxyProto: useProxyProto,
 	}
 }
 
-func sortListenerFilters(filters plugins.StagedListenerFilterList) []*envoylistener.Filter {
+func sortListenerFilters(filters plugins.StagedListenerFilterList) []*envoy_config_listener_v3.Filter {
 	sort.Sort(filters)
-	var sortedFilters []*envoylistener.Filter
+	var sortedFilters []*envoy_config_listener_v3.Filter
 	for _, filter := range filters {
 		sortedFilters = append(sortedFilters, filter.ListenerFilter)
 	}
@@ -280,7 +288,7 @@ func sortListenerFilters(filters plugins.StagedListenerFilterList) []*envoyliste
 // We may want to consider invoking envoy from a library to detect overlapping and other issues, which would build
 // off this discussion: https://github.com/solo-io/gloo/issues/2114
 // Visible for testing
-func CheckForDuplicateFilterChainMatches(filterChains []*envoylistener.FilterChain, listenerReport *validationapi.ListenerReport) {
+func CheckForDuplicateFilterChainMatches(filterChains []*envoy_config_listener_v3.FilterChain, listenerReport *validationapi.ListenerReport) {
 	for idx1, filterChain := range filterChains {
 		for idx2, otherFilterChain := range filterChains {
 			// only need to compare each pair once
@@ -290,7 +298,7 @@ func CheckForDuplicateFilterChainMatches(filterChains []*envoylistener.FilterCha
 			if reflect.DeepEqual(filterChain.FilterChainMatch, otherFilterChain.FilterChainMatch) {
 				validation.AppendListenerError(listenerReport,
 					validationapi.ListenerReport_Error_SSLConfigError, fmt.Sprintf("Tried to apply multiple filter chains "+
-						"with the same FilterChainMatch. This is usually caused by overlapping sniDomains in virtual services: {%v}", filterChain.FilterChainMatch))
+						"with the same FilterChainMatch {%v}. This is usually caused by overlapping sniDomains or multiple empty sniDomains in virtual services", filterChain.FilterChainMatch))
 			}
 		}
 	}

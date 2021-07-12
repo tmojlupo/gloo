@@ -2,21 +2,19 @@ syntax = "proto3";
 package gateway.solo.io;
 option go_package = "github.com/solo-io/gloo/projects/gateway/pkg/api/v1";
 
-import "gogoproto/gogo.proto";
-option (gogoproto.equal_all) = true;
 import "extproto/ext.proto";
+option (extproto.equal_all) = true;
 option (extproto.hash_all) = true;
 
 import "google/protobuf/wrappers.proto";
-import "solo-kit/api/v1/metadata.proto";
-import "solo-kit/api/v1/status.proto";
-import "solo-kit/api/v1/ref.proto";
-import "solo-kit/api/v1/solo-kit.proto";
-import "gloo/projects/gloo/api/v1/ssl.proto";
-import "gloo/projects/gloo/api/v1/proxy.proto";
-import "gloo/projects/gloo/api/v1/options.proto";
-
-import "gloo/projects/gloo/api/v1/core/matchers/matchers.proto";
+import "github.com/solo-io/solo-kit/api/v1/metadata.proto";
+import "github.com/solo-io/solo-kit/api/v1/status.proto";
+import "github.com/solo-io/solo-kit/api/v1/ref.proto";
+import "github.com/solo-io/solo-kit/api/v1/solo-kit.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/ssl.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/proxy.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/options.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/core/matchers/matchers.proto";
 
 /*
 *
@@ -134,10 +132,10 @@ message VirtualService {
 
     // Status indicates the validation status of this resource.
     // Status is read-only by clients, and set by gloo during validation
-    core.solo.io.Status status = 6 [(gogoproto.nullable) = false, (gogoproto.moretags) = "testdiff:\"ignore\"", (extproto.skip_hashing) = true];
+    core.solo.io.Status status = 6 [(extproto.skip_hashing) = true];
 
     // Metadata contains the object metadata for this resource
-    core.solo.io.Metadata metadata = 7 [(gogoproto.nullable) = false];
+    core.solo.io.Metadata metadata = 7;
 }
 
 
@@ -154,7 +152,7 @@ Unlike the [Gloo Virtual Host]({{< ref "/reference/api/github.com/solo-io/gloo/p
  */
 message VirtualHost {
     // The list of domains (i.e.: matching the `Host` header of a request) that belong to this virtual host.
-    // Note that the wildcard will not match the empty string. e.g. “*-bar.foo.com” will match “baz-bar.foo.com”
+    // Note that the wildcard will not match the empty string. e.g. “\*-bar.foo.com” will match “baz-bar.foo.com”
     // but not “-bar.foo.com”. Additionally, a special entry “*” is allowed which will match any host/authority header.
     // Only a single virtual host on a gateway can match on “*”. A domain must be unique across all
     // virtual hosts on a gateway or the config will be invalidated by Gloo
@@ -169,6 +167,20 @@ message VirtualHost {
     // Virtual host options contain additional configuration to be applied to all traffic served by the Virtual Host.
     // Some configuration here can be overridden by Route Options.
     gloo.solo.io.VirtualHostOptions options = 4;
+
+    oneof external_options_config {
+    /* Delegate the VirtualHost options to an external VirtualHostOption Resource.
+     Any options configured in the VirtualHost's `options` field will override all
+     delegated options. If multiple VirtualHostOption CRs are delegated to, configuration will
+     be taken from prior VirtualHostOption CRs over later ones.
+     For example if `headerManipulation` is specified on the VirtualHost options, a delegated
+     `VirtualHostOption` vhost-opt-1, and a second delegated `VirtualHostOption` vhost-opt-2, the `headerManipulation`
+     config from only the VirtualHost-level `options` will be applied. If the config is removed from the VirtualHost-level `options` field,
+     then the config from the first delegated `VirtualHostOption`, vhost-opt-1, is applied.
+    */
+      DelegateOptionsRefs options_config_refs = 5;
+    }
+
 }
 
 /*
@@ -183,14 +195,18 @@ message VirtualHost {
 * top-level `RouteTable` resources.
 */
 message Route {
-    // Matchers contain parameters for matching requests (i.e., based on HTTP path, headers, etc.)
-    // If empty, the route will match all requests (i.e, a single "/" path prefix matcher)
-    // For delegated routes, the matcher must contain only a `prefix` path matcher and no other config
+    // Matchers contain parameters for matching requests (i.e., based on HTTP path, headers, etc.).
+    // If empty, the route will match all requests (i.e, a single "/" path prefix matcher).
+    // For delegated routes, any parent matcher must have a `prefix` path matcher.
     repeated matchers.core.gloo.solo.io.Matcher matchers = 1;
 
-    // Whether any child route objects should inherit headers, methods, and query parameter matchers from the parent.
+    // Whether this route as a child should inherit headers, methods, and query parameter matchers from the parent.
     // Defaults to value of parent; for virtual services (no parent) defaults to false.
     google.protobuf.BoolValue inheritable_matchers = 8;
+
+    // Whether this route as a child should inherit path matchers (i.e., path itself, case-sensitive setting) from
+    // the parent. Defaults to value of parent; for virtual services (no parent) defaults to false.
+    google.protobuf.BoolValue inheritable_path_matchers = 9;
 
     // The Route Action Defines what action the proxy should take when a request matches the route.
     oneof action {
@@ -198,7 +214,7 @@ message Route {
         // route requests to an upstream.
         gloo.solo.io.RouteAction route_action = 2;
 
-        // Redirect actions tell the proxy to return a redirect response to the downstream client
+        // Redirect actions tell the proxy to return a redirect response to the downstream client.
         gloo.solo.io.RedirectAction redirect_action = 3;
 
         // Return an arbitrary HTTP response directly, without proxying.
@@ -215,19 +231,41 @@ message Route {
 
     // The name provides a convenience for users to be able to refer to a route by name.
     string name = 7;
+
+    oneof external_options_config {
+
+      /* Delegate the Route options to an external RouteOption Resource.
+     Any options configured in the Route's `options` field will override all
+     delegated options. If multiple RouteOption CRs are delegated to, configuration will
+     be taken from prior RouteOption CRs over later ones.
+     For example if `headerManipulation` is specified on the route options, a delegated
+     `RouteOption` route-opt-1, and a second delegated `RouteOption` route-opt-2, the `headerManipulation`
+     config from only the Route-level `options` will be applied. If the config is removed from the Route-level `options` field,
+     then the config from the first delegated `RouteOption`, route-opt-1, is applied.
+     */
+      DelegateOptionsRefs options_config_refs = 10;
+    }
+
+}
+
+message DelegateOptionsRefs {
+  /*
+    List of resource refs to Option CRs
+   */
+  repeated core.solo.io.ResourceRef delegate_options = 1;
 }
 
 // DelegateActions are used to delegate routing decisions to Route Tables.
 message DelegateAction {
 
     // The name of the Route Table to delegate to.
-    // Deprecated: these fields have been added for backwards-compatibility. Please use the `single` field. If `name`
-    // and/or `namespace` have been specified, Gloo will ignore `single` and `selector`.
+    // Deprecated: these fields have been added for backwards-compatibility. Please use the `ref` field. If `name`
+    // and/or `namespace` have been specified, Gloo will ignore `ref` and `selector`.
     string name = 1 [deprecated = true];
 
     // The namespace of the Route Table to delegate to.
-    // Deprecated: these fields have been added for backwards-compatibility. Please use the `single` field. If `name`
-    // and/or `namespace` have been specified, Gloo will ignore `single` and `selector`.
+    // Deprecated: these fields have been added for backwards-compatibility. Please use the `ref` field. If `name`
+    // and/or `namespace` have been specified, Gloo will ignore `ref` and `selector`.
     string namespace = 2 [deprecated = true];
 
     oneof delegation_type {

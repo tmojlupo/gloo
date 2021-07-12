@@ -16,6 +16,7 @@ weight: 5
 - [Transformations](#transformations)
 - [RequestResponseTransformations](#requestresponsetransformations)
 - [TransformationStages](#transformationstages)
+- [Transformation](#transformation)
   
 
 
@@ -34,15 +35,15 @@ weight: 5
 ```yaml
 "matchers": []matchers.core.gloo.solo.io.HeaderMatcher
 "responseCodeDetails": string
-"responseTransformation": .envoy.api.v2.filter.http.Transformation
+"responseTransformation": .transformation.options.gloo.solo.io.Transformation
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `matchers` | [[]matchers.core.gloo.solo.io.HeaderMatcher](../../../core/matchers/matchers.proto.sk/#headermatcher) | Response headers to match on. |  |
-| `responseCodeDetails` | `string` | Response code detail to match on. To see the response code details for your usecase, you can use the envoy access log %RESPONSE_CODE_DETAILS% formatter to log it. |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#transformation) | Transformation to apply on the response. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `matchers` | [[]matchers.core.gloo.solo.io.HeaderMatcher](../../../core/matchers/matchers.proto.sk/#headermatcher) | Response headers to match on. |
+| `responseCodeDetails` | `string` | Response code detail to match on. To see the response code details for your usecase, you can use the envoy access log %RESPONSE_CODE_DETAILS% formatter to log it. |
+| `responseTransformation` | [.transformation.options.gloo.solo.io.Transformation](../transformation.proto.sk/#transformation) | Transformation to apply on the response. |
 
 
 
@@ -55,17 +56,17 @@ weight: 5
 ```yaml
 "matcher": .matchers.core.gloo.solo.io.Matcher
 "clearRouteCache": bool
-"requestTransformation": .envoy.api.v2.filter.http.Transformation
-"responseTransformation": .envoy.api.v2.filter.http.Transformation
+"requestTransformation": .transformation.options.gloo.solo.io.Transformation
+"responseTransformation": .transformation.options.gloo.solo.io.Transformation
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `matcher` | [.matchers.core.gloo.solo.io.Matcher](../../../core/matchers/matchers.proto.sk/#matcher) | Matches on the request properties. |  |
-| `clearRouteCache` | `bool` | Should we clear the route cache if a transformation was matched. |  |
-| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#transformation) | Transformation to apply on the request. |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#transformation) | Transformation to apply on the response. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `matcher` | [.matchers.core.gloo.solo.io.Matcher](../../../core/matchers/matchers.proto.sk/#matcher) | Matches on the request properties. |
+| `clearRouteCache` | `bool` | Should we clear the route cache if a transformation was matched. |
+| `requestTransformation` | [.transformation.options.gloo.solo.io.Transformation](../transformation.proto.sk/#transformation) | Transformation to apply on the request. |
+| `responseTransformation` | [.transformation.options.gloo.solo.io.Transformation](../transformation.proto.sk/#transformation) | Transformation to apply on the response. |
 
 
 
@@ -76,17 +77,17 @@ weight: 5
 
 
 ```yaml
-"requestTransformation": .envoy.api.v2.filter.http.Transformation
+"requestTransformation": .transformation.options.gloo.solo.io.Transformation
 "clearRouteCache": bool
-"responseTransformation": .envoy.api.v2.filter.http.Transformation
+"responseTransformation": .transformation.options.gloo.solo.io.Transformation
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `requestTransformation` | [.envoy.api.v2.filter.http.Transformation](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#transformation) | Apply a transformation to requests. |  |
-| `clearRouteCache` | `bool` | Clear the route cache if the request transformation was applied. |  |
-| `responseTransformation` | [.envoy.api.v2.filter.http.Transformation](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#transformation) | Apply a transformation to responses. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `requestTransformation` | [.transformation.options.gloo.solo.io.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation to requests. |
+| `clearRouteCache` | `bool` | Clear the route cache if the request transformation was applied. |
+| `responseTransformation` | [.transformation.options.gloo.solo.io.Transformation](../transformation.proto.sk/#transformation) | Apply a transformation to responses. |
 
 
 
@@ -102,10 +103,10 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `requestTransforms` | [[]transformation.options.gloo.solo.io.RequestMatch](../transformation.proto.sk/#requestmatch) | Transformations to apply on the request. The first request that matches will apply. |  |
-| `responseTransforms` | [[]transformation.options.gloo.solo.io.ResponseMatch](../transformation.proto.sk/#responsematch) | Transformations to apply on the response. This field is only consulted if there is no response transformation in the matched `request_transforms`. i.e. Only one response transformation will be executed. The first response transformation that matches will apply. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `requestTransforms` | [[]transformation.options.gloo.solo.io.RequestMatch](../transformation.proto.sk/#requestmatch) | Transformations to apply on the request. The first request that matches will apply. |
+| `responseTransforms` | [[]transformation.options.gloo.solo.io.ResponseMatch](../transformation.proto.sk/#responsematch) | Transformations to apply on the response. This field is only consulted if there is no response transformation in the matched `request_transforms`. i.e. Only one response transformation will be executed. The first response transformation that matches will apply. |
 
 
 
@@ -118,13 +119,37 @@ weight: 5
 ```yaml
 "early": .transformation.options.gloo.solo.io.RequestResponseTransformations
 "regular": .transformation.options.gloo.solo.io.RequestResponseTransformations
+"inheritTransformation": bool
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `early` | [.transformation.options.gloo.solo.io.RequestResponseTransformations](../transformation.proto.sk/#requestresponsetransformations) | Early transformations happen before most other options (Like Auth and Rate Limit). |  |
-| `regular` | [.transformation.options.gloo.solo.io.RequestResponseTransformations](../transformation.proto.sk/#requestresponsetransformations) | Regular transformations happen after Auth and Rate limit decisions has been made. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `early` | [.transformation.options.gloo.solo.io.RequestResponseTransformations](../transformation.proto.sk/#requestresponsetransformations) | Early transformations happen before most other options (Like Auth and Rate Limit). |
+| `regular` | [.transformation.options.gloo.solo.io.RequestResponseTransformations](../transformation.proto.sk/#requestresponsetransformations) | Regular transformations happen after Auth and Rate limit decisions has been made. |
+| `inheritTransformation` | `bool` | Inherit transformation config from parent. This has no affect on VirtualHost level transformations. If a RouteTable or Route wants to inherit transformations from it's parent RouteTable or VirtualHost, this should be set to true, else transformations from parents will not be inherited. Transformations are ordered so the child's transformation gets priority, so in the case where a child and parent's transformation matchers are the same, only the child's transformation will run because only one transformation will run per stage. Defaults to false. |
+
+
+
+
+---
+### Transformation
+
+ 
+User-facing API for transformation.
+
+```yaml
+"transformationTemplate": .envoy.api.v2.filter.http.TransformationTemplate
+"headerBodyTransform": .envoy.api.v2.filter.http.HeaderBodyTransform
+"xsltTransformation": .envoy.config.transformer.xslt.v2.XsltTransformation
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `transformationTemplate` | [.envoy.api.v2.filter.http.TransformationTemplate](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#transformationtemplate) | Apply transformation templates. Only one of `transformationTemplate`, or `xsltTransformation` can be set. |
+| `headerBodyTransform` | [.envoy.api.v2.filter.http.HeaderBodyTransform](../../../../external/envoy/extensions/transformation/transformation.proto.sk/#headerbodytransform) | This type of transformation will make all the headers available in the response body. The resulting JSON body will consist of two attributes: 'headers', containing the headers, and 'body', containing the original body. Only one of `headerBodyTransform`, or `xsltTransformation` can be set. |
+| `xsltTransformation` | [.envoy.config.transformer.xslt.v2.XsltTransformation](../../../../external/envoy/extensions/transformers/xslt/xslt_transformer.proto.sk/#xslttransformation) | (Enterprise Only): Xslt Transformation. Only one of `xsltTransformation`, or `headerBodyTransform` can be set. |
 
 
 

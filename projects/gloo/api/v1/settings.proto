@@ -2,22 +2,22 @@ syntax = "proto3";
 package gloo.solo.io;
 option go_package = "github.com/solo-io/gloo/projects/gloo/pkg/api/v1";
 
-import "gogoproto/gogo.proto";
-option (gogoproto.equal_all) = true;
 import "extproto/ext.proto";
+option (extproto.equal_all) = true;
 option (extproto.hash_all) = true;
 
-import "solo-kit/api/v1/metadata.proto";
-import "solo-kit/api/v1/status.proto";
-import "solo-kit/api/v1/solo-kit.proto";
-import "solo-kit/api/v1/ref.proto";
+import "github.com/solo-io/solo-kit/api/v1/metadata.proto";
+import "github.com/solo-io/solo-kit/api/v1/status.proto";
+import "github.com/solo-io/solo-kit/api/v1/solo-kit.proto";
+import "github.com/solo-io/solo-kit/api/v1/ref.proto";
 
-import "gloo/projects/gloo/api/v1/extensions.proto";
-import "gloo/projects/gloo/api/v1/enterprise/options/ratelimit/ratelimit.proto";
-import "gloo/projects/gloo/api/v1/enterprise/options/extauth/v1/extauth.proto";
-import "gloo/projects/gloo/api/v1/enterprise/options/rbac/rbac.proto";
-import "gloo/projects/gloo/api/v1/circuit_breaker.proto";
-import "gloo/projects/gloo/api/external/envoy/extensions/aws/filter.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/extensions.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/enterprise/options/ratelimit/ratelimit.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/enterprise/options/extauth/v1/extauth.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/enterprise/options/rbac/rbac.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/circuit_breaker.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/ssl.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/external/envoy/extensions/aws/filter.proto";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/wrappers.proto";
@@ -334,12 +334,61 @@ message Settings {
     // Enterprise-only: External auth related settings
     enterprise.gloo.solo.io.Settings extauth = 29;
 
+    // Enterprise-only: External auth related settings for additional auth servers
+    // This should only be used in the case where separate servers are needed to authorize separate routes.
+    // With multiple auth servers configured in Settings, multiple filters will be configured
+    // on the filter chain, but only 1 will be executed on a route.
+    // The name of the auth server (ie the key in the map) will be used to apply the configuration on the route.
+    // If an auth server name is not supplied on a route, the default auth server will be applied.
+    map<string, enterprise.gloo.solo.io.Settings> named_extauth = 33;
+
     // Metadata contains the object metadata for this resource
-    core.solo.io.Metadata metadata = 14 [(gogoproto.nullable) = false];
+    core.solo.io.Metadata metadata = 14;
 
     // Status indicates the validation status of this resource.
     // Status is read-only by clients, and set by gloo during validation
-    core.solo.io.Status status = 15 [(gogoproto.nullable) = false, (gogoproto.moretags) = "testdiff:\"ignore\"", (extproto.skip_hashing) = true];
+    core.solo.io.Status status = 15 [(extproto.skip_hashing) = true];
+
+    message ObservabilityOptions {
+
+        // Provides settings related to the observability pod's interactions with grafana
+        message GrafanaIntegration {
+
+            // (UInt32Value) Grafana allows dashboards to be added to specific folders by specifying that folder's ID
+            // If unset, automatic upstream dashboards are generated in the general folder (folderId: 0).
+            // If set, the observability deployment will try to create/move all upstreams without their own folderId
+            // to the folder specified here, after verifying that a folder with such an ID exists.
+            // Be aware that grafana requires a folders ID, which
+            // should not be confused with the similarly-named and more easily accessible folder UID value.
+            // If individual upstream dashboards need to be placed specific granafa folders, they can be given their own
+            // folder IDs by annotating the upstreams. The annotation key must be
+            // 'observability.solo.io/dashboard_folder_id' and the value must be the folder ID.
+            // Folder IDs can be retrieved from grafana with a pair of terminal commands:
+            // 1. Port forward the grafana deployment to surface its API:
+            // kubectl -n gloo-system port-forward deployment/glooe-grafana 3000
+            // 2. Request all folder data (after admin:admin is replaced with the correct credentials):
+            // curl http://admin:admin@localhost:3000/api/folders
+            google.protobuf.UInt32Value default_dashboard_folder_id = 1;
+        }
+
+        // Options to configure Gloo's integration with [Kubernetes](https://www.kubernetes.io/).
+        GrafanaIntegration grafanaIntegration = 1;
+    }
+
+    // Provides settings related to the observability deployment (enterprise only)
+    ObservabilityOptions observabilityOptions = 31;
+
+    // Default configuration to use for upstreams, when not provided by specific upstream
+    // When these properties are defined on an upstream, this configuration will be ignored
+    UpstreamOptions upstreamOptions = 32;
+
+}
+
+// Default configuration to use for upstreams, when not provided by a specific upstream
+// When these properties are defined on a specific upstream, this configuration will be ignored
+message UpstreamOptions {
+    // Default ssl parameter configuration to use for upstreams
+    SslParameters ssl_parameters = 1;
 }
 
 // Settings specific to the gloo (Envoy xDS server) controller
@@ -440,9 +489,19 @@ message GlooOptions {
     // defaults to 100.
     google.protobuf.UInt32Value regex_max_program_size = 10;
 
-    // (Enterprise Only): Where the `gloo` REST xDS server should bind. Used by Gloo Federation.
+    // Where the `gloo` REST xDS server should bind.
     // Defaults to `0.0.0.0:9976`
     string rest_xds_bind_addr = 11;
+
+    // Whether or not to use rest xds for all EDS by default. 
+    // Rest XDS, as opposed to grpc, uses http polling rather than streaming
+    google.protobuf.BoolValue enable_rest_eds = 12;
+
+    // The polling interval for the DNS server if upstream failover is configured.
+    // If there is a failover upstream address with a hostname instead of an IP, Gloo will resolve the
+    // hostname with the configured frequency to update endpoints with any changes to DNS resolution.
+    // Defaults to 10s.
+    google.protobuf.Duration failover_upstream_dns_polling_interval = 13;
 }
 
 // Settings specific to the Gateway controller
@@ -474,9 +533,30 @@ message GatewayOptions {
         google.protobuf.BoolValue always_accept = 6;
 
         // Accept resources if validation produced a warning (defaults to true).
-        // By settings to false, this means that validation will start rejecting resources that would result
+        // By setting to false, this means that validation will start rejecting resources that would result
         // in warnings, rather than just those that would result in errors.
         google.protobuf.BoolValue allow_warnings = 7;
+
+        // Write a warning to route resources if validation produced a route ordering warning (defaults to false).
+        // By setting to true, this means that Gloo will start assigning warnings to resources that would result
+        // in route short-circuiting within a virtual host, for example:
+        //   - prefix routes that make later routes unreachable
+        //   - regex routes that make later routes unreachable
+        //   - duplicate matchers
+        google.protobuf.BoolValue warn_route_short_circuiting = 8;
+
+        // By default gloo will attempt to validate transformations by calling out to a local envoy binary in `validate` mode.
+        // Calling this local envoy binary can become slow when done many times during a single validation.
+        // Setting this to true will stop gloo from calling out to envoy to validate the transformations, which may speed up the 
+        // validation time considerably, but may also cause the transformation config to fail after being sent to envoy. 
+        // When disabling this, ensure that your transformations are valid prior to applying them.
+        google.protobuf.BoolValue disable_transformation_validation = 9;
+
+        // By default, gRPC validation messages between gateway and gloo pods have a max message size of 4 MB.
+        // Setting this value sets the gRPC max message size in bytes for the gloo validation server. This should
+        // only be changed if necessary.
+        // If not included, the gRPC max message size will be the default of 4 MB.
+        google.protobuf.Int64Value validation_server_grpc_max_size = 10;
     }
 
     // If provided, the Gateway will perform [Dynamic Admission Control](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/)

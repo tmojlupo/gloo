@@ -1,16 +1,15 @@
 package als
 
 import (
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	envoyal "github.com/envoyproxy/go-control-plane/envoy/config/accesslog/v3"
 	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_config_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	envoyalfile "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/file/v3"
 	envoygrpc "github.com/envoyproxy/go-control-plane/envoy/extensions/access_loggers/grpc/v3"
 	envoyhttp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	envoytcp "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"github.com/rotisserie/eris"
-	"github.com/solo-io/gloo/pkg/utils/protoutils"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/als"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
@@ -35,7 +34,7 @@ func (p *Plugin) Init(params plugins.InitParams) error {
 	return nil
 }
 
-func (p *Plugin) ProcessListener(params plugins.Params, in *v1.Listener, out *envoyapi.Listener) error {
+func (p *Plugin) ProcessListener(params plugins.Params, in *v1.Listener, out *envoy_config_listener_v3.Listener) error {
 	if in.GetOptions() == nil {
 		return nil
 	}
@@ -48,8 +47,8 @@ func (p *Plugin) ProcessListener(params plugins.Params, in *v1.Listener, out *en
 		if listenerType.HttpListener == nil {
 			return nil
 		}
-		for _, f := range out.FilterChains {
-			for i, filter := range f.Filters {
+		for _, f := range out.GetFilterChains() {
+			for i, filter := range f.GetFilters() {
 				if filter.Name == wellknown.HTTPConnectionManager {
 					// get config
 					var hcmCfg envoyhttp.HttpConnectionManager
@@ -60,7 +59,7 @@ func (p *Plugin) ProcessListener(params plugins.Params, in *v1.Listener, out *en
 					}
 
 					accessLogs := hcmCfg.GetAccessLog()
-					hcmCfg.AccessLog, err = handleAccessLogPlugins(alSettings.AccessLoggingService, accessLogs, params)
+					hcmCfg.AccessLog, err = handleAccessLogPlugins(alSettings.GetAccessLoggingService(), accessLogs, params)
 					if err != nil {
 						return err
 					}
@@ -77,8 +76,8 @@ func (p *Plugin) ProcessListener(params plugins.Params, in *v1.Listener, out *en
 		if listenerType.TcpListener == nil {
 			return nil
 		}
-		for _, f := range out.FilterChains {
-			for i, filter := range f.Filters {
+		for _, f := range out.GetFilterChains() {
+			for i, filter := range f.GetFilters() {
 				if filter.Name == wellknown.TCPProxy {
 					// get config
 					var tcpCfg envoytcp.TcpProxy
@@ -89,7 +88,7 @@ func (p *Plugin) ProcessListener(params plugins.Params, in *v1.Listener, out *en
 					}
 
 					accessLogs := tcpCfg.GetAccessLog()
-					tcpCfg.AccessLog, err = handleAccessLogPlugins(alSettings.AccessLoggingService, accessLogs, params)
+					tcpCfg.AccessLog, err = handleAccessLogPlugins(alSettings.GetAccessLoggingService(), accessLogs, params)
 					if err != nil {
 						return err
 					}
@@ -152,8 +151,9 @@ func copyGrpcSettings(cfg *envoygrpc.HttpGrpcAccessLogConfig, alsSettings *als.A
 	cfg.AdditionalResponseHeadersToLog = alsSettings.GrpcService.AdditionalResponseHeadersToLog
 	cfg.AdditionalResponseTrailersToLog = alsSettings.GrpcService.AdditionalResponseTrailersToLog
 	cfg.CommonConfig = &envoygrpc.CommonGrpcAccessLogConfig{
-		LogName:     alsSettings.GrpcService.LogName,
-		GrpcService: svc,
+		LogName:             alsSettings.GrpcService.LogName,
+		GrpcService:         svc,
+		TransportApiVersion: envoycore.ApiVersion_V3,
 	}
 	return cfg.Validate()
 }
@@ -172,14 +172,10 @@ func copyFileSettings(cfg *envoyalfile.FileAccessLog, alsSettings *als.AccessLog
 			}
 		}
 	case *als.FileSink_JsonFormat:
-		converted, err := protoutils.StructGogoToPb(fileSinkType.JsonFormat)
-		if err != nil {
-			return err
-		}
 		cfg.AccessLogFormat = &envoyalfile.FileAccessLog_LogFormat{
 			LogFormat: &envoycore.SubstitutionFormatString{
 				Format: &envoycore.SubstitutionFormatString_JsonFormat{
-					JsonFormat: converted,
+					JsonFormat: fileSinkType.JsonFormat,
 				},
 			},
 		}

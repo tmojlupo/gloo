@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hashicorp/go-multierror"
+
 	"github.com/ghodss/yaml"
 
 	"net/http"
@@ -55,7 +57,7 @@ var _ = Describe("ValidatingAdmissionWebhook", func() {
 		},
 	}
 
-	routeTable := &v1.RouteTable{Metadata: core.Metadata{Namespace: "namespace", Name: "rt"}}
+	routeTable := &v1.RouteTable{Metadata: &core.Metadata{Namespace: "namespace", Name: "rt"}}
 
 	errMsg := "didn't say the magic word"
 
@@ -64,8 +66,8 @@ var _ = Describe("ValidatingAdmissionWebhook", func() {
 		wh.webhookNamespace = routeTable.Metadata.Namespace
 
 		if !valid {
-			mv.fValidateList = func(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, error) {
-				return proxyReports(), fmt.Errorf(errMsg)
+			mv.fValidateList = func(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, *multierror.Error) {
+				return proxyReports(), &multierror.Error{Errors: []error{fmt.Errorf(errMsg)}}
 			}
 			mv.fValidateGateway = func(ctx context.Context, gw *v1.Gateway, dryRun bool) (validation.ProxyReports, error) {
 				return proxyReports(), fmt.Errorf(errMsg)
@@ -298,12 +300,12 @@ func parseReviewResponse(resp *http.Response) (*AdmissionReviewWithProxies, erro
 
 type mockValidator struct {
 	fSync                         func(context.Context, *v1.ApiSnapshot) error
-	fValidateList                 func(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, error)
+	fValidateList                 func(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, *multierror.Error)
 	fValidateGateway              func(ctx context.Context, gw *v1.Gateway, dryRun bool) (validation.ProxyReports, error)
 	fValidateVirtualService       func(ctx context.Context, vs *v1.VirtualService, dryRun bool) (validation.ProxyReports, error)
-	fValidateDeleteVirtualService func(ctx context.Context, vs core.ResourceRef, dryRun bool) error
+	fValidateDeleteVirtualService func(ctx context.Context, vs *core.ResourceRef, dryRun bool) error
 	fValidateRouteTable           func(ctx context.Context, rt *v1.RouteTable, dryRun bool) (validation.ProxyReports, error)
-	fValidateDeleteRouteTable     func(ctx context.Context, rt core.ResourceRef, dryRun bool) error
+	fValidateDeleteRouteTable     func(ctx context.Context, rt *core.ResourceRef, dryRun bool) error
 }
 
 func (v *mockValidator) Sync(ctx context.Context, snap *v1.ApiSnapshot) error {
@@ -313,7 +315,7 @@ func (v *mockValidator) Sync(ctx context.Context, snap *v1.ApiSnapshot) error {
 	return v.fSync(ctx, snap)
 }
 
-func (v *mockValidator) ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, error) {
+func (v *mockValidator) ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (validation.ProxyReports, *multierror.Error) {
 	if v.fValidateList == nil {
 		return proxyReports(), nil
 	}
@@ -334,7 +336,7 @@ func (v *mockValidator) ValidateVirtualService(ctx context.Context, vs *v1.Virtu
 	return v.fValidateVirtualService(ctx, vs, dryRun)
 }
 
-func (v *mockValidator) ValidateDeleteVirtualService(ctx context.Context, vs core.ResourceRef, dryRun bool) error {
+func (v *mockValidator) ValidateDeleteVirtualService(ctx context.Context, vs *core.ResourceRef, dryRun bool) error {
 	if v.fValidateDeleteVirtualService == nil {
 		return nil
 	}
@@ -348,7 +350,7 @@ func (v *mockValidator) ValidateRouteTable(ctx context.Context, rt *v1.RouteTabl
 	return v.fValidateRouteTable(ctx, rt, dryRun)
 }
 
-func (v *mockValidator) ValidateDeleteRouteTable(ctx context.Context, rt core.ResourceRef, dryRun bool) error {
+func (v *mockValidator) ValidateDeleteRouteTable(ctx context.Context, rt *core.ResourceRef, dryRun bool) error {
 	if v.fValidateDeleteRouteTable == nil {
 		return nil
 	}
@@ -358,7 +360,7 @@ func (v *mockValidator) ValidateDeleteRouteTable(ctx context.Context, rt core.Re
 func proxyReports() validation.ProxyReports {
 	return validation.ProxyReports{
 		{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "listener-::-8080",
 				Namespace: "gloo-system",
 			},

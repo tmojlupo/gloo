@@ -1,8 +1,8 @@
 package virtualhost_test
 
 import (
-	envoyroute "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	types "github.com/gogo/protobuf/types"
+	envoy_config_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
@@ -20,11 +20,11 @@ var _ = Describe("AttemptCount Plugin", func() {
 	})
 
 	It("allows setting both values independently", func() {
-		out := &envoyroute.VirtualHost{}
+		out := &envoy_config_route_v3.VirtualHost{}
 
 		err := acPlugin.ProcessVirtualHost(plugins.VirtualHostParams{}, &v1.VirtualHost{
 			Options: &v1.VirtualHostOptions{
-				IncludeRequestAttemptCount: &types.BoolValue{
+				IncludeRequestAttemptCount: &wrappers.BoolValue{
 					Value: true,
 				},
 			},
@@ -36,10 +36,10 @@ var _ = Describe("AttemptCount Plugin", func() {
 
 		err = acPlugin.ProcessVirtualHost(plugins.VirtualHostParams{}, &v1.VirtualHost{
 			Options: &v1.VirtualHostOptions{
-				IncludeRequestAttemptCount: &types.BoolValue{
+				IncludeRequestAttemptCount: &wrappers.BoolValue{
 					Value: false,
 				},
-				IncludeAttemptCountInResponse: &types.BoolValue{
+				IncludeAttemptCountInResponse: &wrappers.BoolValue{
 					Value: true,
 				},
 			},
@@ -51,7 +51,7 @@ var _ = Describe("AttemptCount Plugin", func() {
 	})
 
 	It("still causes both values to default to false", func() {
-		out := &envoyroute.VirtualHost{}
+		out := &envoy_config_route_v3.VirtualHost{}
 		err := acPlugin.ProcessVirtualHost(plugins.VirtualHostParams{}, &v1.VirtualHost{
 			Options: &v1.VirtualHostOptions{},
 		}, out)
@@ -62,8 +62,8 @@ var _ = Describe("AttemptCount Plugin", func() {
 
 		err = acPlugin.ProcessVirtualHost(plugins.VirtualHostParams{}, &v1.VirtualHost{
 			Options: &v1.VirtualHostOptions{
-				IncludeRequestAttemptCount:    &types.BoolValue{},
-				IncludeAttemptCountInResponse: &types.BoolValue{},
+				IncludeRequestAttemptCount:    &wrappers.BoolValue{},
+				IncludeAttemptCountInResponse: &wrappers.BoolValue{},
 			},
 		}, out)
 

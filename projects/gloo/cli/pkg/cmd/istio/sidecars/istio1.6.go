@@ -5,7 +5,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-func generateIstio16Sidecar(version, jwtPolicy string) *corev1.Container {
+func generateIstio16Sidecar(version, jwtPolicy string, istioMetaMeshID string, istioMetaClusterID string) *corev1.Container {
 	sidecar := &corev1.Container{
 		Name:  "istio-proxy",
 		Image: "docker.io/istio/proxyv2:" + version,
@@ -25,7 +25,7 @@ func generateIstio16Sidecar(version, jwtPolicy string) *corev1.Container {
 			"--parentShutdownDuration",
 			"1m0s",
 			"--discoveryAddress",
-			"istio-pilot.istio-system.svc:15012",
+			"istiod.istio-system.svc:15012",
 			"--proxyLogLevel=warning",
 			"--proxyComponentLogLevel=misc:error",
 			"--connectTimeout",
@@ -60,11 +60,11 @@ func generateIstio16Sidecar(version, jwtPolicy string) *corev1.Container {
 			},
 			{
 				Name:  "ISTIO_META_MESH_ID",
-				Value: "cluster.local",
+				Value: istioMetaMeshID,
 			},
 			{
 				Name:  "ISTIO_META_CLUSTER_ID",
-				Value: "Kubernetes",
+				Value: istioMetaClusterID,
 			},
 			{
 				Name: "POD_NAME",

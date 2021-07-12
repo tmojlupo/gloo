@@ -1,11 +1,12 @@
 package ec2
 
 import (
+	"context"
 	"reflect"
 
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	"github.com/rotisserie/eris"
 
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
@@ -25,6 +26,8 @@ Steps:
 type plugin struct {
 	secretClient v1.SecretClient
 
+	settings *v1.Settings
+
 	// pre-initialization only
 	// we need to register the clients while creating the plugin, otherwise our EDS poll and upstream watch will fail
 	// since Init can be called after our poll begins (race condition) we cannot create the client there
@@ -38,14 +41,14 @@ var _ plugins.Plugin = new(plugin)
 var _ plugins.UpstreamPlugin = new(plugin)
 var _ discovery.DiscoveryPlugin = new(plugin)
 
-func NewPlugin(secretFactory factory.ResourceClientFactory) *plugin {
+func NewPlugin(ctx context.Context, secretFactory factory.ResourceClientFactory) *plugin {
 	p := &plugin{}
 	var err error
 	if secretFactory == nil {
 		p.constructorErr = ConstructorInputError("secret")
 		return p
 	}
-	p.secretClient, err = v1.NewSecretClient(secretFactory)
+	p.secretClient, err = v1.NewSecretClient(ctx, secretFactory)
 	if err != nil {
 		p.constructorErr = ConstructorGetClientError("secret", err)
 		return p
@@ -58,6 +61,7 @@ func NewPlugin(secretFactory factory.ResourceClientFactory) *plugin {
 }
 
 func (p *plugin) Init(params plugins.InitParams) error {
+	p.settings = params.Settings
 	return p.constructorErr
 }
 
@@ -71,20 +75,20 @@ func (p *plugin) UpdateUpstream(original, desired *v1.Upstream) (bool, error) {
 	if !ok {
 		return false, WrongUpstreamTypeError(desired)
 	}
-	if !originalSpec.Equal(desiredSpec) {
+	if !originalSpec.AwsEc2.Equal(desiredSpec.AwsEc2) {
 		return false, UpstreamDeltaError()
 	}
 	return false, nil
 }
 
-func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoyapi.Cluster) error {
+func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 	_, ok := in.UpstreamType.(*v1.Upstream_AwsEc2)
 	if !ok {
 		return nil
 	}
 
 	// configure the cluster to use EDS:ADS and call it a day
-	xds.SetEdsOnCluster(out)
+	xds.SetEdsOnCluster(out, p.settings)
 	return nil
 }
 

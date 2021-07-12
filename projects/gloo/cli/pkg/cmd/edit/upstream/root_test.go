@@ -1,6 +1,8 @@
 package upstream_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -16,18 +18,23 @@ var _ = Describe("Root", func() {
 	var (
 		upstream *gloov1.Upstream
 		upClient gloov1.UpstreamClient
+		ctx      context.Context
+		cancel   context.CancelFunc
 	)
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 		// create a settings object
-		upClient = helpers.MustUpstreamClient()
+		upClient = helpers.MustUpstreamClient(ctx)
 		upstream = &gloov1.Upstream{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "up",
 				Namespace: "gloo-system",
 			},
 		}
 	})
+
+	AfterEach(func() { cancel() })
 
 	RefreshUpstream := func() {
 		var err error

@@ -1,6 +1,7 @@
 package prerun
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -31,11 +32,11 @@ func VersionMismatchWarning(opts *options.Options, cmd *cobra.Command) error {
 	}
 	nsToCheck := opts.Metadata.Namespace
 	// TODO: only use metadata namespace flag, install namespace can be populated from metadata namespace or refactored out of the opts
-	if nsToCheck == flagutils.DefaultNamespace && opts.Install.Namespace != flagutils.DefaultNamespace {
-		nsToCheck = opts.Install.Namespace
+	if nsToCheck == flagutils.DefaultNamespace && opts.Install.Gloo.Namespace != flagutils.DefaultNamespace {
+		nsToCheck = opts.Install.Gloo.Namespace
 	}
 
-	return WarnOnMismatch(os.Args[0], versioncmd.NewKube(nsToCheck), &defaultLogger{})
+	return WarnOnMismatch(opts.Top.Ctx, os.Args[0], versioncmd.NewKube(nsToCheck), &defaultLogger{})
 }
 
 // use this logger interface, so that in the unit test we can accumulate lines that were output
@@ -58,8 +59,8 @@ func (d *defaultLogger) Println(str string) {
 }
 
 // visible for testing
-func WarnOnMismatch(binaryName string, sv versioncmd.ServerVersion, logger Logger) error {
-	clientServerVersions, err := versioncmd.GetClientServerVersions(sv)
+func WarnOnMismatch(ctx context.Context, binaryName string, sv versioncmd.ServerVersion, logger Logger) error {
+	clientServerVersions, err := versioncmd.GetClientServerVersions(ctx, sv)
 	if err != nil {
 		warnOnError(err, logger)
 		return nil

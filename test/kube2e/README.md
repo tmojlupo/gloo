@@ -1,49 +1,85 @@
 # Regression tests
-This directory contains test that install each of the 3 Gloo flavours (`gateway`, `ingress`, and `knative`) and run 
+This directory contains tests that install each of the 3 Gloo Edge flavors (`gateway`, `ingress`, and `knative`) and run
 regression tests against them.
 
-## Build test assets
-The tests require that a Gloo Helm chart archive be present in the `_test` folder. This chart will be used to install 
-Gloo to the GKE `kube2e-tests` cluster (by running `glooctl install <deployment-type> -f -test/<chart-archive-name>`).
+*Note: All commands should be run from the root directory of the Gloo repository*
 
-To build the chart, execute the `docker` and `build-test-assets` make targets:
+## Setup
+For these tests to run, we require the following conditions:
+  - Gloo Edge Helm chart archive be present in the `_test` folder,
+  - `glooctl` be built in the`_output` folder
+  - kind cluster set up and loaded with the images to be installed by the helm chart
 
+#### (Option A) - Use the CI Install Script (preferred)
+
+`ci/deploy-to-kind-cluster.sh` (`https://github.com/solo-io/gloo/blob/master/ci/deploy-to-kind-cluster.sh`) gets run in CI to setup the test environment for the above requirements.
+It accepts a number of environment variables, to control the creation of a kind cluster and deployment of Gloo resources to that kind cluster.
+
+| Name                  | Default   | Description |
+| ---                   |   ---     |    ---      |
+| CLUSTER_NAME          | kind      | The name of the cluster that will be generated |
+| CLUSTER_NODE_VERSION  | v1.17.0   | The version of the Node Docker image to use for booting the cluster |
+| VERSION               | kind      | The version used to tag Gloo images that are deployed to the cluster |
+
+Example:
 ```bash
-make GCLOUD_PROJECT_ID=solo-public BUILD_ID=my-local-build docker build-test-assets
+CLUSTER_NAME=solo-test-cluster CLUSTER_NODE_VERSION=v1.17.0 VERSION=v1.0.0-solo-test ci/deploy-to-kind-cluster.sh
 ```
 
-The above command will also build all our docker images and deploy them to Google Container Registry (GCR), where the 
-image references in the chart expect them to be.
+#### (Option B) - Manually Run Make Targets
 
-## Run test
-To run the regression tests, your kubeconfig file must point to a running Kubernetes cluster. You can then start the 
-tests by running the following command from this directory:
+The CI install script executes a series of make targets.
+
+Create a kind cluster: `kind create cluster --name kind`\
+Build the helm chart: `VERSION=kind make build-test-chart`\
+Build glooctl: `make glooctl`\
+Load the images into the cluster: `CLUSTER_NAME=kind VERSION=kind make push-kind-images`
+
+
+## Verify Your Setup
+Before running your tests, it's worthwhile to verify that a cluster was created, and the proper images have been loaded.
 
 ```bash
-ginkgo -r
+kubectl get nodes
+docker exec -ti <nodename> bash
+crictl images
 ```
 
-Although running tests in parallel *should* work, the fact that Gloo creates some cluster-scoped resources is a 
-potential source of problems.
+You should see the list of images in the cluster, including the ones you just uploaded
 
-### Test environment variables
+#### Common Setup Errors
+`Error: validation: chart.metadata.version "solo" is invalid`\
+In newer versions of helm (>3.5), the version used to build the helm chart (ie the VERSION env variable), needs to respect semantic versioning. This error implies that the version provided does not.
+
+## Run Tests
+
+To run the regression tests, your kubeconfig file must point to a running Kubernetes cluster.
+`kubectl config current-context` should run `kind-<CLUSTER_NAME>`
+
+#### (Option A) - Use the Make Target (preferred)
+
+Use the same command that CI relies on:
+```bash
+KUBE2E_TESTS=<test-to-run> make run-ci-regression-tests
+```
+
+#### (Option B) - Use Ginkgo Directly
+
+The make target just runs ginkgo with a set of useful flags. If you want to control the flags that are provided, you can run:
+```bash
+KUBE2E_TESTS=<test-to-run> ginkgo -r <other-flags>
+```
+
+#### Test Environment Variables
 The below table contains the environment variables that can be used to configure the test execution.
 
-| Name              | Required  | Description |
+| Name              | Default   | Description |
 | ---               |   ---     |    ---      |
-| RUN_KUBE2E_TESTS  | Y         | Must be set to 1, otherwise tests will be skipped |
-| DEBUG             | N         | Set to 1 for debug log output |
-| WAIT_ON_FAIL      | N         | Set to 1 to prevent Ginkgo from cleaning up the Gloo installation in case of failure. Useful to exec into inspect resources created by the test. A command to resume the test run (and thus clean up resources) will be logged to the output.
+| KUBE2E_TESTS      | ""        | Name of the test suite to be run. Options: `'gateway', 'ingress', 'knative', 'helm', 'gloomtls', 'glooctl', 'eds'` |
+| DEBUG             | 0         | Set to 1 for debug log output |
+| WAIT_ON_FAIL      | 0         | Set to 1 to prevent Ginkgo from cleaning up the Gloo Edge installation in case of failure. Useful to exec into inspect resources created by the test. A command to resume the test run (and thus clean up resources) will be logged to the output.
+| TEAR_DOWN         | false     | Set to true to uninstall Gloo after the test suite completes |
 
-
-### To run locally with kind:
-
-```bash
-kind create cluster
-VERSION=kind ./ci/kind.sh
-GO111MODULE=off go get -u github.com/onsi/ginkgo/ginkgo
-make glooctl-darwin-amd64 # if you are on a mac
-make glooctl-linux-amd64 # if you are on linux
-# To run tests that require a cluster lock
-ginkgo -r -failFast -trace -progress -race -compilers=4 -failOnPending -noColor ./test/kube2e/...
-```
+#### Common Test Errors
+`getting Helm chart version: expected a single entry with name [gloo], found: 5`\
+The test helm charts are written to the `_test` directory, with the `index.yaml` file containing references to all available charts. The tests require that this file contain only 1 entry. Delete the other entries manually, or run `make clean` to delete this folder entirely, and then re-build the test helm chart.

@@ -16,18 +16,18 @@ import (
 
 func NewVirtualService(namespace, name string) *VirtualService {
 	virtualservice := &VirtualService{}
-	virtualservice.SetMetadata(core.Metadata{
+	virtualservice.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return virtualservice
 }
 
-func (r *VirtualService) SetMetadata(meta core.Metadata) {
+func (r *VirtualService) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
-func (r *VirtualService) SetStatus(status core.Status) {
+func (r *VirtualService) SetStatus(status *core.Status) {
 	r.Status = status
 }
 
@@ -147,12 +147,6 @@ var (
 		false,
 		&VirtualService{})
 )
-
-func init() {
-	if err := crd.AddCrd(VirtualServiceCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	VirtualServiceGVK = schema.GroupVersionKind{

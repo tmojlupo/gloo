@@ -6,12 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/solo-io/gloo/pkg/utils/settingsutil"
 	"github.com/solo-io/gloo/pkg/utils/usage"
 	"github.com/solo-io/gloo/pkg/version"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/go-utils/contextutils"
-	"github.com/solo-io/go-utils/kubeutils"
+	"github.com/solo-io/k8s-utils/kubeutils"
 	"github.com/solo-io/reporting-client/pkg/client"
 	"github.com/solo-io/reporting-client/pkg/signature"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
@@ -75,7 +74,7 @@ func Main(opts SetupOpts) error {
 	}
 
 	emitter := v1.NewSetupEmitter(settingsClient)
-	settingsRef := core.ResourceRef{Namespace: setupNamespace, Name: setupName}
+	settingsRef := &core.ResourceRef{Namespace: setupNamespace, Name: setupName}
 	eventLoop := v1.NewSetupEventLoop(emitter, NewSetupSyncer(settingsRef, opts.SetupFunc))
 	errs, err := eventLoop.Run([]string{setupNamespace}, clients.WatchOpts{
 		Ctx:         ctx,
@@ -96,7 +95,7 @@ func Main(opts SetupOpts) error {
 func kubeOrFileSettingsClient(ctx context.Context, setupNamespace, settingsDir string) (v1.SettingsClient, error) {
 	if settingsDir != "" {
 		contextutils.LoggerFrom(ctx).Infow("using filesystem for settings", zap.String("directory", settingsDir))
-		return v1.NewSettingsClient(&factory.FileResourceClientFactory{
+		return v1.NewSettingsClient(ctx, &factory.FileResourceClientFactory{
 			RootDir: settingsDir,
 		})
 	}
@@ -104,12 +103,11 @@ func kubeOrFileSettingsClient(ctx context.Context, setupNamespace, settingsDir s
 	if err != nil {
 		return nil, err
 	}
-	return v1.NewSettingsClient(&factory.KubeResourceClientFactory{
+	return v1.NewSettingsClient(ctx, &factory.KubeResourceClientFactory{
 		Crd:                v1.SettingsCrd,
 		Cfg:                cfg,
 		SharedCache:        kube.NewKubeCache(ctx),
 		NamespaceWhitelist: []string{setupNamespace},
-		SkipCrdCreation:    settingsutil.GetSkipCrdCreation(),
 	})
 }
 

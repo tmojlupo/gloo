@@ -13,7 +13,7 @@ import (
 
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	matchers "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
-	"github.com/solo-io/go-utils/kubeutils"
+	"github.com/solo-io/k8s-utils/kubeutils"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/kube"
@@ -99,10 +99,9 @@ func initGlooClients(ctx context.Context) (v1.UpstreamClient, v1.ProxyClient) {
 
 	// initialize the CRD client for Gloo Upstreams
 	upstreamClient, err := v1.NewUpstreamClient(&factory.KubeResourceClientFactory{
-		Crd:             v1.UpstreamCrd,
-		Cfg:             restConfig,
-		SharedCache:     cache,
-		SkipCrdCreation: true,
+		Crd:         v1.UpstreamCrd,
+		Cfg:         restConfig,
+		SharedCache: cache,
 	})
 	must(err)
 
@@ -112,10 +111,9 @@ func initGlooClients(ctx context.Context) (v1.UpstreamClient, v1.ProxyClient) {
 
 	// initialize the CRD client for Gloo Proxies
 	proxyClient, err := v1.NewProxyClient(&factory.KubeResourceClientFactory{
-		Crd:             v1.ProxyCrd,
-		Cfg:             restConfig,
-		SharedCache:     cache,
-		SkipCrdCreation: true,
+		Crd:         v1.ProxyCrd,
+		Cfg:         restConfig,
+		SharedCache: cache,
 	})
 	must(err)
 

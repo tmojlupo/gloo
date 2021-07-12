@@ -3,6 +3,8 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
@@ -28,12 +30,12 @@ type settingsClient struct {
 	rc clients.ResourceClient
 }
 
-func NewSettingsClient(rcFactory factory.ResourceClientFactory) (SettingsClient, error) {
-	return NewSettingsClientWithToken(rcFactory, "")
+func NewSettingsClient(ctx context.Context, rcFactory factory.ResourceClientFactory) (SettingsClient, error) {
+	return NewSettingsClientWithToken(ctx, rcFactory, "")
 }
 
-func NewSettingsClientWithToken(rcFactory factory.ResourceClientFactory, token string) (SettingsClient, error) {
-	rc, err := rcFactory.NewResourceClient(factory.NewResourceClientParams{
+func NewSettingsClientWithToken(ctx context.Context, rcFactory factory.ResourceClientFactory, token string) (SettingsClient, error) {
+	rc, err := rcFactory.NewResourceClient(ctx, factory.NewResourceClientParams{
 		ResourceType: &Settings{},
 		Token:        token,
 	})
@@ -104,7 +106,12 @@ func (client *settingsClient) Watch(namespace string, opts clients.WatchOpts) (<
 		for {
 			select {
 			case resourceList := <-resourcesChan:
-				settingsChan <- convertToSettings(resourceList)
+				select {
+				case settingsChan <- convertToSettings(resourceList):
+				case <-opts.Ctx.Done():
+					close(settingsChan)
+					return
+				}
 			case <-opts.Ctx.Done():
 				close(settingsChan)
 				return

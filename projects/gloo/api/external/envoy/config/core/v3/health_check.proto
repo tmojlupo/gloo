@@ -1,27 +1,27 @@
 syntax = "proto3";
 
-package envoy.config.core.v3;
+package solo.io.envoy.config.core.v3;
 
-import "envoy/config/core/v3/base.proto";
-import "envoy/config/core/v3/event_service_config.proto";
-import "envoy/type/matcher/v3/string.proto";
-import "envoy/type/v3/http.proto";
-import "envoy/type/v3/range.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/external/envoy/config/core/v3/base.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/external/envoy/config/core/v3/event_service_config.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/external/envoy/type/matcher/v3/string.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/external/envoy/type/v3/http.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/external/envoy/type/v3/range.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/options/advanced_http/advanced_http.proto";
 
 import "google/protobuf/any.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/wrappers.proto";
 
-import "envoy/annotations/deprecation.proto";
 import "udpa/annotations/status.proto";
 import "udpa/annotations/versioning.proto";
 import "validate/validate.proto";
 
-option java_package = "io.envoyproxy.envoy.config.core.v3";
+option java_package = "io.envoyproxy.solo.io.envoy.config.core.v3";
 option java_outer_classname = "HealthCheckProto";
 option java_multiple_files = true;
-option (udpa.annotations.file_status).package_version_status = ACTIVE;
+option (solo.io.udpa.annotations.file_status).package_version_status = ACTIVE;
 
 // [#protodoc-title: Health check]
 // * Health checking :ref:`architecture overview <arch_overview_health_checking>`.
@@ -56,12 +56,12 @@ enum HealthStatus {
 
 // [#next-free-field: 24]
 message HealthCheck {
-  option (udpa.annotations.versioning).previous_message_type = "envoy.api.v2.core.HealthCheck";
+  option (solo.io.udpa.annotations.versioning).previous_message_type = ".solo.io.envoy.api.v2.core.HealthCheck";
 
   // Describes the encoding of the payload bytes in the payload.
   message Payload {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.Payload";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        ".solo.io.envoy.api.v2.core.HealthCheck.Payload";
 
     oneof payload {
       option (validate.required) = true;
@@ -74,10 +74,10 @@ message HealthCheck {
     }
   }
 
-  // [#next-free-field: 12]
+  // [#next-free-field: 13]
   message HttpHealthCheck {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.HttpHealthCheck";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        ".solo.io.envoy.api.v2.core.HealthCheck.HttpHealthCheck";
 
     reserved 5, 7;
 
@@ -128,11 +128,15 @@ message HealthCheck {
     // <envoy_api_msg_type.matcher.v3.StringMatcher>`. See the :ref:`architecture overview
     // <arch_overview_health_checking_identity>` for more information.
     type.matcher.v3.StringMatcher service_name_matcher = 11;
+
+    // (Enterprise Only): If defined, the response health check rules take precedence over the http
+    // `expected_statuses`.
+    .advancedhttp.options.gloo.solo.io.ResponseAssertions response_assertions = 12;
   }
 
   message TcpHealthCheck {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.TcpHealthCheck";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        ".solo.io.envoy.api.v2.core.HealthCheck.TcpHealthCheck";
 
     // Empty payloads imply a connect-only health check.
     Payload send = 1;
@@ -144,8 +148,8 @@ message HealthCheck {
   }
 
   message RedisHealthCheck {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.RedisHealthCheck";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        ".solo.io.envoy.api.v2.core.HealthCheck.RedisHealthCheck";
 
     // If set, optionally perform ``EXISTS <key>`` instead of ``PING``. A return value
     // from Redis of 0 (does not exist) is considered a passing healthcheck. A return value other
@@ -159,8 +163,8 @@ message HealthCheck {
   // healthcheck. See `gRPC doc <https://github.com/grpc/grpc/blob/master/doc/health-checking.md>`_
   // for details.
   message GrpcHealthCheck {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.GrpcHealthCheck";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        ".solo.io.envoy.api.v2.core.HealthCheck.GrpcHealthCheck";
 
     // An optional service name parameter which will be sent to gRPC service in
     // `grpc.health.v1.HealthCheckRequest
@@ -179,8 +183,8 @@ message HealthCheck {
 
   // Custom health check.
   message CustomHealthCheck {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.CustomHealthCheck";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        "solo.io.envoy.api.v2.core.HealthCheck.CustomHealthCheck";
 
     reserved 2;
 
@@ -201,8 +205,8 @@ message HealthCheck {
   //
   // This allows overriding the cluster TLS settings, just for health check connections.
   message TlsOptions {
-    option (udpa.annotations.versioning).previous_message_type =
-        "envoy.api.v2.core.HealthCheck.TlsOptions";
+    option (solo.io.udpa.annotations.versioning).previous_message_type =
+        "solo.io.envoy.api.v2.core.HealthCheck.TlsOptions";
 
     // Specifies the ALPN protocols for health check connections. This is useful if the
     // corresponding upstream is using ALPN-based :ref:`FilterChainMatch
@@ -357,5 +361,7 @@ message HealthCheck {
   google.protobuf.Struct transport_socket_match_criteria = 23;
 }
 option go_package = "github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/core/v3";
-import "gogoproto/gogo.proto";
-option (gogoproto.equal_all) = true;
+import "extproto/ext.proto";
+option (extproto.hash_all) = true;
+option (extproto.equal_all) = true;
+

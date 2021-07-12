@@ -14,13 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sts"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/form3tech-oss/jwt-go"
 	gwdefaults "github.com/solo-io/gloo/projects/gateway/pkg/defaults"
 	aws2 "github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/aws"
 	"github.com/solo-io/gloo/test/helpers"
 	"github.com/solo-io/gloo/test/kube2e"
-
-	"github.com/solo-io/gloo/pkg/utils"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -103,14 +101,14 @@ var _ = Describe("AWS Lambda", func() {
 
 	addUpstream := func() {
 		upstream = &gloov1.Upstream{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Namespace: "default",
 				Name:      region,
 			},
 			UpstreamType: &gloov1.Upstream_Aws{
 				Aws: &aws_plugin.UpstreamSpec{
 					Region:    region,
-					SecretRef: utils.ResourceRefPtr(secret.Metadata.Ref()),
+					SecretRef: secret.Metadata.Ref(),
 				},
 			},
 		}
@@ -137,11 +135,11 @@ var _ = Describe("AWS Lambda", func() {
 	}
 
 	testProxy := func() {
-		err := envoyInstance.Run(testClients.GlooPort)
+		err := envoyInstance.RunWithRoleAndRestXds(services.DefaultProxyName, testClients.GlooPort, testClients.RestXdsPort)
 		Expect(err).NotTo(HaveOccurred())
 
 		proxy := &gloov1.Proxy{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "proxy",
 				Namespace: "default",
 			},
@@ -160,7 +158,7 @@ var _ = Describe("AWS Lambda", func() {
 										Destination: &gloov1.RouteAction_Single{
 											Single: &gloov1.Destination{
 												DestinationType: &gloov1.Destination_Upstream{
-													Upstream: utils.ResourceRefPtr(upstream.Metadata.Ref()),
+													Upstream: upstream.Metadata.Ref(),
 												},
 												DestinationSpec: &gloov1.DestinationSpec{
 													DestinationType: &gloov1.DestinationSpec_Aws{
@@ -188,11 +186,11 @@ var _ = Describe("AWS Lambda", func() {
 	}
 
 	testProxyWithResponseTransform := func() {
-		err := envoyInstance.Run(testClients.GlooPort)
+		err := envoyInstance.RunWithRoleAndRestXds(services.DefaultProxyName, testClients.GlooPort, testClients.RestXdsPort)
 		Expect(err).NotTo(HaveOccurred())
 
 		proxy := &gloov1.Proxy{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "proxy",
 				Namespace: "default",
 			},
@@ -211,7 +209,7 @@ var _ = Describe("AWS Lambda", func() {
 										Destination: &gloov1.RouteAction_Single{
 											Single: &gloov1.Destination{
 												DestinationType: &gloov1.Destination_Upstream{
-													Upstream: utils.ResourceRefPtr(upstream.Metadata.Ref()),
+													Upstream: upstream.Metadata.Ref(),
 												},
 												DestinationSpec: &gloov1.DestinationSpec{
 													DestinationType: &gloov1.DestinationSpec_Aws{
@@ -240,11 +238,11 @@ var _ = Describe("AWS Lambda", func() {
 	}
 
 	testLambdaWithVirtualService := func() {
-		err := envoyInstance.RunWithRole("gloo-system~"+gwdefaults.GatewayProxyName, testClients.GlooPort)
+		err := envoyInstance.RunWithRoleAndRestXds("gloo-system~"+gwdefaults.GatewayProxyName, testClients.GlooPort, testClients.RestXdsPort)
 		Expect(err).NotTo(HaveOccurred())
 
 		vs := &gw1.VirtualService{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "app",
 				Namespace: "gloo-system",
 			},
@@ -256,7 +254,7 @@ var _ = Describe("AWS Lambda", func() {
 							Destination: &gloov1.RouteAction_Single{
 								Single: &gloov1.Destination{
 									DestinationType: &gloov1.Destination_Upstream{
-										Upstream: utils.ResourceRefPtr(upstream.Metadata.Ref()),
+										Upstream: upstream.Metadata.Ref(),
 									},
 									DestinationSpec: &gloov1.DestinationSpec{
 										DestinationType: &gloov1.DestinationSpec_Aws{
@@ -302,7 +300,7 @@ var _ = Describe("AWS Lambda", func() {
 			secretkey := v.SecretAccessKey
 
 			secret = &gloov1.Secret{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Namespace: "default",
 					Name:      region,
 				},
@@ -345,7 +343,7 @@ var _ = Describe("AWS Lambda", func() {
 
 			var opts clients.WriteOpts
 			secret = &gloov1.Secret{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Namespace: "default",
 					Name:      region,
 				},
@@ -436,7 +434,7 @@ var _ = Describe("AWS Lambda", func() {
 
 		addUpstreamSts := func() {
 			upstream = &gloov1.Upstream{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Namespace: "default",
 					Name:      region,
 				},
@@ -514,6 +512,11 @@ var _ = Describe("AWS Lambda", func() {
 			os.Unsetenv(awsRoleArn)
 		})
 
+		/*
+		 * these tests can start failing if certs get rotated underneath us.
+		 * the fix is to update the rotated thumbprint on our fake AWS OIDC per
+		 * https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc_verify-thumbprint.html
+		 */
 		It("should be able to call lambda", testProxy)
 
 		It("should be able lambda with response transform", testProxyWithResponseTransform)

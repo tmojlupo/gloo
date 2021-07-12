@@ -33,7 +33,7 @@ func RateLimitCustomConfig(opts *editOptions.EditOptions, optionsFunc ...cliutil
 }
 
 func edit(opts *editOptions.EditOptions) error {
-	settingsClient := helpers.MustNamespacedSettingsClient(opts.Metadata.GetNamespace())
+	settingsClient := helpers.MustNamespacedSettingsClient(opts.Top.Ctx, opts.Metadata.GetNamespace())
 	settings, err := settingsClient.Read(opts.Metadata.Namespace, opts.Metadata.Name, clients.ReadOpts{})
 	if err != nil {
 		return errors.Wrapf(err, "Error reading settings")
@@ -59,7 +59,8 @@ func edit(opts *editOptions.EditOptions) error {
 
 	rlSettings = *rlSettingsProto.(*ratelimitpb.ServiceSettings)
 	settings.Ratelimit = &ratelimitpb.ServiceSettings{
-		Descriptors: rlSettings.Descriptors,
+		Descriptors:    rlSettings.Descriptors,
+		SetDescriptors: rlSettings.SetDescriptors,
 	}
 	_, err = settingsClient.Write(settings, clients.WriteOpts{OverwriteExisting: true})
 

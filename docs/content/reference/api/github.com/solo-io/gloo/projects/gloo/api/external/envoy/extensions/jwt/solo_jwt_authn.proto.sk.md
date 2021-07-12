@@ -11,15 +11,36 @@ weight: 5
 #### Types:
 
 
+- [JwtWithStage](#jwtwithstage)
 - [SoloJwtAuthnPerRoute](#solojwtauthnperroute)
 - [ClaimToHeader](#claimtoheader)
 - [ClaimToHeaders](#claimtoheaders)
+- [StagedJwtAuthnPerRoute](#stagedjwtauthnperroute)
   
 
 
 
 ##### Source File: [github.com/solo-io/gloo/projects/gloo/api/external/envoy/extensions/jwt/solo_jwt_authn.proto](https://github.com/solo-io/gloo/blob/master/projects/gloo/api/external/envoy/extensions/jwt/solo_jwt_authn.proto)
 
+
+
+
+
+---
+### JwtWithStage
+
+
+
+```yaml
+"jwtAuthn": .solo.io.envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+"stage": int
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `jwtAuthn` | [.solo.io.envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication](../../filters/http/jwt_authn/v3/config.proto.sk/#jwtauthentication) | The JwtAuthentication config for this filter. |
+| `stage` | `int` | Only SoloJwtAuthnPerRoute.JwtAuthnPerRoute with matching stage will be used with this filter. |
 
 
 
@@ -37,12 +58,12 @@ weight: 5
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `requirement` | `string` |  |  |
-| `claimsToHeaders` | `map<string, .envoy.config.filter.http.solo_jwt_authn.v2.SoloJwtAuthnPerRoute.ClaimToHeaders>` |  |  |
-| `clearRouteCache` | `bool` | clear the route cache if claims were added to the header. |  |
-| `payloadInMetadata` | `string` |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `requirement` | `string` |  |
+| `claimsToHeaders` | `map<string, .envoy.config.filter.http.solo_jwt_authn.v2.SoloJwtAuthnPerRoute.ClaimToHeaders>` | Copy the claims from the payload field is the key. non-existant fields are ignored. |
+| `clearRouteCache` | `bool` | clear the route cache if claims were added to the header. |
+| `payloadInMetadata` | `string` | To easly integrate with other filters, this will copy the payload to this name in the dynamic metadata. The payload will only be copied if one payload is present (i.e. or match). |
 
 
 
@@ -61,11 +82,11 @@ and the route cache will be cleared.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `claim` | `string` |  |  |
-| `header` | `string` |  |  |
-| `append` | `bool` |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `claim` | `string` |  |
+| `header` | `string` |  |
+| `append` | `bool` |  |
 
 
 
@@ -80,9 +101,26 @@ and the route cache will be cleared.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `claims` | [[]envoy.config.filter.http.solo_jwt_authn.v2.SoloJwtAuthnPerRoute.ClaimToHeader](../solo_jwt_authn.proto.sk/#claimtoheader) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `claims` | [[]envoy.config.filter.http.solo_jwt_authn.v2.SoloJwtAuthnPerRoute.ClaimToHeader](../solo_jwt_authn.proto.sk/#claimtoheader) |  |
+
+
+
+
+---
+### StagedJwtAuthnPerRoute
+
+
+
+```yaml
+"jwtConfigs": map<int, .envoy.config.filter.http.solo_jwt_authn.v2.SoloJwtAuthnPerRoute>
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `jwtConfigs` | `map<int, .envoy.config.filter.http.solo_jwt_authn.v2.SoloJwtAuthnPerRoute>` | Map from stage number to jwt config This jwt config will only be processed by filters with the same stage number. |
 
 
 

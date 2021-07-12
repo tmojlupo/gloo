@@ -1,3 +1,4 @@
+{{- define "ingressProxy.deploymentSpec"}}
 {{- if .Values.ingress.enabled }}
 {{- $image := .Values.gateway.deployment.image }}
 {{- if .Values.global  }}
@@ -25,13 +26,19 @@ spec:
         {{ $key }}: {{ $value | quote }}
         {{- end }}
         {{- end }}
-{{- if .Values.ingressProxy.deployment.extraAnnotations }}
+      {{- if or .Values.ingressProxy.deployment.extraAnnotations .Values.global.istioIntegration.disableAutoinjection }}
       annotations:
-      {{- range $key, $value := .Values.ingressProxy.deployment.extraAnnotations }}
+        {{- if .Values.ingressProxy.deployment.extraAnnotations }}
+        {{- range $key, $value := .Values.ingressProxy.deployment.extraAnnotations }}
         {{ $key }}: {{ $value | quote }}
+        {{- end }}
+        {{- end }}
+        {{- if .Values.global.istioIntegration.disableAutoinjection }}
+        sidecar.istio.io/inject: "false"
+        {{- end }}
       {{- end }}
-{{- end }}
     spec:
+      {{- include "gloo.pullSecret" $image | nindent 6 -}}
       containers:
       - args: ["--disable-hot-restart"]
         env:
@@ -75,12 +82,19 @@ spec:
         volumeMounts:
         - mountPath: /etc/envoy
           name: envoy-config
-      {{- if $image.pullSecret }}
-      imagePullSecrets:
-        - name: {{ $image.pullSecret }}{{end}}
       volumes:
       - configMap:
           name: ingress-envoy-config
         name: envoy-config
+      {{- include "gloo.podSpecStandardFields" .Values.ingress.deployment | nindent 6 -}}
+{{- end }} {{/* if .Values.ingress.enabled */}}
+{{- end }} {{/* define "ingressProxy.deploymentSpec "*/}}
 
-{{- end }}
+{{/* Render template with yaml overrides */}}
+{{- $kubeResourceOverride := dict -}}
+{{- if .Values.ingressProxy -}}
+{{- if .Values.ingressProxy.deployment -}}
+{{- $kubeResourceOverride = .Values.ingressProxy.deployment.kubeResourceOverride  -}}
+{{- end -}}
+{{- end -}}
+{{- include "gloo.util.merge" (list . $kubeResourceOverride "ingressProxy.deploymentSpec") -}}

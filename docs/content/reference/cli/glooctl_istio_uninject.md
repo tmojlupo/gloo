@@ -17,7 +17,8 @@ glooctl istio uninject [flags]
 ### Options
 
 ```
-  -h, --help   help for uninject
+  -h, --help                help for uninject
+      --include-upstreams   whether or not to modify upstreams when uninstalling mTLS
 ```
 
 ### Options inherited from parent commands

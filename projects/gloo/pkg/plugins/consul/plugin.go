@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	"github.com/hashicorp/consul/api"
 	"github.com/rotisserie/eris"
 
@@ -13,13 +14,14 @@ import (
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul"
 
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 )
 
 var _ discovery.DiscoveryPlugin = new(plugin)
+var _ plugins.UpstreamPlugin = new(plugin)
+var _ plugins.RouteActionPlugin = new(plugin)
 
 var (
 	DefaultDnsAddress         = "127.0.0.1:8600"
@@ -38,6 +40,8 @@ type plugin struct {
 	resolver                        DnsResolver
 	dnsPollingInterval              time.Duration
 	consulUpstreamDiscoverySettings *v1.Settings_ConsulUpstreamDiscoveryConfiguration
+	settings                        *v1.Settings
+	previousDnsResolutions          map[string][]string
 }
 
 func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
@@ -104,10 +108,12 @@ func NewPlugin(client consul.ConsulWatcher, resolver DnsResolver, dnsPollingInte
 	if dnsPollingInterval != nil {
 		pollingInterval = *dnsPollingInterval
 	}
-	return &plugin{client: client, resolver: resolver, dnsPollingInterval: pollingInterval}
+	previousDnsResolutions := make(map[string][]string)
+	return &plugin{client: client, resolver: resolver, dnsPollingInterval: pollingInterval, previousDnsResolutions: previousDnsResolutions}
 }
 
 func (p *plugin) Init(params plugins.InitParams) error {
+	p.settings = params.Settings
 	p.consulUpstreamDiscoverySettings = params.Settings.ConsulDiscovery
 	if p.consulUpstreamDiscoverySettings == nil {
 		p.consulUpstreamDiscoverySettings = &v1.Settings_ConsulUpstreamDiscoveryConfiguration{UseTlsTagging: false}
@@ -129,14 +135,14 @@ func (p *plugin) Init(params plugins.InitParams) error {
 	return nil
 }
 
-func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoyapi.Cluster) error {
+func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 	_, ok := in.UpstreamType.(*v1.Upstream_Consul)
 	if !ok {
 		return nil
 	}
 
 	// consul upstreams use EDS
-	xds.SetEdsOnCluster(out)
+	xds.SetEdsOnCluster(out, p.settings)
 
 	return nil
 }

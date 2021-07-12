@@ -1,6 +1,7 @@
 package create_test
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/onsi/ginkgo"
@@ -14,9 +15,17 @@ import (
 )
 
 var _ = Describe("VirtualService", func() {
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 	})
+
+	AfterEach(func() { cancel() })
 
 	Context("Interactive tests", func() {
 
@@ -38,7 +47,7 @@ var _ = Describe("VirtualService", func() {
 			}, func() {
 				err := testutils.Glooctl("create vs -i")
 				Expect(err).NotTo(HaveOccurred())
-				_, err = helpers.MustVirtualServiceClient().Read("gloo-system", "default", clients.ReadOpts{})
+				_, err = helpers.MustVirtualServiceClient(ctx).Read("gloo-system", "default", clients.ReadOpts{})
 				Expect(err).NotTo(HaveOccurred())
 			})
 		})
@@ -65,7 +74,7 @@ var _ = Describe("VirtualService", func() {
 			}, func() {
 				err := testutils.Glooctl("create vs -i")
 				Expect(err).NotTo(HaveOccurred())
-				vs, err := helpers.MustVirtualServiceClient().Read("gloo-system", "vs1", clients.ReadOpts{})
+				vs, err := helpers.MustVirtualServiceClient(ctx).Read("gloo-system", "vs1", clients.ReadOpts{})
 				Expect(err).NotTo(HaveOccurred())
 				acRef := vs.VirtualHost.Options.Extauth.Spec.(*v1.ExtAuthExtension_ConfigRef).ConfigRef
 				Expect(acRef.Name).To(Equal("ac1"))
@@ -79,7 +88,7 @@ var _ = Describe("VirtualService", func() {
 			out, err := testutils.GlooctlOut("create virtualservice kube --dry-run --name vs --domains foo.bar,baz.qux")
 			Expect(err).NotTo(HaveOccurred())
 			fmt.Print(out)
-			Expect(out).To(Equal(`apiVersion: gateway.solo.io/v1
+			Expect(out).To(ContainSubstring(`apiVersion: gateway.solo.io/v1
 kind: VirtualService
 metadata:
   creationTimestamp: null
@@ -99,12 +108,11 @@ status: {}
 			out, err := testutils.GlooctlOut("create virtualservice kube --dry-run -oyaml --name vs --domains foo.bar,baz.qux")
 			Expect(err).NotTo(HaveOccurred())
 			fmt.Print(out)
-			Expect(out).To(Equal(`---
+			Expect(out).To(ContainSubstring(`---
 displayName: vs
 metadata:
   name: vs
   namespace: gloo-system
-status: {}
 virtualHost:
   domains:
   - foo.bar

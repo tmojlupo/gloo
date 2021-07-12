@@ -4,25 +4,22 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
-
-	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-
-	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams"
-	"github.com/solo-io/go-utils/contextutils"
-
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	envoyroute "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	envoy_config_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	"github.com/gogo/protobuf/proto"
+	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
+	"github.com/golang/protobuf/proto"
 	transformationapi "github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/extensions/transformation"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/azure"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/pluginutils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/transformation"
-	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	"github.com/solo-io/gloo/projects/gloo/pkg/translator"
+	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams"
+	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
+	"github.com/solo-io/go-utils/contextutils"
 	"github.com/solo-io/solo-kit/pkg/errors"
 )
 
@@ -30,8 +27,13 @@ const (
 	masterKeyName = "_master"
 )
 
+var _ plugins.Plugin = new(plugin)
+var _ plugins.RoutePlugin = new(plugin)
+var _ plugins.UpstreamPlugin = new(plugin)
+
 type plugin struct {
-	recordedUpstreams map[core.ResourceRef]*azure.UpstreamSpec
+	settings          *v1.Settings
+	recordedUpstreams map[string]*azure.UpstreamSpec
 	apiKeys           map[string]string
 	ctx               context.Context
 	transformsAdded   *bool
@@ -42,40 +44,46 @@ func NewPlugin(transformsAdded *bool) plugins.Plugin {
 }
 
 func (p *plugin) Init(params plugins.InitParams) error {
+	p.settings = params.Settings
 	p.ctx = params.Ctx
-	p.recordedUpstreams = make(map[core.ResourceRef]*azure.UpstreamSpec)
+	p.recordedUpstreams = make(map[string]*azure.UpstreamSpec)
 	return nil
 }
 
-func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoyapi.Cluster) error {
+func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 	upstreamSpec, ok := in.UpstreamType.(*v1.Upstream_Azure)
 	if !ok {
 		// not ours
 		return nil
 	}
 	azureUpstream := upstreamSpec.Azure
-	p.recordedUpstreams[in.Metadata.Ref()] = azureUpstream
+	p.recordedUpstreams[translator.UpstreamToClusterName(in.Metadata.Ref())] = azureUpstream
 
 	// configure Envoy cluster routing info
-	out.ClusterDiscoveryType = &envoyapi.Cluster_Type{
-		Type: envoyapi.Cluster_LOGICAL_DNS,
+	out.ClusterDiscoveryType = &envoy_config_cluster_v3.Cluster_Type{
+		Type: envoy_config_cluster_v3.Cluster_LOGICAL_DNS,
 	}
 	// TODO(yuval-k): why do we need to make sure we use ipv4 only dns?
-	out.DnsLookupFamily = envoyapi.Cluster_V4_ONLY
+	out.DnsLookupFamily = envoy_config_cluster_v3.Cluster_V4_ONLY
 	hostname := GetHostname(upstreamSpec.Azure)
 
 	pluginutils.EnvoySingleEndpointLoadAssignment(out, hostname, 443)
 
+	commonTlsContext, err := utils.GetCommonTlsContextFromUpstreamOptions(p.settings.GetUpstreamOptions())
+	if err != nil {
+		return err
+	}
 	tlsContext := &envoyauth.UpstreamTlsContext{
+		CommonTlsContext: commonTlsContext,
 		// TODO(yuval-k): Add verification context
 		Sni: hostname,
 	}
-	out.TransportSocket = &envoycore.TransportSocket{
+	out.TransportSocket = &envoy_config_core_v3.TransportSocket{
 		Name:       wellknown.TransportSocketTls,
-		ConfigType: &envoycore.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(tlsContext)},
+		ConfigType: &envoy_config_core_v3.TransportSocket_TypedConfig{TypedConfig: utils.MustMessageToAny(tlsContext)},
 	}
 
-	if azureUpstream.SecretRef.Name != "" {
+	if azureUpstream.GetSecretRef().GetName() != "" {
 		secrets, err := params.Snapshot.Secrets.Find(azureUpstream.SecretRef.Strings())
 		if err != nil {
 			return errors.Wrapf(err, "azure secrets for ref %v not found", azureUpstream.SecretRef)
@@ -90,66 +98,68 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	return nil
 }
 
-func (p *plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoyroute.Route) error {
-	return pluginutils.MarkPerFilterConfig(p.ctx, params.Snapshot, in, out, transformation.FilterName, func(spec *v1.Destination) (proto.Message, error) {
-		// check if it's azure upstream destination
-		if spec.DestinationSpec == nil {
-			return nil, nil
-		}
-		azureDestinationSpec, ok := spec.DestinationSpec.DestinationType.(*v1.DestinationSpec_Azure)
-		if !ok {
-			return nil, nil
-		}
+func (p *plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoy_config_route_v3.Route) error {
+	return pluginutils.MarkPerFilterConfig(p.ctx, params.Snapshot, in, out, transformation.FilterName,
+		func(spec *v1.Destination) (proto.Message, error) {
+			// check if it's azure upstream destination
+			if spec.DestinationSpec == nil {
+				return nil, nil
+			}
+			azureDestinationSpec, ok := spec.DestinationSpec.DestinationType.(*v1.DestinationSpec_Azure)
+			if !ok {
+				return nil, nil
+			}
 
-		upstreamRef, err := upstreams.DestinationToUpstreamRef(spec)
-		if err != nil {
-			contextutils.LoggerFrom(p.ctx).Error(err)
-			return nil, err
-		}
-		upstreamSpec, ok := p.recordedUpstreams[*upstreamRef]
-		if !ok {
-			// TODO(yuval-k): panic in debug
-			return nil, errors.Errorf("%v is not an Azure upstream", *upstreamRef)
-		}
+			upstreamRef, err := upstreams.DestinationToUpstreamRef(spec)
+			if err != nil {
+				contextutils.LoggerFrom(p.ctx).Error(err)
+				return nil, err
+			}
+			upstreamSpec, ok := p.recordedUpstreams[translator.UpstreamToClusterName(upstreamRef)]
+			if !ok {
+				// TODO(yuval-k): panic in debug
+				return nil, errors.Errorf("%v is not an Azure upstream", *upstreamRef)
+			}
 
-		// get function
-		functionName := azureDestinationSpec.Azure.FunctionName
-		for _, functionSpec := range upstreamSpec.Functions {
-			if functionSpec.FunctionName == functionName {
-				path, err := getPath(functionSpec, p.apiKeys)
-				if err != nil {
-					return nil, err
-				}
+			// get function
+			functionName := azureDestinationSpec.Azure.FunctionName
+			for _, functionSpec := range upstreamSpec.Functions {
+				if functionSpec.FunctionName == functionName {
+					path, err := getPath(functionSpec, p.apiKeys)
+					if err != nil {
+						return nil, err
+					}
 
-				*p.transformsAdded = true
+					*p.transformsAdded = true
 
-				hostname := GetHostname(upstreamSpec)
-				// TODO: consider adding a new add headers transformation allow adding headers with no templates to improve performance.
-				ret := &transformationapi.RouteTransformations{
-					RequestTransformation: &transformationapi.Transformation{
-						TransformationType: &transformationapi.Transformation_TransformationTemplate{
-							TransformationTemplate: &transformationapi.TransformationTemplate{
-								Headers: map[string]*transformationapi.InjaTemplate{
-									":path": {
-										Text: path,
+					hostname := GetHostname(upstreamSpec)
+					// TODO: consider adding a new add headers transformation allow adding headers with no templates to improve performance.
+					ret := &transformationapi.RouteTransformations{
+						RequestTransformation: &transformationapi.Transformation{
+							TransformationType: &transformationapi.Transformation_TransformationTemplate{
+								TransformationTemplate: &transformationapi.TransformationTemplate{
+									Headers: map[string]*transformationapi.InjaTemplate{
+										":path": {
+											Text: path,
+										},
+										":authority": {
+											Text: hostname,
+										},
 									},
-									":authority": {
-										Text: hostname,
+									BodyTransformation: &transformationapi.TransformationTemplate_Passthrough{
+										Passthrough: &transformationapi.Passthrough{},
 									},
-								},
-								BodyTransformation: &transformationapi.TransformationTemplate_Passthrough{
-									Passthrough: &transformationapi.Passthrough{},
 								},
 							},
 						},
-					},
-				}
+					}
 
-				return ret, nil
+					return ret, nil
+				}
 			}
-		}
-		return nil, errors.Errorf("unknown function %v", functionName)
-	})
+			return nil, errors.Errorf("unknown function %v", functionName)
+		},
+	)
 }
 
 func getPath(functionSpec *azure.UpstreamSpec_FunctionSpec, apiKeys map[string]string) (string, error) {

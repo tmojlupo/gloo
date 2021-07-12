@@ -35,7 +35,7 @@ func tlsCmd(opts *options.Options) *cobra.Command {
 				}
 			}
 			// create the secret
-			if err := createTlsSecret(opts.Top.Ctx, opts.Metadata, *input, opts.Create.DryRun, opts.Top.Output); err != nil {
+			if err := createTlsSecret(opts.Top.Ctx, &opts.Metadata, *input, opts.Create.DryRun, opts.Top.Output); err != nil {
 				return err
 			}
 			return nil
@@ -71,7 +71,7 @@ func TlsSecretArgsInteractive(input *options.TlsSecret) error {
 	return nil
 }
 
-func createTlsSecret(ctx context.Context, meta core.Metadata, input options.TlsSecret, dryRun bool, outputType printers.OutputType) error {
+func createTlsSecret(ctx context.Context, meta *core.Metadata, input options.TlsSecret, dryRun bool, outputType printers.OutputType) error {
 
 	// read the values
 
@@ -93,7 +93,7 @@ func createTlsSecret(ctx context.Context, meta core.Metadata, input options.TlsS
 
 	if !dryRun {
 		var err error
-		secretClient := helpers.MustSecretClient()
+		secretClient := helpers.MustSecretClient(ctx)
 		if secret, err = secretClient.Write(secret, clients.WriteOpts{Ctx: ctx}); err != nil {
 			return err
 		}

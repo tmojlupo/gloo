@@ -34,33 +34,45 @@ func (m *Gzip) Hash(hasher hash.Hash64) (uint64, error) {
 		hasher = fnv.New64()
 	}
 	var err error
-	if _, err = hasher.Write([]byte("envoy.config.filter.http.gzip.v2.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/filter/http/gzip/v2.Gzip")); err != nil {
+	if _, err = hasher.Write([]byte("solo.io.envoy.config.filter.http.gzip.v2.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/filter/http/gzip/v2.Gzip")); err != nil {
 		return 0, err
 	}
 
 	if h, ok := interface{}(m.GetMemoryLevel()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("MemoryLevel")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetMemoryLevel(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetMemoryLevel(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("MemoryLevel")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}
 	}
 
 	if h, ok := interface{}(m.GetContentLength()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("ContentLength")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetContentLength(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetContentLength(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("ContentLength")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}
@@ -95,14 +107,20 @@ func (m *Gzip) Hash(hasher hash.Hash64) (uint64, error) {
 	}
 
 	if h, ok := interface{}(m.GetWindowBits()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("WindowBits")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetWindowBits(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetWindowBits(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("WindowBits")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}
@@ -120,7 +138,7 @@ func (m *Gzip_CompressionLevel) Hash(hasher hash.Hash64) (uint64, error) {
 		hasher = fnv.New64()
 	}
 	var err error
-	if _, err = hasher.Write([]byte("envoy.config.filter.http.gzip.v2.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/filter/http/gzip/v2.Gzip_CompressionLevel")); err != nil {
+	if _, err = hasher.Write([]byte("solo.io.envoy.config.filter.http.gzip.v2.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/filter/http/gzip/v2.Gzip_CompressionLevel")); err != nil {
 		return 0, err
 	}
 

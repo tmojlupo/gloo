@@ -1,13 +1,13 @@
 ---
-title: Gloo and AWS App Mesh
+title: Gloo Edge and AWS App Mesh
 weight: 2
-description: Using Gloo as an ingress to AWS App Mesh
+description: Using Gloo Edge as an ingress to AWS App Mesh
 ---
 
 [AWS App Mesh](https://docs.aws.amazon.com/app-mesh/latest/userguide/what-is-app-mesh.html) is an AWS-native service mesh implementation based on [Envoy Proxy](https://www.envoyproxy.io) making it compatible with a wide range of AWS partner and open source tools. 
 AWS App Mesh is a managed and highly available service, AWS manages the service-mesh control plane and you connect up the data plane to the control plane by installing and configuring an Envoy Proxy instance next to your workloads. You can use AWS App Mesh with AWS Fargate, Amazon EC2, Amazon ECS, Amazon EKS, and Kubernetes running on AWS, to better run your application at scale.
 
-Gloo complements service-mesh technology by bringing a powerful "API Gateway" to the edge (or even inside) of your mesh to handle things like:
+Gloo Edge complements service-mesh technology by bringing a powerful "API Gateway" to the edge (or even inside) of your mesh to handle things like:
 
 * Oauth Flows
 * Request/Response transformation
@@ -15,7 +15,7 @@ Gloo complements service-mesh technology by bringing a powerful "API Gateway" to
 * Function routing
 * And more.
 
-Please see our [FAQ]({{% versioned_link_path fromRoot="/introduction/faq#what-s-the-difference-between-gloo-and-istio" %}}) for more on how Gloo can complement a service mesh.
+Please see our [FAQ]({{% versioned_link_path fromRoot="/introduction/faq#what-s-the-difference-between-gloo-and-istio" %}}) for more on how Gloo Edge can complement a service mesh.
 
 ---
 
@@ -25,7 +25,7 @@ For this guide, we'll assume you want to use AWS App Mesh on Kubernetes (AWS EKS
 
 We recommend you follow this link: [Tutorial: Configure App Mesh Integration with Kubernetes] (https://docs.aws.amazon.com/app-mesh/latest/userguide/mesh-k8s-integration.html) for getting started with AWS App Mesh and setting up the examples.
 
-We will assumed that you use `color-mesh` as the name of your mesh and you deployed your EKS cluster in the `us-east-2 (Oregon)` as the AWS region.
+We will assumed that you use `color-mesh` as the name of your mesh and you deployed your EKS cluster in the `us-east-2 (Ohio)` as the AWS region.
 
 Once you have the examples installed, you should have an environment like this:
 
@@ -147,15 +147,15 @@ aws --region us-east-2 appmesh describe-route --route-name color-route-appmesh-d
 
 ---
 
-## Using Gloo as the Ingress for AWS App Mesh
+## Using Gloo Edge as the Ingress for AWS App Mesh
 
-In our above example, the `colorgateway` service calls the `colorteller` service which has a few variants (`colorteller`, `colorteller-black` , `colorteller-blue`). Both of those services are part of the mesh, and we can control the routing between the components with the mesh. To get traffic into the mesh with a powerful API Gateway like Gloo, all we have to do is the following:
+In our above example, the `colorgateway` service calls the `colorteller` service which has a few variants (`colorteller`, `colorteller-black` , `colorteller-blue`). Both of those services are part of the mesh, and we can control the routing between the components with the mesh. To get traffic into the mesh with a powerful API Gateway like Gloo Edge, all we have to do is the following:
 
-1. Install Gloo
-2. Create a Gloo VirtualService
+1. Install Gloo Edge
+2. Create a Gloo Edge VirtualService
 3. Create a Route to where we want to bring traffic into the mesh
 
-Installing Gloo is [covered adequately in other sections]({{% versioned_link_path fromRoot="/installation" %}}) of the documentation.
+Installing Gloo Edge is [covered adequately in other sections]({{% versioned_link_path fromRoot="/installation" %}}) of the documentation.
 
 To accomplish steps 2 and 3, run the following command:
 
@@ -165,12 +165,12 @@ glooctl add route --path-prefix /appmesh/color \
     --prefix-rewrite /color --dest-name appmesh-demo-colorgateway-9080   
 ```
 
-Now let's figure out what the right URL is to contact Gloo:
+Now let's figure out what the right URL is to contact Gloo Edge:
 
 ```bash
 glooctl proxy url
 
-http://a034a61854c2111e992a70a2a7eb7b9a-398563398.us-west-2.elb.amazonaws.com:80
+http://a034a61854c2111e992a70a2a7eb7b9a-398563398.us-east-2.elb.amazonaws.com:80
 ```
 And then call our new API:
 

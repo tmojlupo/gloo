@@ -16,14 +16,14 @@ import (
 
 func NewSecret(namespace, name string) *Secret {
 	secret := &Secret{}
-	secret.SetMetadata(core.Metadata{
+	secret.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return secret
 }
 
-func (r *Secret) SetMetadata(meta core.Metadata) {
+func (r *Secret) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
@@ -135,12 +135,6 @@ var (
 		false,
 		&Secret{})
 )
-
-func init() {
-	if err := crd.AddCrd(SecretCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	SecretGVK = schema.GroupVersionKind{

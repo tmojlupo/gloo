@@ -6,10 +6,6 @@ weight: 5
 
 uninstall gloo
 
-### Synopsis
-
-uninstall gloo
-
 ```
 glooctl uninstall [flags]
 ```
@@ -43,5 +39,4 @@ glooctl uninstall [flags]
 ### SEE ALSO
 
 * [glooctl](../glooctl)	 - CLI for Gloo
-* [glooctl uninstall federation](../glooctl_uninstall_federation)	 - uninstall gloo federation
 

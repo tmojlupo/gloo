@@ -1,17 +1,21 @@
 {{- if .Values.gateway.updateValues -}}
 {{- include "gloo.updatevalues" . -}}
 {{- end -}}
-{{- if .Values.gateway.enabled }}
+{{- define "gatewayProxy.configMapSpec" }}
+{{- $name := (index . 1) }}
+{{- $gatewaySpec := (index . 2) }}
+{{- with (first .) }}
 {{- $global := .Values.global }}
-{{- range $name, $spec := .Values.gatewayProxies }}
+{{- $gatewayProxy := .Values.gatewayProxies.gatewayProxy -}}
+{{- $spec := deepCopy $gatewaySpec | mergeOverwrite (deepCopy $gatewayProxy) -}}
+{{- if not $spec.disabled }}
 {{- $statsConfig := coalesce $spec.stats $global.glooStats }}
----
 # config_map
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $name | kebabcase }}-envoy-config
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
   labels:
     app: gloo
     gloo: gateway-proxy
@@ -23,8 +27,14 @@ data:
       layers:
       - name: static_layer
         static_layer:
+{{- if $spec.customStaticLayer }}
+{{ toYaml $spec.customStaticLayer | indent 10 }}
+{{- end}}
           overload:
             global_downstream_max_connections: {{ $spec.globalDownstreamMaxConnections }}
+          upstream:
+            healthy_panic_threshold:
+              value: {{ $spec.healthyPanicThreshold }}
       - name: admin_layer
         admin_layer: {}
     node:
@@ -33,19 +43,13 @@ data:
       metadata:
         # role's value is the key for the in-memory xds cache (projects/gloo/pkg/xds/envoy.go)
         role: "{{ `{{.PodNamespace}}` }}~{{ $name | kebabcase }}"
-    stats_sinks:
-      - name: envoy.stat_sinks.metrics_service
-        typed_config:
-          "@type": type.googleapis.com/envoy.config.metrics.v3.MetricsServiceConfig
-          grpc_service:
-            envoy_grpc: {cluster_name: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}:9966}
     static_resources:
 {{- if or $statsConfig.enabled (or $spec.readConfig $spec.extraListenersHelper) }}
       listeners:
-{{- end }} # if or $statsConfig.enabled (or $spec.readConfig $spec.extraListenersHelper)
+{{- end }} {{- /* if or $statsConfig.enabled (or $spec.readConfig $spec.extraListenersHelper) */}}
 {{- if $spec.extraListenersHelper }}
-{{- include $spec.extraListenersHelper $ | nindent 8 }}
-{{- end }} # $spec.extraListenersHelper
+{{- include $spec.extraListenersHelper . | nindent 8 }}
+{{- end }} {{- /* $spec.extraListenersHelper */}}
 {{- if $statsConfig.enabled }}
         - name: prometheus_listener
           address:
@@ -79,18 +83,11 @@ data:
                                 - name: ":method"
                                   exact_match: GET
                               route:
-                                prefix_rewrite: "/stats/prometheus"
+                                prefix_rewrite: {{ $statsConfig.routePrefixRewrite }}
                                 cluster: admin_port_cluster
                     http_filters:
                       - name: envoy.filters.http.router
-{{- if $spec.tracing -}}
-{{- if $spec.tracing.provider }}
-                    tracing:
-                      provider:
-{{ toYaml $spec.tracing.provider | indent 24}}
-{{- end}} # if $spec.tracing.provider
-{{- end}} # if $spec.tracing
-{{- end}} # if $statsConfig.enabled
+{{- end}} {{- /* if $statsConfig.enabled */}}
 {{- if $spec.readConfig }}
         - name: read_config_listener
           address:
@@ -134,27 +131,20 @@ data:
                                 cluster: admin_port_cluster
                     http_filters:
                       - name: envoy.filters.http.router
-{{- if $spec.tracing -}}
-{{- if $spec.tracing.provider }}
-                    tracing:
-                      provider:
-{{ toYaml $spec.tracing.provider | indent 24}}
-{{- end}} # if $spec.tracing.provider
-{{- end}} # if $spec.tracing
-{{- end}} # if $spec.readConfig
+{{- end}} {{- /* if $spec.readConfig */}}
       clusters:
-      - name: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}:{{ $.Values.gloo.deployment.xdsPort }}
+      - name: gloo.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}:{{ .Values.gloo.deployment.xdsPort }}
         alt_stat_name: xds_cluster
         connect_timeout: 5.000s
         load_assignment:
-          cluster_name: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}:{{ $.Values.gloo.deployment.xdsPort }}
+          cluster_name: gloo.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}:{{ .Values.gloo.deployment.xdsPort }}
           endpoints:
           - lb_endpoints:
             - endpoint:
                 address:
                   socket_address:
-                    address: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}
-                    port_value: {{ $.Values.gloo.deployment.xdsPort }}
+                    address: gloo.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}
+                    port_value: {{ .Values.gloo.deployment.xdsPort }}
         http2_protocol_options: {}
         upstream_connection_options:
           tcp_keepalive: {}
@@ -169,16 +159,20 @@ data:
               tls_certificate_sds_secret_configs:
                 - name: server_cert
                   sds_config:
+                    resource_api_version: V3
                     api_config_source:
                       api_type: GRPC
+                      transport_api_version: V3
                       grpc_services:
                       - envoy_grpc:
                           cluster_name: gateway_proxy_sds
               validation_context_sds_secret_config:
                 name: validation_context
                 sds_config:
+                  resource_api_version: V3
                   api_config_source:
                     api_type: GRPC
+                    transport_api_version: V3
                     grpc_services:
                     - envoy_grpc:
                         cluster_name: gateway_proxy_sds
@@ -207,8 +201,8 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}
-                    port_value: {{ $.Values.gloo.deployment.restXdsPort }}
+                    address: gloo.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}
+                    port_value: {{ .Values.gloo.deployment.restXdsPort }}
         upstream_connection_options:
           tcp_keepalive: {}
         type: STRICT_DNS
@@ -220,18 +214,22 @@ data:
             "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
             common_tls_context:
               tls_certificate_sds_secret_configs:
-              - name: server_cert
-                sds_config:
-                  api_config_source:
-                    api_type: GRPC
-                    grpc_services:
-                    - envoy_grpc:
-                        cluster_name: gateway_proxy_sds
+                - name: server_cert
+                  sds_config:
+                    resource_api_version: V3
+                    api_config_source:
+                      api_type: GRPC
+                      transport_api_version: V3
+                      grpc_services:
+                      - envoy_grpc:
+                          cluster_name: gateway_proxy_sds
               validation_context_sds_secret_config:
                 name: validation_context
                 sds_config:
+                  resource_api_version: V3
                   api_config_source:
                     api_type: GRPC
+                    transport_api_version: V3
                     grpc_services:
                     - envoy_grpc:
                         cluster_name: gateway_proxy_sds
@@ -245,27 +243,13 @@ data:
             - endpoint:
                 address:
                   socket_address:
-                    address: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}
+                    address: gloo.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}
                     port_value: 9979
         upstream_connection_options:
           tcp_keepalive: {}
         type: STRICT_DNS
         respect_dns_ttl: true
-      - name: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}:9966
-        alt_stat_name: metrics_cluster
-        connect_timeout: 5.000s
-        load_assignment:
-            cluster_name: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}:9966
-            endpoints:
-            - lb_endpoints:
-              - endpoint:
-                    address:
-                        socket_address:
-                            address: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}
-                            port_value: 9966
-        http2_protocol_options: {}
-        type: STRICT_DNS
-{{- if $.Values.accessLogger.enabled }}
+{{- if .Values.accessLogger.enabled }}
       - name: access_log_cluster
         connect_timeout: 5.000s
         load_assignment:
@@ -275,18 +259,18 @@ data:
               - endpoint:
                     address:
                         socket_address:
-                            address: gateway-proxy-access-logger.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}
-                            port_value: {{$.Values.accessLogger.port}}
+                            address: gateway-proxy-access-logger.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}
+                            port_value: {{.Values.accessLogger.port}}
         http2_protocol_options: {}
         type: STRICT_DNS
-{{- end}} # if .Values.accessLogger.enabled
+{{- end}} {{- /* if .Values.accessLogger.enabled */}}
 {{- if $spec.tracing -}}
 {{- if $spec.tracing.cluster}}
 {{ toYaml $spec.tracing.cluster | indent 6}}
-{{- end}} # if $spec.tracing.cluster
-{{- end}} # if $spec.tracing
+{{- end}} {{- /* if $spec.tracing.cluster */}}
+{{- end}} {{- /* if $spec.tracing */}}
 
-{{- if $.Values.settings.aws.enableServiceAccountCredentials }}
+{{- if .Values.settings.aws.enableServiceAccountCredentials }}
       - name: aws_sts_cluster
         connect_timeout: 5.000s
         type: LOGICAL_DNS
@@ -295,10 +279,10 @@ data:
           name: envoy.transport_sockets.tls
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
-{{- if ne $.Values.settings.aws.stsCredentialsRegion ""}}
-            sni: sts.{{ $.Values.settings.aws.stsCredentialsRegion }}.amazonaws.com
-{{- else }}
+{{- if not .Values.settings.aws.stsCredentialsRegion }}
             sni: sts.amazonaws.com
+{{- else }}
+            sni: sts.{{ .Values.settings.aws.stsCredentialsRegion }}.amazonaws.com
 {{- end }}
         load_assignment:
           cluster_name: aws_sts_cluster
@@ -308,12 +292,12 @@ data:
                 address:
                   socket_address:
                     port_value: 443
-{{- if ne $.Values.settings.aws.stsCredentialsRegion ""}}
-                    address: sts.{{ $.Values.settings.aws.stsCredentialsRegion }}.amazonaws.com
-{{- else }}
+{{- if not .Values.settings.aws.stsCredentialsRegion }}
                     address: sts.amazonaws.com
+{{- else }}
+                    address: sts.{{ .Values.settings.aws.stsCredentialsRegion }}.amazonaws.com
 {{- end }}
-{{- end}} # if $.Values.settings.aws.enableServiceAccountCredentials
+{{- end}} {{- /* if $.Values.settings.aws.enableServiceAccountCredentials */}}
 
 {{- if or $statsConfig.enabled ($spec.readConfig) }}
       - name: admin_port_cluster
@@ -329,24 +313,50 @@ data:
                   socket_address:
                     address: {{ $spec.loopBackAddress }}
                     port_value: 19000
-{{- end}} # if or $statsConfig.enabled ($spec.readConfig)
+{{- end}} {{- /* if or $statsConfig.enabled ($spec.readConfig) */}}
+{{- if $spec.envoyStaticClusters }}
+{{ toYaml $spec.envoyStaticClusters | indent 6}}
+{{- end}}
 
     dynamic_resources:
       ads_config:
+        transport_api_version: {{ $spec.envoyApiVersion }}
         api_type: GRPC
         rate_limit_settings: {}
         grpc_services:
-        - envoy_grpc: {cluster_name: gloo.{{ $.Release.Namespace }}.svc.{{ $.Values.k8s.clusterName}}:{{ $.Values.gloo.deployment.xdsPort }}}
+        - envoy_grpc: {cluster_name: gloo.{{ .Release.Namespace }}.svc.{{ .Values.k8s.clusterName}}:{{ .Values.gloo.deployment.xdsPort }}}
       cds_config:
+        resource_api_version: {{ $spec.envoyApiVersion }}
         ads: {}
       lds_config:
+        resource_api_version: {{ $spec.envoyApiVersion }}
         ads: {}
+{{- if $spec.envoyBootstrapExtensions }}
+    bootstrap_extensions:
+{{ toYaml $spec.envoyBootstrapExtensions | indent 4}}
+{{- end}}
     admin:
       access_log_path: /dev/null
       address:
         socket_address:
           address: {{ $spec.loopBackAddress }}
           port_value: 19000
-{{- else}}{{ toYaml $spec.configMap.data | indent 2}}{{- end}} # if (empty $spec.configMap.data) ## allows full custom
-{{- end }} # range $name, $spec := .Values.gatewayProxies
-{{- end -}} # if .Values.gateway.enabled
+{{- else}}{{ toYaml $spec.configMap.data | indent 2}}
+{{- end }} {{/* if (empty $spec.configMap.data) ## allows full custom */}}
+{{- end }} {{/* if not $spec.disabled */}}
+{{- end }} {{/* with */}}
+
+{{- end }} {{/* define gatewayProxy.configMapSpec*/}}
+
+{{- if .Values.gateway.enabled }}
+{{- range $name, $gatewaySpec := .Values.gatewayProxies }}
+{{/* Render each gatewayProxy template with it's yaml overrides */}}
+---
+{{- $kubeResourceOverride := dict -}}
+{{- if $gatewaySpec.configMap -}}
+{{- $kubeResourceOverride = $gatewaySpec.configMap.kubeResourceOverride -}}
+{{- end -}} {{/* if $gatewaySpec.configMap */}}
+{{- $ctx := (list $ $name $gatewaySpec)}}
+{{- include "gloo.util.merge" (list $ctx $kubeResourceOverride "gatewayProxy.configMapSpec") -}}
+{{- end }}{{/* range $name, $gatewaySpec := .Values.gatewayProxies */}}
+{{- end }}{{/* if .Values.gateway.enabled */}}

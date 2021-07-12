@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"net/url"
 
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	errors "github.com/rotisserie/eris"
 	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/discovery"
 
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
@@ -18,6 +18,7 @@ import (
 )
 
 var _ discovery.DiscoveryPlugin = new(plugin)
+var _ plugins.UpstreamPlugin = new(plugin)
 
 type plugin struct {
 	kube kubernetes.Interface
@@ -25,6 +26,8 @@ type plugin struct {
 	UpstreamConverter UpstreamConverter
 
 	kubeCoreCache corecache.KubeCoreCache
+
+	settings *v1.Settings
 }
 
 func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
@@ -45,10 +48,11 @@ func NewPlugin(kube kubernetes.Interface, kubeCoreCache corecache.KubeCoreCache)
 }
 
 func (p *plugin) Init(params plugins.InitParams) error {
+	p.settings = params.Settings
 	return nil
 }
 
-func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoyapi.Cluster) error {
+func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 	// not ours
 	kube, ok := in.UpstreamType.(*v1.Upstream_Kube)
 	if !ok {
@@ -56,9 +60,17 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	}
 
 	// configure the cluster to use EDS:ADS and call it a day
-	xds.SetEdsOnCluster(out)
+	xds.SetEdsOnCluster(out, p.settings)
+	upstreamRef := in.GetMetadata().Ref()
 
-	svcs, err := p.kubeCoreCache.NamespacedServiceLister(kube.Kube.ServiceNamespace).List(labels.NewSelector())
+	// Lister functions obfuscate the typical (val, ok) pair returned values of maps, so we have to do a nil check instead.
+	lister := p.kubeCoreCache.NamespacedServiceLister(kube.Kube.ServiceNamespace)
+	if lister == nil {
+		return errors.Errorf("Upstream %s references the service \"%s\" which has an invalid ServiceNamespace \"%s\".",
+			upstreamRef.String(), kube.Kube.ServiceName, kube.Kube.ServiceNamespace)
+	}
+
+	svcs, err := lister.List(labels.NewSelector())
 	if err != nil {
 		return err
 	}
@@ -68,7 +80,6 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 		}
 	}
 
-	upstreamRef := in.GetMetadata().Ref()
 	return errors.Errorf("Upstream %s references the service \"%s\" which does not exist in namespace \"%s\"",
 		upstreamRef.String(), kube.Kube.ServiceName, kube.Kube.ServiceNamespace)
 

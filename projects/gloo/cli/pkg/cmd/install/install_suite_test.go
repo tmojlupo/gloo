@@ -1,23 +1,33 @@
 package install_test
 
 import (
+	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/solo-io/gloo/pkg/version"
+	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/install"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/helpers"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"testing"
 
 	. "github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/reporters"
 	. "github.com/onsi/gomega"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/testutils"
 	gotestutils "github.com/solo-io/go-utils/testutils"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/yaml"
 )
 
 func TestInstall(t *testing.T) {
 	RegisterFailHandler(Fail)
 	gotestutils.RegisterCommonFailHandlers()
-	RunSpecs(t, "Install Suite")
+	junitReporter := reporters.NewJUnitReporter("junit.xml")
+	RunSpecsWithDefaultAndCustomReporters(t, "Install Suite", []Reporter{junitReporter})
 }
 
 var RootDir string
@@ -25,8 +35,7 @@ var dir string
 var file, values1, values2 string
 
 const (
-	unitTestingTaggedVersion = "vunit-testing"
-	expectedHelmFilename     = "gloo-unit-testing.tgz"
+	expectedHelmFilenameFmt = "gloo-%s.tgz"
 )
 
 // NOTE: This needs to be run from the root of the repo as the working directory
@@ -44,14 +53,14 @@ var _ = BeforeSuite(func() {
 	dir = filepath.Join(RootDir, "_unit_test/")
 	os.Mkdir(dir, 0755)
 
-	err = testutils.Make(RootDir, "build-test-chart TEST_ASSET_DIR=\""+dir+"\" TAGGED_VERSION="+unitTestingTaggedVersion)
+	err = testutils.Make(RootDir, "build-test-chart TEST_ASSET_DIR=\""+dir+"\"")
 	Expect(err).NotTo(HaveOccurred())
 
 	// Some tests need the Gloo/GlooE version that gets linked into the glooctl binary at build time
 	err = testutils.Make(RootDir, "glooctl")
 	Expect(err).NotTo(HaveOccurred())
 
-	file = filepath.Join(dir, expectedHelmFilename)
+	file = filepath.Join(dir, fmt.Sprintf(expectedHelmFilenameFmt, version.Version))
 
 	values1 = filepath.Join(dir, "values-namespace1.yaml")
 	values2 = filepath.Join(dir, "values-namespace2.yaml")
@@ -70,6 +79,30 @@ settings:
  writeNamespace: test-namespace-2`)
 	Expect(err).NotTo(HaveOccurred())
 	f2.Close()
+
+	// Check all gloo crds are included in GlooCrdNames
+	crdDir := filepath.Join(RootDir, "/install/helm/gloo/crds")
+	files, err := ioutil.ReadDir(crdDir)
+	Expect(err).NotTo(HaveOccurred())
+	var crdNames []string
+	for _, f3 := range files {
+		ext := filepath.Ext(f3.Name())
+		// check file has manifest extension
+		if !f3.IsDir() && (strings.EqualFold(ext, ".yaml") || strings.EqualFold(ext, ".yml") || strings.EqualFold(ext, ".json")) {
+			manifest, err := ioutil.ReadFile(crdDir + "/" + f3.Name())
+			Expect(err).NotTo(HaveOccurred())
+			jsn, err := yaml.YAMLToJSON(manifest)
+			Expect(err).NotTo(HaveOccurred())
+			runtimeObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, jsn)
+			Expect(err).NotTo(HaveOccurred())
+
+			// get crd name from yaml
+			resource := runtimeObj.(*unstructured.Unstructured)
+			Expect(resource.GetName()).NotTo(BeNil())
+			crdNames = append(crdNames, resource.GetName())
+		}
+	}
+	Expect(install.GlooCrdNames).To(ContainElements(crdNames))
 })
 
 var _ = AfterSuite(func() {

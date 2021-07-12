@@ -1,6 +1,7 @@
 package knative_test
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -12,9 +13,10 @@ import (
 	"github.com/solo-io/go-utils/log"
 	"github.com/solo-io/go-utils/testutils"
 	"github.com/solo-io/go-utils/testutils/exec"
-	"github.com/solo-io/go-utils/testutils/helper"
+	"github.com/solo-io/k8s-utils/testutils/helper"
 
 	. "github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/reporters"
 	. "github.com/onsi/gomega"
 	skhelpers "github.com/solo-io/solo-kit/test/helpers"
 )
@@ -28,14 +30,20 @@ func TestKnative(t *testing.T) {
 	helpers.RegisterGlooDebugLogPrintHandlerAndClearLogs()
 	skhelpers.RegisterCommonFailHandlers()
 	skhelpers.SetupLog()
-	RunSpecs(t, "Knative Suite")
+	junitReporter := reporters.NewJUnitReporter("junit.xml")
+	RunSpecsWithDefaultAndCustomReporters(t, "Knative Suite", []Reporter{junitReporter})
 }
 
-var testHelper *helper.SoloTestHelper
+var (
+	testHelper *helper.SoloTestHelper
+	ctx        context.Context
+	cancel     context.CancelFunc
+)
 
 var _ = BeforeSuite(func() {
 	cwd, err := os.Getwd()
 	Expect(err).NotTo(HaveOccurred())
+	ctx, cancel = context.WithCancel(context.Background())
 
 	randomNumber := time.Now().Unix() % 10000
 	testHelper, err = helper.NewSoloTestHelper(func(defaults helper.TestConfig) helper.TestConfig {
@@ -49,8 +57,12 @@ var _ = BeforeSuite(func() {
 	skhelpers.RegisterPreFailHandler(helpers.KubeDumpOnFail(GinkgoWriter, "knative-serving", testHelper.InstallNamespace))
 	testHelper.Verbose = true
 
+	// Define helm overrides
+	valuesOverrideFile, cleanupFunc := getHelmValuesOverrideFile()
+	defer cleanupFunc()
+
 	// Install Gloo
-	err = testHelper.InstallGloo(helper.KNATIVE, 5*time.Minute)
+	err = testHelper.InstallGloo(ctx, helper.KNATIVE, 5*time.Minute, helper.ExtraArgs("--values", valuesOverrideFile))
 	Expect(err).NotTo(HaveOccurred())
 })
 
@@ -65,8 +77,28 @@ var _ = AfterSuite(func() {
 		Eventually(func() error {
 			return testutils.Kubectl("get", "namespace", testHelper.InstallNamespace)
 		}, "60s", "1s").Should(HaveOccurred())
+		cancel()
 	}
 })
+
+func getHelmValuesOverrideFile() (filename string, cleanup func()) {
+	values, err := ioutil.TempFile("", "values-*.yaml")
+	Expect(err).NotTo(HaveOccurred())
+
+	// disabling panic threshold
+	// https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/panic_threshold.html
+	_, err = values.Write([]byte(`
+gatewayProxies:
+  gatewayProxy:
+    healthyPanicThreshold: 0
+`))
+	Expect(err).NotTo(HaveOccurred())
+
+	err = values.Close()
+	Expect(err).NotTo(HaveOccurred())
+
+	return values.Name(), func() { _ = os.Remove(values.Name()) }
+}
 
 func deployKnativeTestService(filePath string) {
 	b, err := ioutil.ReadFile(filePath)

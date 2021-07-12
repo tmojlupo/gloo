@@ -1,48 +1,41 @@
 package test
 
 import (
+	"bytes"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
 	"testing"
+	"text/template"
 
-	"github.com/solo-io/go-utils/versionutils/git"
-
-	glooVersion "github.com/solo-io/gloo/pkg/version"
-
-	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/install"
-
-	"helm.sh/helm/v3/pkg/release"
-
-	"github.com/solo-io/gloo/projects/gloo/cli/pkg/constants"
-	helm2chartutil "k8s.io/helm/pkg/chartutil"
-	helm2renderutil "k8s.io/helm/pkg/renderutil"
-
-	"github.com/solo-io/gloo/pkg/cliutil/helm"
+	"github.com/onsi/ginkgo/reporters"
 
 	"github.com/ghodss/yaml"
-	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
-	"helm.sh/helm/v3/pkg/action"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/strvals"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	helm2chartapi "k8s.io/helm/pkg/proto/hapi/chart"
-	k8syamlutil "sigs.k8s.io/yaml"
-
-	"github.com/solo-io/go-utils/testutils"
-	v1 "k8s.io/api/core/v1"
-
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	. "github.com/solo-io/go-utils/manifesttestutils"
+	"github.com/solo-io/gloo/pkg/cliutil/helm"
+	glooVersion "github.com/solo-io/gloo/pkg/version"
+	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/install"
+	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
+	"github.com/solo-io/go-utils/testutils"
+	"github.com/solo-io/go-utils/versionutils/git"
+	. "github.com/solo-io/k8s-utils/manifesttestutils"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/release"
+	"helm.sh/helm/v3/pkg/strvals"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8syamlutil "sigs.k8s.io/yaml"
 )
 
 func TestHelm(t *testing.T) {
 	RegisterFailHandler(Fail)
 	testutils.RegisterCommonFailHandlers()
-	RunSpecs(t, "Helm Suite")
+	junitReporter := reporters.NewJUnitReporter("junit.xml")
+	RunSpecsWithDefaultAndCustomReporters(t, "Helm Suite", []Reporter{junitReporter})
 }
 
 var _ = BeforeSuite(func() {
@@ -66,7 +59,6 @@ type renderTestCase struct {
 }
 
 var renderers = []renderTestCase{
-	{"Helm 2", helm2Renderer{chartDir}},
 	{"Helm 3", helm3Renderer{chartDir}},
 }
 
@@ -108,7 +100,6 @@ type ChartRenderer interface {
 }
 
 var _ ChartRenderer = &helm3Renderer{}
-var _ ChartRenderer = &helm2Renderer{}
 
 type helm3Renderer struct {
 	chartDir string
@@ -158,51 +149,6 @@ func BuildHelm3Release(chartDir, namespace string, values helmValues) (*release.
 	}
 
 	return client.Run(chartRequested, helmValues)
-}
-
-type helm2Renderer struct {
-	chartDir string
-}
-
-func (h2 helm2Renderer) RenderManifest(namespace string, values helmValues) (TestManifest, error) {
-	chart, err := helm2chartutil.Load(h2.chartDir)
-	if err != nil {
-		return nil, err
-	}
-
-	helmValues, err := buildHelmValues(h2.chartDir, values)
-	if err != nil {
-		return nil, err
-	}
-
-	helmValuesRaw, err := yaml.Marshal(helmValues)
-	if err != nil {
-		return nil, err
-	}
-
-	templateConfig := &helm2chartapi.Config{Raw: string(helmValuesRaw), Values: map[string]*helm2chartapi.Value{}}
-
-	renderedTemplates, err := helm2renderutil.Render(chart, templateConfig, helm2renderutil.Options{
-		ReleaseOptions: helm2chartutil.ReleaseOptions{
-			Name:      constants.GlooReleaseName,
-			Namespace: namespace,
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// the test manifest utils can only read from a file, ugh
-	f, err := ioutil.TempFile("", "*.yaml")
-	Expect(err).NotTo(HaveOccurred(), "Should be able to write a temp file for the helm unit test manifest")
-	defer func() { _ = os.Remove(f.Name()) }()
-
-	for _, manifest := range renderedTemplates {
-		_, err := f.WriteString(manifest + "\n---\n")
-		Expect(err).NotTo(HaveOccurred(), "Should be able to write the release manifest to the temp file for the helm unit tests")
-	}
-
-	return NewTestManifest(f.Name()), nil
 }
 
 // each entry in valuesArgs should look like `path.to.helm.field=value`
@@ -300,8 +246,17 @@ func mergeMaps(a, b map[string]interface{}) map[string]interface{} {
 
 func makeUnstructured(yam string) *unstructured.Unstructured {
 	jsn, err := yaml.YAMLToJSON([]byte(yam))
-	Expect(err).NotTo(HaveOccurred())
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	runtimeObj, err := runtime.Decode(unstructured.UnstructuredJSONScheme, jsn)
-	Expect(err).NotTo(HaveOccurred())
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return runtimeObj.(*unstructured.Unstructured)
+}
+
+func makeUnstructureFromTemplateFile(fixtureName string, values interface{}) *unstructured.Unstructured {
+	tmpl, err := template.ParseFiles(fixtureName)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	var b bytes.Buffer
+	err = tmpl.Execute(&b, values)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return makeUnstructured(b.String())
 }

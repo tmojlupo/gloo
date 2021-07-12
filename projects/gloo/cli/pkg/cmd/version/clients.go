@@ -1,12 +1,13 @@
 package version
 
 import (
+	"context"
 	"strings"
 
 	"github.com/solo-io/gloo/install/helm/gloo/generate"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/version"
-	"github.com/solo-io/go-utils/kubeutils"
 	"github.com/solo-io/go-utils/stringutils"
+	"github.com/solo-io/k8s-utils/kubeutils"
 	kubev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -15,7 +16,7 @@ import (
 //go:generate mockgen -destination ./mocks/mock_watcher.go -source clients.go
 
 type ServerVersion interface {
-	Get() ([]*version.ServerVersion, error)
+	Get(ctx context.Context) ([]*version.ServerVersion, error)
 }
 
 type kube struct {
@@ -34,7 +35,7 @@ func NewKube(namespace string) *kube {
 	}
 }
 
-func (k *kube) Get() ([]*version.ServerVersion, error) {
+func (k *kube) Get(ctx context.Context) ([]*version.ServerVersion, error) {
 	cfg, err := kubeutils.GetConfig("", "")
 	if err != nil {
 		// kubecfg is missing, therefore no cluster is present, only print client version
@@ -45,7 +46,7 @@ func (k *kube) Get() ([]*version.ServerVersion, error) {
 		return nil, err
 	}
 
-	deployments, err := client.AppsV1().Deployments(k.namespace).List(metav1.ListOptions{
+	deployments, err := client.AppsV1().Deployments(k.namespace).List(ctx, metav1.ListOptions{
 		// search only for gloo deployments based on labels
 		LabelSelector: "app=gloo",
 	})
@@ -59,16 +60,16 @@ func (k *kube) Get() ([]*version.ServerVersion, error) {
 		for _, container := range v.Spec.Template.Spec.Containers {
 			containerInfo := parseContainerString(container)
 			kubeContainerList = append(kubeContainerList, &version.Kubernetes_Container{
-				Tag:      containerInfo.Tag,
-				Name:     containerInfo.Repository,
-				Registry: containerInfo.Registry,
+				Tag:      *containerInfo.Tag,
+				Name:     *containerInfo.Repository,
+				Registry: *containerInfo.Registry,
 			})
 			switch {
-			case stringutils.ContainsString(containerInfo.Repository, KnativeUniqueContainers):
+			case stringutils.ContainsString(*containerInfo.Repository, KnativeUniqueContainers):
 				foundKnative = true
-			case stringutils.ContainsString(containerInfo.Repository, IngressUniqueContainers):
+			case stringutils.ContainsString(*containerInfo.Repository, IngressUniqueContainers):
 				foundIngress = true
-			case stringutils.ContainsString(containerInfo.Repository, GlooEUniqueContainers):
+			case stringutils.ContainsString(*containerInfo.Repository, GlooEUniqueContainers):
 				foundGlooE = true
 			}
 		}
@@ -107,10 +108,11 @@ func parseContainerString(container kubev1.Container) *generate.Image {
 	if len(splitImageVersion) == 2 {
 		tag = splitImageVersion[1]
 	}
-	img.Tag = tag
+	img.Tag = &tag
 	name = splitImageVersion[0]
 	splitRepoName := strings.Split(name, "/")
-	img.Repository = splitRepoName[len(splitRepoName)-1]
-	img.Registry = strings.Join(splitRepoName[:len(splitRepoName)-1], "/")
+	registry := strings.Join(splitRepoName[:len(splitRepoName)-1], "/")
+	img.Repository = &splitRepoName[len(splitRepoName)-1]
+	img.Registry = &registry
 	return img
 }

@@ -21,20 +21,19 @@ func enterpriseCmd(opts *options.Options) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 
 			extraValues := map[string]interface{}{
-				"license_key": opts.Install.LicenseKey,
+				"license_key":      opts.Install.LicenseKey,
+				"gloo-fed.enabled": opts.Install.WithGlooFed,
 			}
 
 			mode := Enterprise
-			if opts.Install.WithUi {
-				mode = GlooWithUI
-			}
 			if err := NewInstaller(DefaultHelmClient()).Install(&InstallerConfig{
 				InstallCliArgs: &opts.Install,
 				ExtraValues:    extraValues,
 				Mode:           mode, // mode will be overwritten in Install to Gloo if the helm chart doesn't have gloo subchart
 				Verbose:        opts.Top.Verbose,
+				Ctx:            opts.Top.Ctx,
 			}); err != nil {
-				return eris.Wrapf(err, "installing Gloo Enterprise in gateway mode")
+				return eris.Wrapf(err, "installing Gloo Edge Enterprise in gateway mode")
 			}
 
 			return nil
@@ -44,5 +43,7 @@ func enterpriseCmd(opts *options.Options) *cobra.Command {
 	pFlags := cmd.PersistentFlags()
 	flagutils.AddGlooInstallFlags(cmd.Flags(), &opts.Install)
 	flagutils.AddEnterpriseInstallFlags(pFlags, &opts.Install)
+
+	pFlags.Lookup("gloo-fed-values").Hidden = true
 	return cmd
 }

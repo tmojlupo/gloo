@@ -9,13 +9,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/solo-io/gloo/pkg/utils/protoutils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/version"
-	"github.com/solo-io/go-utils/pkgmgmtutils/formula_updater_types"
-	"github.com/solo-io/go-utils/protoutils"
-
 	"github.com/solo-io/go-utils/githubutils"
 	"github.com/solo-io/go-utils/log"
 	"github.com/solo-io/go-utils/pkgmgmtutils"
+	"github.com/solo-io/go-utils/pkgmgmtutils/formula_updater_types"
 	"github.com/solo-io/go-utils/versionutils"
 )
 
@@ -127,8 +126,8 @@ func mustUpdateFormulas(ctx context.Context, versionBeingReleased *versionutils.
 			PRDescription:   "Created by Solo-io Bot",
 			PRCommitName:    "Solo-io Bot",
 			PRCommitEmail:   "bot@solo.io",
-			VersionRegex:    `:tag\s*=>\s*"v([0-9.]+)",`,
-			VersionShaRegex: `:revision\s*=>\s*"(.*)"`,
+			VersionRegex:    `tag:\s*"v([0-9.]+)",`,
+			VersionShaRegex: `revision:\s*"(.*)"`,
 		},
 	}
 

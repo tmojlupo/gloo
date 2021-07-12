@@ -1,6 +1,7 @@
 package install
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,6 +47,7 @@ type InstallerConfig struct {
 	ExtraValues    map[string]interface{}
 	Mode           Mode
 	Verbose        bool
+	Ctx            context.Context
 }
 
 type Mode int
@@ -72,20 +74,22 @@ func NewInstallerWithWriter(helmClient HelmClient, kubeNsClient v1.NamespaceInte
 }
 
 func (i *installer) Install(installerConfig *InstallerConfig) error {
-	namespace := installerConfig.InstallCliArgs.Namespace
-	releaseName := installerConfig.InstallCliArgs.HelmReleaseName
+	return i.installFromConfig(installerConfig)
+}
+
+func (i *installer) installFromConfig(installerConfig *InstallerConfig) error {
+	helmInstallConfig := installerConfig.InstallCliArgs.Gloo
+	namespace := helmInstallConfig.Namespace
+	releaseName := helmInstallConfig.HelmReleaseName
 	if !installerConfig.InstallCliArgs.DryRun {
 		if releaseExists, err := i.helmClient.ReleaseExists(namespace, releaseName); err != nil {
 			return err
 		} else if releaseExists {
-			if installerConfig.Mode == Federation {
-				return GlooFedAlreadyInstalled(namespace)
-			}
 			return GlooAlreadyInstalled(namespace)
 		}
-		if installerConfig.InstallCliArgs.CreateNamespace {
+		if helmInstallConfig.CreateNamespace {
 			// Create the namespace if it doesn't exist. Helm3 no longer does this.
-			i.createNamespace(namespace)
+			i.createNamespace(installerConfig.Ctx, namespace)
 		}
 	}
 
@@ -96,7 +100,7 @@ func (i *installer) Install(installerConfig *InstallerConfig) error {
 		return err
 	}
 
-	chartUri, err := getChartUri(installerConfig.InstallCliArgs.HelmChartOverride,
+	chartUri, err := getChartUri(helmInstallConfig.HelmChartOverride,
 		strings.TrimPrefix(installerConfig.InstallCliArgs.Version, "v"),
 		installerConfig.Mode)
 	if err != nil {
@@ -113,13 +117,11 @@ func (i *installer) Install(installerConfig *InstallerConfig) error {
 
 	// determine if it's an enterprise chart by checking if has gloo as a dependency
 	// if so, overwrite the installation mode to Enterprise
-	if installerConfig.Mode != Federation {
-		installerConfig.Mode = Gloo
-		for _, dependency := range chartObj.Dependencies() {
-			if dependency.Metadata.Name == constants.GlooReleaseName {
-				installerConfig.Mode = Enterprise
-				break
-			}
+	installerConfig.Mode = Gloo
+	for _, dependency := range chartObj.Dependencies() {
+		if dependency.Metadata.Name == constants.GlooReleaseName {
+			installerConfig.Mode = Enterprise
+			break
 		}
 	}
 
@@ -130,17 +132,11 @@ func (i *installer) Install(installerConfig *InstallerConfig) error {
 
 	// Merge values provided via the '--values' flag
 	valueOpts := &values.Options{
-		ValueFiles: installerConfig.InstallCliArgs.HelmChartValueFileNames,
+		ValueFiles: helmInstallConfig.HelmChartValueFileNames,
 	}
 	cliValues, err := valueOpts.MergeValues(getter.All(helmEnv))
 	if err != nil {
 		return err
-	}
-
-	if installerConfig.Mode != Federation {
-		// We need this to avoid rendering the CRDs we include in the /templates directory
-		// for backwards-compatibility with Helm 2.
-		setCrdCreateToFalse(installerConfig)
 	}
 
 	// Merge the CLI flag values into the extra values, giving the latter higher precedence.
@@ -179,14 +175,18 @@ func (i *installer) Install(installerConfig *InstallerConfig) error {
 	return nil
 }
 
-func (i *installer) createNamespace(namespace string) {
-	_, err := i.kubeNsClient.Get(namespace, metav1.GetOptions{})
+func (i *installer) createNamespace(ctx context.Context, namespace string) {
+	_, err := i.kubeNsClient.Get(ctx, namespace, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		fmt.Printf("Creating namespace %s... ", namespace)
-		if _, err := i.kubeNsClient.Create(&corev1.Namespace{
+		if _, err := i.kubeNsClient.Create(ctx, &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: namespace,
 			},
+		}, metav1.CreateOptions{
+			TypeMeta:     metav1.TypeMeta{},
+			DryRun:       nil,
+			FieldManager: "",
 		}); err != nil {
 			fmt.Printf("\nUnable to create namespace %s. Continuing...\n", namespace)
 		} else {
@@ -238,27 +238,6 @@ func setExtraValues(config *InstallerConfig) error {
 	return nil
 }
 
-// Note: can be removed if we add {"gloo":{"crds":{"create":false}}} to default enterprise chart
-func setCrdCreateToFalse(config *InstallerConfig) {
-	if config.ExtraValues == nil {
-		config.ExtraValues = map[string]interface{}{}
-	}
-
-	mapWithCrdValueToOverride := config.ExtraValues
-
-	// If this is an enterprise install, `crds.create` is nested under the `gloo` field
-	if config.Mode == Enterprise {
-		if _, ok := config.ExtraValues[constants.GlooReleaseName]; !ok {
-			config.ExtraValues[constants.GlooReleaseName] = map[string]interface{}{}
-		}
-		mapWithCrdValueToOverride = config.ExtraValues[constants.GlooReleaseName].(map[string]interface{})
-	}
-
-	mapWithCrdValueToOverride["crds"] = map[string]interface{}{
-		"create": false,
-	}
-}
-
 func (i *installer) printReleaseManifest(release *release.Release) error {
 	// Print CRDs
 	for _, crdFile := range release.Chart.CRDs() {
@@ -293,12 +272,8 @@ func getChartUri(chartOverride, versionOverride string, mode Mode) (string, erro
 
 	var helmChartRepoTemplate, helmChartVersion string
 	switch mode {
-	case Federation:
-		helmChartRepoTemplate = GlooFedHelmRepoTemplate
 	case Enterprise:
 		helmChartRepoTemplate = GlooEHelmRepoTemplate
-	case GlooWithUI:
-		helmChartRepoTemplate = constants.GlooWithUiHelmRepoTemplate
 	case Gloo:
 		helmChartRepoTemplate = constants.GlooHelmRepoTemplate
 	default:
@@ -309,15 +284,7 @@ func getChartUri(chartOverride, versionOverride string, mode Mode) (string, erro
 		helmChartVersion = versionOverride
 	} else {
 		switch mode {
-		case Federation:
-			glooFedVersion, err := version.GetLatestGlooFedVersion(true)
-			if err != nil {
-				return "", err
-			}
-			helmChartVersion = glooFedVersion
 		case Enterprise:
-			fallthrough
-		case GlooWithUI:
 			enterpriseVersion, err := version.GetLatestEnterpriseVersion(true)
 			if err != nil {
 				return "", err
@@ -356,12 +323,10 @@ func preInstallMessage(installOpts *options.Install, mode Mode) {
 		return
 	}
 	switch mode {
-	case Federation:
-		fmt.Println("Starting Gloo Federation installation...")
 	case Enterprise:
-		fmt.Println("Starting Gloo Enterprise installation...")
+		fmt.Println("Starting Gloo Edge Enterprise installation...")
 	default:
-		fmt.Println("Starting Gloo installation...")
+		fmt.Println("Starting Gloo Edge installation...")
 	}
 }
 func postInstallMessage(installOpts *options.Install, mode Mode) {
@@ -369,12 +334,19 @@ func postInstallMessage(installOpts *options.Install, mode Mode) {
 		return
 	}
 	switch mode {
-	case Federation:
-		fmt.Println("\nGloo Federation was successfully installed!")
 	case Enterprise:
-		fmt.Println("\nGloo Enterprise was successfully installed!")
+		fmt.Println("\nGloo Edge Enterprise was successfully installed!")
+		if installOpts.WithGlooFed {
+			fmt.Println("\nGloo Edge Federation was successfully installed!")
+			fmt.Println("\nYou can now register your cluster with:")
+			fmt.Println("\nFor GKE clusters:")
+			fmt.Println(" glooctl cluster register --cluster-name [ex. gloo-fed-remote] --remote-context [gke-context-name] --federation-namespace [default: gloo-fed]")
+			fmt.Println("\nFor kind clusters:")
+			fmt.Println(" glooctl cluster register --cluster-name [ex. kind-local] --remote-context [ex. kind-local] --local-cluster-domain-override [ex. host.docker.internal] --federation-namespace [default: gloo-fed]")
+			fmt.Println("\nSee the cluster registration guide for more information: https://docs.solo.io/gloo-edge/latest/guides/gloo_federation/cluster_registration/")
+		}
 	default:
-		fmt.Println("\nGloo was successfully installed!")
+		fmt.Println("\nGloo Edge was successfully installed!")
 	}
 }
 

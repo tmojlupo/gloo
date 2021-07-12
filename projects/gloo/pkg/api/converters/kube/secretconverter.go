@@ -3,8 +3,8 @@ package kubeconverters
 import (
 	"context"
 
+	"github.com/solo-io/gloo/pkg/utils/protoutils"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
-	"github.com/solo-io/go-utils/protoutils"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/kubesecret"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
 	skcore "github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
@@ -74,6 +74,7 @@ func (t *TLSSecretConverter) FromKubeSecret(_ context.Context, _ *kubesecret.Res
 				Tls: &v1.TlsSecret{
 					PrivateKey: string(secret.Data[kubev1.TLSPrivateKeyKey]),
 					CertChain:  string(secret.Data[kubev1.TLSCertKey]),
+					RootCa:     string(secret.Data[kubev1.ServiceAccountRootCAKey]),
 				},
 			},
 			Metadata: kubeutils.FromKubeMeta(secret.ObjectMeta),
@@ -106,6 +107,11 @@ func (t *TLSSecretConverter) ToKubeSecret(_ context.Context, _ *kubesecret.Resou
 							kubev1.TLSCertKey:       []byte(tlsGlooSecret.Tls.CertChain),
 						},
 					}
+
+					if tlsGlooSecret.Tls.RootCa != "" {
+						kubeSecret.Data[kubev1.ServiceAccountRootCAKey] = []byte(tlsGlooSecret.Tls.RootCa)
+					}
+
 					return kubeSecret, nil
 				}
 			}
@@ -134,7 +140,7 @@ func (t *AwsSecretConverter) FromKubeSecret(_ context.Context, _ *kubesecret.Res
 	sessionToken, hasSessionToken := secret.Data[AwsSessionTokenName]
 	if hasAccessKey && hasSecretKey {
 		skSecret := &v1.Secret{
-			Metadata: skcore.Metadata{
+			Metadata: &skcore.Metadata{
 				Name:        secret.Name,
 				Namespace:   secret.Namespace,
 				Cluster:     secret.ClusterName,

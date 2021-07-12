@@ -16,18 +16,18 @@ import (
 
 func NewGateway(namespace, name string) *Gateway {
 	gateway := &Gateway{}
-	gateway.SetMetadata(core.Metadata{
+	gateway.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return gateway
 }
 
-func (r *Gateway) SetMetadata(meta core.Metadata) {
+func (r *Gateway) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
-func (r *Gateway) SetStatus(status core.Status) {
+func (r *Gateway) SetStatus(status *core.Status) {
 	r.Status = status
 }
 
@@ -147,12 +147,6 @@ var (
 		false,
 		&Gateway{})
 )
-
-func init() {
-	if err := crd.AddCrd(GatewayCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	GatewayGVK = schema.GroupVersionKind{

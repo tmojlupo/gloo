@@ -19,15 +19,13 @@ func gatewayCmd(opts *options.Options) *cobra.Command {
 			helmClient := DefaultHelmClient()
 			installer := NewInstaller(helmClient)
 			mode := Gloo
-			if opts.Install.WithUi {
-				mode = GlooWithUI
-			}
 			if err := installer.Install(&InstallerConfig{
 				InstallCliArgs: &opts.Install,
 				Mode:           mode,
 				Verbose:        opts.Top.Verbose,
+				Ctx:            opts.Top.Ctx,
 			}); err != nil {
-				return eris.Wrapf(err, "installing gloo in gateway mode")
+				return eris.Wrapf(err, "installing gloo edge in gateway mode")
 			}
 			return nil
 		},

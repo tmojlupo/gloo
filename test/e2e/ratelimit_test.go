@@ -9,24 +9,25 @@ import (
 	"strings"
 	"time"
 
-	rltypes "github.com/solo-io/solo-apis/pkg/api/ratelimit.solo.io/v1alpha1"
-
-	"github.com/gogo/protobuf/types"
-	"github.com/solo-io/gloo/test/helpers"
-
-	pb "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v2"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/solo-io/gloo/pkg/utils"
+
+	pb "github.com/envoyproxy/go-control-plane/envoy/service/ratelimit/v3"
+	structpb "github.com/golang/protobuf/ptypes/struct"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/ratelimit"
 	gloov1static "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/static"
 	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
+	"github.com/solo-io/gloo/test/helpers"
 	"github.com/solo-io/gloo/test/services"
 	"github.com/solo-io/gloo/test/v1helpers"
+	"github.com/solo-io/go-utils/contextutils"
+	rltypes "github.com/solo-io/solo-apis/pkg/api/ratelimit.solo.io/v1alpha1"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/memory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -35,12 +36,12 @@ type acceptOrDenyRateLimitServer struct {
 	acceptAll bool
 }
 
-func (this *acceptOrDenyRateLimitServer) ShouldRateLimit(ctx context.Context, req *pb.RateLimitRequest) (*pb.RateLimitResponse, error) {
+func (s *acceptOrDenyRateLimitServer) ShouldRateLimit(_ context.Context, req *pb.RateLimitRequest) (*pb.RateLimitResponse, error) {
 	// users could implement their own logic in custom rate limit servers here
 	// the request descriptors are present in the rate limit request object, e.g.
 	Expect(req.Descriptors[0].Entries[0].Key).To(Equal("generic_key"))
 	Expect(req.Descriptors[0].Entries[0].Value).To(Equal("test"))
-	if this.acceptAll {
+	if s.acceptAll {
 		return &pb.RateLimitResponse{
 			OverallCode: pb.RateLimitResponse_OK,
 		}, nil
@@ -51,10 +52,82 @@ func (this *acceptOrDenyRateLimitServer) ShouldRateLimit(ctx context.Context, re
 	}
 }
 
+// Returns the actions that should be used to generate the descriptors expected by the server.
+func (s *acceptOrDenyRateLimitServer) getActionsForServer() []*rltypes.RateLimitActions {
+	return []*rltypes.RateLimitActions{
+		{
+			Actions: []*rltypes.Action{{
+				ActionSpecifier: &rltypes.Action_GenericKey_{
+					GenericKey: &rltypes.Action_GenericKey{DescriptorValue: "test"},
+				},
+			}},
+		},
+	}
+}
+
+type metadataCheckingRateLimitServer struct {
+	descriptorKey          string
+	defaultDescriptorValue string
+	metadataKey            string
+	pathSegmentKey         string
+	expectedMetadataValue  string
+}
+
+func (s *metadataCheckingRateLimitServer) ShouldRateLimit(ctx context.Context, req *pb.RateLimitRequest) (*pb.RateLimitResponse, error) {
+	contextutils.LoggerFrom(ctx).Infow("rate limit request", zap.Any("req", req))
+
+	Expect(req.Descriptors).To(HaveLen(1))
+	Expect(req.Descriptors[0].Entries).To(HaveLen(1))
+
+	descriptorEntry := req.Descriptors[0].Entries[0]
+	Expect(descriptorEntry.GetKey()).To(Equal(s.descriptorKey))
+	Expect(descriptorEntry.GetValue()).To(Or(Equal(s.expectedMetadataValue), Equal(s.defaultDescriptorValue)))
+
+	if descriptorEntry.GetValue() == s.expectedMetadataValue {
+		return &pb.RateLimitResponse{
+			OverallCode: pb.RateLimitResponse_OVER_LIMIT,
+		}, nil
+	}
+
+	return &pb.RateLimitResponse{
+		OverallCode: pb.RateLimitResponse_OK,
+	}, nil
+}
+
+// Returns the actions that should be used to generate the descriptors expected by the server.
+func (s *metadataCheckingRateLimitServer) getActionsForServer() []*rltypes.RateLimitActions {
+	return []*rltypes.RateLimitActions{
+		{
+			Actions: []*rltypes.Action{
+				{
+					ActionSpecifier: &rltypes.Action_Metadata{
+						Metadata: &rltypes.Action_MetaData{
+							DescriptorKey: s.descriptorKey,
+							MetadataKey: &rltypes.Action_MetaData_MetadataKey{
+								Key: s.metadataKey,
+								Path: []*rltypes.Action_MetaData_MetadataKey_PathSegment{
+									{
+										Segment: &rltypes.Action_MetaData_MetadataKey_PathSegment_Key{
+											Key: s.pathSegmentKey,
+										},
+									},
+								},
+							},
+							DefaultValue: s.defaultDescriptorValue,
+							Source:       rltypes.Action_MetaData_ROUTE_ENTRY,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 var _ = Describe("Rate Limit", func() {
 
 	var (
 		ctx         context.Context
+		cancel      context.CancelFunc
 		testClients services.TestClients
 		cache       memory.InMemoryResourceCache
 	)
@@ -76,16 +149,13 @@ var _ = Describe("Rate Limit", func() {
 			var err error
 			envoyInstance, err = envoyFactory.NewEnvoyInstance()
 			Expect(err).NotTo(HaveOccurred())
-		})
-
-		JustBeforeEach(func() {
 			// add the rl service as a static upstream
 			rlserver := &gloov1.Upstream{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Name:      "rl-server",
 					Namespace: "default",
 				},
-				UseHttp2: &types.BoolValue{Value: true},
+				UseHttp2: &wrappers.BoolValue{Value: true},
 				UpstreamType: &gloov1.Upstream_Static{
 					Static: &gloov1static.UpstreamSpec{
 						Hosts: []*gloov1static.Host{{
@@ -97,10 +167,10 @@ var _ = Describe("Rate Limit", func() {
 			}
 			ref := rlserver.Metadata.Ref()
 			rlSettings := &ratelimit.Settings{
-				RatelimitServerRef: &ref,
+				RatelimitServerRef: ref,
 			}
 
-			ctx, _ = context.WithCancel(context.Background())
+			ctx, cancel = context.WithCancel(context.Background())
 			cache = memory.NewInMemoryResourceCache()
 			ro := &services.RunOptions{
 				NsToWrite: defaults.GlooSystem,
@@ -117,13 +187,13 @@ var _ = Describe("Rate Limit", func() {
 			}
 
 			testClients = services.RunGlooGatewayUdsFds(ctx, ro)
-			_, err := testClients.UpstreamClient.Write(rlserver, clients.WriteOpts{})
+			_, err = testClients.UpstreamClient.Write(rlserver, clients.WriteOpts{})
 			Expect(err).NotTo(HaveOccurred())
 
 			err = helpers.WriteDefaultGateways(defaults.GlooSystem, testClients.GatewayClient)
 			Expect(err).NotTo(HaveOccurred(), "Should be able to write the default gateways")
 
-			err = envoyInstance.Run(testClients.GlooPort)
+			err = envoyInstance.RunWithRoleAndRestXds(services.DefaultProxyName, testClients.GlooPort, testClients.RestXdsPort)
 			Expect(err).NotTo(HaveOccurred())
 
 			testUpstream = v1helpers.NewTestHttpUpstream(ctx, envoyInstance.LocalAddr())
@@ -139,12 +209,16 @@ var _ = Describe("Rate Limit", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 			srv.GracefulStop()
+			if cancel != nil {
+				cancel()
+			}
 		})
 
 		It("should rate limit", func() {
-			srv = startSimpleRateLimitServer(false, rlPort)
+			rlService := &acceptOrDenyRateLimitServer{acceptAll: false}
+			srv = startRateLimitServer(rlService, rlPort)
 
-			hosts := map[string]bool{"host1": true}
+			hosts := map[string]*configForHost{"host1": {actionsForHost: rlService.getActionsForServer()}}
 			proxy := getProxy(envoyPort, testUpstream.Upstream.Metadata.Ref(), hosts)
 			_, err := testClients.ProxyClient.Write(proxy, clients.WriteOpts{})
 			Expect(err).NotTo(HaveOccurred())
@@ -153,22 +227,64 @@ var _ = Describe("Rate Limit", func() {
 		})
 
 		It("shouldn't rate limit", func() {
-			srv = startSimpleRateLimitServer(true, rlPort)
+			rlService := &acceptOrDenyRateLimitServer{acceptAll: true}
+			srv = startRateLimitServer(rlService, rlPort)
 
-			hosts := map[string]bool{"host1": true}
+			hosts := map[string]*configForHost{"host1": {actionsForHost: rlService.getActionsForServer()}}
 			proxy := getProxy(envoyPort, testUpstream.Upstream.Metadata.Ref(), hosts)
 			_, err := testClients.ProxyClient.Write(proxy, clients.WriteOpts{})
 			Expect(err).NotTo(HaveOccurred())
 
 			ConsistentlyNotRateLimited("host1", envoyPort)
 		})
+
+		It("should rate limit based on route metadata", func() {
+			rlService := &metadataCheckingRateLimitServer{
+				descriptorKey:          "md-desc",
+				defaultDescriptorValue: "default-value",
+				metadataKey:            "io.solo.test",
+				pathSegmentKey:         "foo",
+				expectedMetadataValue:  "bar",
+			}
+
+			srv = startRateLimitServer(rlService, rlPort)
+
+			hosts := map[string]*configForHost{
+				"host1": {
+					actionsForHost: rlService.getActionsForServer(),
+					routeMetadata: map[string]*structpb.Struct{
+						rlService.metadataKey: {
+							Fields: map[string]*structpb.Value{
+								rlService.pathSegmentKey: {
+									Kind: &structpb.Value_StringValue{
+										StringValue: rlService.expectedMetadataValue,
+									},
+								},
+							},
+						},
+					},
+				},
+				"host2": {
+					actionsForHost: rlService.getActionsForServer(),
+					// no metadata here, so we should send the `defaultDescriptorValue` to the server
+				},
+			}
+			proxy := getProxy(envoyPort, testUpstream.Upstream.Metadata.Ref(), hosts)
+			_, err := testClients.ProxyClient.Write(proxy, clients.WriteOpts{})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Host 1 should be rate limited
+			EventuallyRateLimited("host1", envoyPort)
+
+			// Host 2 should never be rate limited
+			ConsistentlyNotRateLimited("host2", envoyPort)
+		})
 	})
 })
 
-func startSimpleRateLimitServer(acceptAll bool, rlport uint32) *grpc.Server {
-	service := acceptOrDenyRateLimitServer{acceptAll: acceptAll}
+func startRateLimitServer(service pb.RateLimitServiceServer, rlport uint32) *grpc.Server {
 	srv := grpc.NewServer()
-	pb.RegisterRateLimitServiceServer(srv, &service)
+	pb.RegisterRateLimitServiceServer(srv, service)
 	reflection.Register(srv)
 	addr := fmt.Sprintf(":%d", rlport)
 	lis, err := net.Listen("tcp", addr)
@@ -250,38 +366,31 @@ func get(hostname string, port uint32) (*http.Response, error) {
 	return http.DefaultClient.Do(req)
 }
 
-func getProxy(envoyPort uint32, upstream core.ResourceRef, hostsToRateLimits map[string]bool) *gloov1.Proxy {
-	rlVhostExt := &ratelimit.RateLimitVhostExtension{
-		RateLimits: []*rltypes.RateLimitActions{
-			{
-				Actions: []*rltypes.Action{{
-					ActionSpecifier: &rltypes.Action_GenericKey_{
-						GenericKey: &rltypes.Action_GenericKey{DescriptorValue: "test"},
-					},
-				}},
-			},
-		},
-	}
+func getProxy(envoyPort uint32, upstream *core.ResourceRef, hostsToRateLimits map[string]*configForHost) *gloov1.Proxy {
+
 	rlb := RlProxyBuilder{
 		envoyPort:         envoyPort,
 		upstream:          upstream,
 		hostsToRateLimits: hostsToRateLimits,
-		customRateLimit:   rlVhostExt,
 	}
 	return rlb.getProxy()
 }
 
+type configForHost struct {
+	actionsForHost []*rltypes.RateLimitActions
+	routeMetadata  map[string]*structpb.Struct
+}
+
 type RlProxyBuilder struct {
-	customRateLimit   *ratelimit.RateLimitVhostExtension
-	upstream          core.ResourceRef
-	hostsToRateLimits map[string]bool
+	upstream          *core.ResourceRef
+	hostsToRateLimits map[string]*configForHost
 	envoyPort         uint32
 }
 
 func (b *RlProxyBuilder) getProxy() *gloov1.Proxy {
 	var vhosts []*gloov1.VirtualHost
 
-	for hostname, enableRateLimits := range b.hostsToRateLimits {
+	for hostname, hostConfig := range b.hostsToRateLimits {
 		vhost := &gloov1.VirtualHost{
 			Name:    "gloo-system.virt" + hostname,
 			Domains: []string{hostname},
@@ -292,7 +401,7 @@ func (b *RlProxyBuilder) getProxy() *gloov1.Proxy {
 							Destination: &gloov1.RouteAction_Single{
 								Single: &gloov1.Destination{
 									DestinationType: &gloov1.Destination_Upstream{
-										Upstream: utils.ResourceRefPtr(b.upstream),
+										Upstream: b.upstream,
 									},
 								},
 							},
@@ -302,10 +411,18 @@ func (b *RlProxyBuilder) getProxy() *gloov1.Proxy {
 			},
 		}
 
-		if enableRateLimits {
+		if len(hostConfig.routeMetadata) > 0 {
+			vhost.Routes[0].Options = &gloov1.RouteOptions{
+				EnvoyMetadata: hostConfig.routeMetadata,
+			}
+		}
+
+		if len(hostConfig.actionsForHost) > 0 {
 			vhost.Options = &gloov1.VirtualHostOptions{
 				RateLimitConfigType: &gloov1.VirtualHostOptions_Ratelimit{
-					Ratelimit: b.customRateLimit,
+					Ratelimit: &ratelimit.RateLimitVhostExtension{
+						RateLimits: hostConfig.actionsForHost,
+					},
 				},
 			}
 		}
@@ -313,7 +430,7 @@ func (b *RlProxyBuilder) getProxy() *gloov1.Proxy {
 	}
 
 	p := &gloov1.Proxy{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      "proxy",
 			Namespace: "default",
 		},

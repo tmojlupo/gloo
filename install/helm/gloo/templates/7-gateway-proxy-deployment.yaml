@@ -1,16 +1,20 @@
 {{- if .Values.gateway.updateValues -}}
 {{- include "gloo.updatevalues" . -}}
 {{- end -}}
-{{- if .Values.gateway.enabled }}
+{{- define "gatewayProxy.deploymentSpec" }}
+{{- $name := (index . 1) }}
+{{- $gatewaySpec := (index . 2) }}
+{{- with (first .) }}
 {{- $global := .Values.global }}
+{{- $settings := .Values.settings }}
 {{- $isUpgrade := .Values.gateway.upgrade }}
-{{- range $name, $spec := .Values.gatewayProxies }}
+{{- $gatewayProxy := .Values.gatewayProxies.gatewayProxy -}}
+{{- $spec := deepCopy $gatewaySpec | mergeOverwrite (deepCopy $gatewayProxy) -}}
 {{- $image := $spec.podTemplate.image }}
 {{- if $global }}
 {{- $image = merge $spec.podTemplate.image $global.image }}
 {{- end }}
 {{- $statsConfig := coalesce $spec.stats $global.glooStats }}
----
 {{- if not $spec.disabled }}
 apiVersion: apps/v1
 {{- if $spec.kind.deployment}}
@@ -24,7 +28,7 @@ metadata:
     gloo: gateway-proxy
     gateway-proxy-id: {{ $name | kebabcase }}
   name: {{ $name | kebabcase }}
-  namespace: {{ $.Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
 spec:
   {{- if $spec.kind.deployment}}
   {{- if $spec.kind.deployment.replicas}}
@@ -64,6 +68,9 @@ spec:
         prometheus.io/path: /metrics
         prometheus.io/port: "8081"
         prometheus.io/scrape: "true"
+        {{- if $global.istioIntegration.disableAutoinjection }}
+        sidecar.istio.io/inject: "false" # this deployment has custom logic related to istio sidecars, and shouldn't be blanket-injected ever
+        {{- end }}
 {{- end}}
 {{- if $spec.readConfig }}
 {{- if not $annotationExist }}
@@ -73,10 +80,13 @@ spec:
         readconfig-ready: /ready
         readconfig-config_dump: /config_dump
         readconfig-port: "8082"
+        {{- if $global.istioIntegration.disableAutoinjection }}
+        sidecar.istio.io/inject: "false"
+        {{- end }}
 {{- end}}
     spec:
 
-{{- if $spec.podTemplate.runUnprivileged }}
+{{- if $spec.podTemplate.enablePodSecurityContext }}
       securityContext:
         fsGroup: {{ printf "%.0f" (float64 $spec.podTemplate.fsGroup) }}
         {{- if not $spec.podTemplate.floatingUserId }}
@@ -84,8 +94,10 @@ spec:
         {{- end}}
 {{- end}}
 {{- if $spec.kind.deployment }}
-{{- if $spec.antiAffinity }}
+{{ if or ($spec.antiAffinity) ($spec.affinity) }}
       affinity:
+{{- end}}
+{{ if $spec.antiAffinity }}
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
           - weight: 100
@@ -95,15 +107,24 @@ spec:
                   gloo: gateway-proxy
               topologyKey: kubernetes.io/hostname
 {{- end}}
+{{- if $spec.affinity }}
+      {{ toYaml $spec.affinity | nindent 8 }}
+{{- end }}
 {{- end}}
+      {{- include "gloo.pullSecret" $image | nindent 6 -}}
       serviceAccountName: gateway-proxy
       {{- if $spec.extraInitContainersHelper }}
       initContainers:
-      {{- include $spec.extraInitContainersHelper $ | nindent 6 }}
+      {{- include $spec.extraInitContainersHelper . | nindent 6 }}
       {{- end }}
       containers:
       - args:
           - --disable-hot-restart
+          - --bootstrap-version
+          - "3"
+        {{- if $spec.envoyLogLevel }}
+          - --log-level {{ $spec.envoyLogLevel }}
+        {{- end}}
           {{- with $spec.extraEnvoyArgs}}
             {{- range . }}
           - {{ . | quote }}
@@ -123,11 +144,11 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
-        {{- if not $global.wasm.enabled }}
+      {{- if $spec.logLevel }}
+        - name: LOG_LEVEL
+          value: {{ $spec.logLevel }}
+      {{- end}}
         image: {{ template "gloo.image" $image }}
-        {{- else }}
-        image: {{ template "gloo.wasmImage" $image }}
-        {{- end}}
         imagePullPolicy: {{ $image.pullPolicy }}
         {{- if $spec.podTemplate.gracefulShutdown }}
         {{- if $spec.podTemplate.gracefulShutdown.enabled }}
@@ -210,24 +231,31 @@ spec:
         volumeMounts:
         - mountPath: /etc/envoy
           name: envoy-config
+{{- if $spec.extraProxyVolumeMounts }}
+{{ toYaml $spec.extraProxyVolumeMounts | indent 8 }}
+{{- end }}
 {{- if $spec.extraProxyVolumeMountHelper }}
-{{- include $spec.extraProxyVolumeMountHelper $ | nindent 8 }}
+{{- include $spec.extraProxyVolumeMountHelper . | nindent 8 }}
 {{- end }}
 {{- if $global.glooMtls.enabled }}
         - mountPath: /etc/envoy/ssl
           name: gloo-mtls-certs
           readOnly: true
-{{- end}} # $global.glooMtls.enabled
+{{- end}} {{- /* $global.glooMtls.enabled */}}
 {{- if $spec.extraContainersHelper }}
         - mountPath: /usr/share/shared-data
           name: shared-data
-{{- include $spec.extraContainersHelper $ | nindent 6 }}
-{{- end }} # $spec.extraContainersHelper
+{{- include $spec.extraContainersHelper . | nindent 6 }}
+{{- end }} {{- /* $spec.extraContainersHelper */}}
 {{- if or $global.glooMtls.enabled $global.istioSDS.enabled }}
       {{- $sdsImage := merge $global.glooMtls.sds.image $global.image }}
       - name: sds
         image: {{ template "gloo.image" $sdsImage }}
         imagePullPolicy: {{ $sdsImage.pullPolicy }}
+{{- if $global.glooMtls.sdsResources }}
+        resources:
+{{ toYaml $global.glooMtls.sdsResources | indent 10}}
+{{- end}}
         env:
           - name: POD_NAME
             valueFrom:
@@ -261,10 +289,10 @@ spec:
         - containerPort: 8234
           name: sds
           protocol: TCP
-{{- end }} # $global.glooMtls.enabled or $.Values.istioSDS.enabled
+{{- end }} {{- /* $global.glooMtls.enabled or $.Values.istioSDS.enabled */}}
       {{- if $spec.kind.daemonSet }}
-      {{- if $spec.kind.daemonSet.hostPort}}
-      hostNetwork: true
+      {{- if $spec.kind.daemonSet.hostPort }}
+      hostNetwork: {{ ne "false" ($spec.kind.daemonSet.hostNetwork | toString) }} {{/* defaults to true if undefined */}}
       dnsPolicy: ClusterFirstWithHostNet
       {{- end}}
       {{- end}}
@@ -281,9 +309,6 @@ spec:
       tolerations:
 {{ toYaml $spec.podTemplate.tolerations | indent 6}}
       {{- end }}
-      {{- if $image.pullSecret }}
-      imagePullSecrets:
-        - name: {{ $image.pullSecret }}{{end}}
       {{- if $spec.podTemplate.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ $spec.podTemplate.terminationGracePeriodSeconds }}
       {{- end }}
@@ -293,7 +318,11 @@ spec:
 {{- end }}
 {{- if not $global.istioSDS.customSidecars }}
       - name: istio-proxy
-        image: docker.io/istio/proxyv2:1.6.8
+        image: docker.io/istio/proxyv2:1.9.5
+        {{- if $global.glooMtls.sdsResources }}
+        resources:
+{{ toYaml $global.glooMtls.sdsResources | indent 10}}
+        {{- end}}
         args:
         - proxy
         - sidecar
@@ -310,7 +339,7 @@ spec:
         - --parentShutdownDuration
         - 1m0s
         - --discoveryAddress
-        - istio-pilot.istio-system.svc:15012
+        - istiod.istio-system.svc:15012
         - --proxyLogLevel=warning
         - --proxyComponentLogLevel=misc:error
         - --connectTimeout
@@ -335,7 +364,9 @@ spec:
           - name: CA_ADDR
             value: istiod.istio-system.svc:15012
           - name: ISTIO_META_MESH_ID
-            value: cluster.local
+            value: {{ $spec.istioMetaMeshId | default "cluster.local"}}
+          - name: ISTIO_META_CLUSTER_ID
+            value: {{ $spec.istioMetaClusterId | default "Kubernetes"}}
           - name: POD_NAME
             valueFrom:
               fieldRef:
@@ -385,9 +416,9 @@ spec:
         - mountPath: /etc/istio-certs/
           name: istio-certs
         - mountPath: /var/run/secrets/tokens
-          name: istio-token 
-{{- end}}
-{{- end}}
+          name: istio-token
+{{- end }} {{/* if not $global.istioSDS.customSidecars */}}
+{{- end }}{{/* if $global.istioSDS.enabled */}}
       volumes:
       - configMap:
           name: {{ $name | kebabcase }}-envoy-config
@@ -418,14 +449,27 @@ spec:
         secret:
           defaultMode: 420
           secretName: gloo-mtls-certs
-{{- end }}
+{{- end }} {{/* if $global.glooMtls.enabled */}}
       {{- if $spec.extraContainersHelper }}
       - name: shared-data
         emptyDir: {}
       {{- end }}
+      {{- if $spec.extraVolumes }}
+      {{ toYaml $spec.extraVolumes | nindent 6 }}
+      {{- end }}
       {{- if $spec.extraVolumeHelper }}
-      {{- include $spec.extraVolumeHelper $ | nindent 6 }}
+      {{- include $spec.extraVolumeHelper . | nindent 6 }}
       {{- end }}
 {{- end }}
-{{- end }}
-{{- end }}
+{{- end }} {{/* with */}}
+{{- end }} {{/* define gatewayProxy.deploymentSpec*/}}
+
+{{- if .Values.gateway.enabled }}
+{{- range $name, $gatewaySpec := .Values.gatewayProxies }}
+{{- /* Render each gatewayProxy template with it's yaml overrides */}}
+---
+{{- $kubeResourceOverride := $gatewaySpec.kubeResourceOverride  }}
+{{- $ctx := (list $ $name $gatewaySpec)}}
+{{- include "gloo.util.merge" (list $ctx $kubeResourceOverride "gatewayProxy.deploymentSpec") -}}
+{{- end }} {{/* range $name, $gatewaySpec := .Values.gatewayProxies */}}
+{{- end }} {{/* if .Values.gateway.enabled */}}

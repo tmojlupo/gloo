@@ -3,13 +3,12 @@ package static.options.gloo.solo.io;
 
 option go_package = "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/static";
 
-import "gogoproto/gogo.proto";
-option (gogoproto.equal_all) = true;
 import "extproto/ext.proto";
+option (extproto.equal_all) = true;
 option (extproto.hash_all) = true;
 
 import "google/protobuf/wrappers.proto";
-import "gloo/projects/gloo/api/v1/options/service_spec.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/options/service_spec.proto";
 
 // Static upstreams are used to route request to services listening at fixed IP/Host & Port pairs.
 // Static upstreams can be used to proxy any kind of service, and therefore contain a ServiceSpec
@@ -26,18 +25,29 @@ message UpstreamSpec {
 
     // An optional Service Spec describing the service listening at this address
     .options.gloo.solo.io.ServiceSpec service_spec = 5;
+
+    // When set, automatically set the sni address to use to the addr field.
+    // If both this and host.sni_addr are set, host.sni_addr has priority.
+    // defaults to "true".
+    google.protobuf.BoolValue auto_sni_rewrite = 6;
 }
 
 // Represents a single instance of an upstream
 message Host {
     // Address (hostname or IP)
     string addr = 1;
+
     // Port the instance is listening on
     uint32 port = 2;
+
+    // Address to use for SNI if using ssl.
+    string sni_addr = 4;
 
     message HealthCheckConfig {
         // (Enterprise Only): Path to use when health checking this specific host.
         string path = 1;
+        // (Enterprise Only): Method to use when health checking this specific host.
+        string method = 2;
     }
 
     // (Enterprise Only): Host specific health checking configuration.

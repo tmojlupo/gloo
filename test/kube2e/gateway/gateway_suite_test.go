@@ -1,7 +1,7 @@
 package gateway_test
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,10 +10,11 @@ import (
 	"github.com/solo-io/gloo/test/helpers"
 	"github.com/solo-io/gloo/test/kube2e"
 	"github.com/solo-io/go-utils/log"
-	"github.com/solo-io/go-utils/testutils/helper"
+	"github.com/solo-io/k8s-utils/testutils/helper"
 	skhelpers "github.com/solo-io/solo-kit/test/helpers"
 
 	. "github.com/onsi/ginkgo"
+	"github.com/onsi/ginkgo/reporters"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,10 +29,13 @@ func TestGateway(t *testing.T) {
 	helpers.RegisterGlooDebugLogPrintHandlerAndClearLogs()
 	skhelpers.RegisterCommonFailHandlers()
 	skhelpers.SetupLog()
-	RunSpecs(t, "Gateway Suite")
+	junitReporter := reporters.NewJUnitReporter("junit.xml")
+	RunSpecsWithDefaultAndCustomReporters(t, "Gateway Suite", []Reporter{junitReporter})
 }
 
 var testHelper *helper.SoloTestHelper
+var ctx, cancel = context.WithCancel(context.Background())
+var installNamespace = "gloo-system"
 
 var _ = BeforeSuite(StartTestHelper)
 var _ = AfterSuite(TearDownTestHelper)
@@ -40,11 +44,10 @@ func StartTestHelper() {
 	cwd, err := os.Getwd()
 	Expect(err).NotTo(HaveOccurred())
 
-	randomNumber := time.Now().Unix() % 10000
 	testHelper, err = helper.NewSoloTestHelper(func(defaults helper.TestConfig) helper.TestConfig {
 		defaults.RootDir = filepath.Join(cwd, "../../..")
 		defaults.HelmChartName = "gloo"
-		defaults.InstallNamespace = "gateway-test-" + fmt.Sprintf("%d-%d", randomNumber, GinkgoParallelNode())
+		defaults.InstallNamespace = "gloo-system"
 		defaults.Verbose = true
 		return defaults
 	})
@@ -55,15 +58,18 @@ func StartTestHelper() {
 	valueOverrideFile, cleanupFunc := kube2e.GetHelmValuesOverrideFile()
 	defer cleanupFunc()
 
-	err = testHelper.InstallGloo(helper.GATEWAY, 5*time.Minute, helper.ExtraArgs("--values", valueOverrideFile))
-	Expect(err).NotTo(HaveOccurred())
+	// Allow skipping of install step for running multiple times
+	if os.Getenv("SKIP_INSTALL") != "1" {
+		err = testHelper.InstallGloo(ctx, helper.GATEWAY, 5*time.Minute, helper.ExtraArgs("--values", valueOverrideFile))
+		Expect(err).NotTo(HaveOccurred())
+	}
 
 	// Check that everything is OK
 	kube2e.GlooctlCheckEventuallyHealthy(1, testHelper, "90s")
 
 	// TODO(marco): explicitly enable strict validation, this can be removed once we enable validation by default
 	// See https://github.com/solo-io/gloo/issues/1374
-	kube2e.UpdateAlwaysAcceptSetting(false, testHelper.InstallNamespace)
+	kube2e.UpdateAlwaysAcceptSetting(ctx, false, testHelper.InstallNamespace)
 
 	// Ensure gloo reaches valid state and doesn't continually resync
 	// we can consider doing the same for leaking go-routines after resyncs
@@ -75,7 +81,8 @@ func TearDownTestHelper() {
 		Expect(testHelper).ToNot(BeNil())
 		err := testHelper.UninstallGloo()
 		Expect(err).NotTo(HaveOccurred())
-		_, err = kube2e.MustKubeClient().CoreV1().Namespaces().Get(testHelper.InstallNamespace, metav1.GetOptions{})
+		_, err = kube2e.MustKubeClient().CoreV1().Namespaces().Get(ctx, testHelper.InstallNamespace, metav1.GetOptions{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		cancel()
 	}
 }

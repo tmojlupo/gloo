@@ -1,10 +1,13 @@
 package route_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
+	test_matchers "github.com/solo-io/solo-kit/test/matchers"
 
 	"github.com/solo-io/gloo/pkg/cliutil/testutil"
 	gatewayv1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
@@ -19,13 +22,16 @@ var _ = Describe("Extauth", func() {
 	var (
 		vsvc     *gatewayv1.VirtualService
 		vsClient gatewayv1.VirtualServiceClient
+		ctx      context.Context
+		cancel   context.CancelFunc
 	)
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 		// create a settings object
-		vsClient = helpers.MustVirtualServiceClient()
+		vsClient = helpers.MustVirtualServiceClient(ctx)
 		vsvc = &gatewayv1.VirtualService{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "vs",
 				Namespace: "gloo-system",
 			},
@@ -45,8 +51,10 @@ var _ = Describe("Extauth", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	extAuthExtension := func(index int, metadata core.Metadata) *extauthpb.ExtAuthExtension {
-		vsv, err := helpers.MustVirtualServiceClient().Read(metadata.Namespace, metadata.Name, clients.ReadOpts{})
+	AfterEach(func() { cancel() })
+
+	extAuthExtension := func(index int, metadata *core.Metadata) *extauthpb.ExtAuthExtension {
+		vsv, err := helpers.MustVirtualServiceClient(ctx).Read(metadata.Namespace, metadata.Name, clients.ReadOpts{})
 		Expect(err).NotTo(HaveOccurred())
 		return vsv.VirtualHost.Routes[index].GetOptions().GetExtauth()
 	}
@@ -58,7 +66,7 @@ var _ = Describe("Extauth", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				extension := extAuthExtension(index, vsvc.Metadata)
-				Expect(extension).To(Equal(expected))
+				Expect(extension).To(test_matchers.MatchProto(expected))
 			},
 			Entry("edit route 0 doesnt impact route one", "edit route externalauth --name vs --namespace gloo-system --index 0 --disable=true",
 				1,
@@ -94,7 +102,7 @@ var _ = Describe("Extauth", func() {
 				err := testutils.Glooctl("edit route externalauth -i")
 				Expect(err).NotTo(HaveOccurred())
 				extension := extAuthExtension(1, vsvc.Metadata)
-				Expect(extension).To(Equal(&extauthpb.ExtAuthExtension{
+				Expect(extension).To(test_matchers.MatchProto(&extauthpb.ExtAuthExtension{
 					Spec: &extauthpb.ExtAuthExtension_Disable{Disable: true},
 				}))
 			})

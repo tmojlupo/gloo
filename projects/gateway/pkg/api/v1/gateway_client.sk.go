@@ -3,6 +3,8 @@
 package v1
 
 import (
+	"context"
+
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/factory"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
@@ -28,12 +30,12 @@ type gatewayClient struct {
 	rc clients.ResourceClient
 }
 
-func NewGatewayClient(rcFactory factory.ResourceClientFactory) (GatewayClient, error) {
-	return NewGatewayClientWithToken(rcFactory, "")
+func NewGatewayClient(ctx context.Context, rcFactory factory.ResourceClientFactory) (GatewayClient, error) {
+	return NewGatewayClientWithToken(ctx, rcFactory, "")
 }
 
-func NewGatewayClientWithToken(rcFactory factory.ResourceClientFactory, token string) (GatewayClient, error) {
-	rc, err := rcFactory.NewResourceClient(factory.NewResourceClientParams{
+func NewGatewayClientWithToken(ctx context.Context, rcFactory factory.ResourceClientFactory, token string) (GatewayClient, error) {
+	rc, err := rcFactory.NewResourceClient(ctx, factory.NewResourceClientParams{
 		ResourceType: &Gateway{},
 		Token:        token,
 	})
@@ -104,7 +106,12 @@ func (client *gatewayClient) Watch(namespace string, opts clients.WatchOpts) (<-
 		for {
 			select {
 			case resourceList := <-resourcesChan:
-				gatewaysChan <- convertToGateway(resourceList)
+				select {
+				case gatewaysChan <- convertToGateway(resourceList):
+				case <-opts.Ctx.Done():
+					close(gatewaysChan)
+					return
+				}
 			case <-opts.Ctx.Done():
 				close(gatewaysChan)
 				return

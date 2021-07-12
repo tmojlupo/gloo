@@ -8,20 +8,18 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/solo-io/gloo/test/helpers"
-
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"github.com/golang/protobuf/ptypes/duration"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
-	gwdefaults "github.com/solo-io/gloo/projects/gateway/pkg/defaults"
-
-	envoycluster "github.com/envoyproxy/go-control-plane/envoy/api/v2/cluster"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
+	"github.com/solo-io/gloo/pkg/utils/api_conversion"
+	gwdefaults "github.com/solo-io/gloo/projects/gateway/pkg/defaults"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
 	"github.com/solo-io/gloo/projects/gloo/pkg/translator"
+	"github.com/solo-io/gloo/test/helpers"
 	"github.com/solo-io/gloo/test/services"
 	"github.com/solo-io/gloo/test/v1helpers"
 	glootest "github.com/solo-io/gloo/test/v1helpers/test_grpc_service/glootest/protos"
@@ -64,7 +62,7 @@ var _ = Describe("Health Checks", func() {
 			},
 		}
 		testClients = services.RunGlooGatewayUdsFds(ctx, ro)
-		err = envoyInstance.RunWithRole(writeNamespace+"~"+gwdefaults.GatewayProxyName, testClients.GlooPort)
+		err = envoyInstance.RunWithRoleAndRestXds(writeNamespace+"~"+gwdefaults.GatewayProxyName, testClients.GlooPort, testClients.RestXdsPort)
 		Expect(err).NotTo(HaveOccurred())
 		err = helpers.WriteDefaultGateways(writeNamespace, testClients.GatewayClient)
 		Expect(err).NotTo(HaveOccurred(), "Should be able to write default gateways")
@@ -104,13 +102,13 @@ var _ = Describe("Health Checks", func() {
 
 		tests := []struct {
 			Name  string
-			Check *envoycore.HealthCheck
+			Check *envoy_config_core_v3.HealthCheck
 		}{
 			{
 				Name: "http",
-				Check: &envoycore.HealthCheck{
-					HealthChecker: &envoycore.HealthCheck_HttpHealthCheck_{
-						HttpHealthCheck: &envoycore.HealthCheck_HttpHealthCheck{
+				Check: &envoy_config_core_v3.HealthCheck{
+					HealthChecker: &envoy_config_core_v3.HealthCheck_HttpHealthCheck_{
+						HttpHealthCheck: &envoy_config_core_v3.HealthCheck_HttpHealthCheck{
 							Path: "xyz",
 						},
 					},
@@ -118,17 +116,17 @@ var _ = Describe("Health Checks", func() {
 			},
 			{
 				Name: "tcp",
-				Check: &envoycore.HealthCheck{
-					HealthChecker: &envoycore.HealthCheck_TcpHealthCheck_{
-						TcpHealthCheck: &envoycore.HealthCheck_TcpHealthCheck{
-							Send: &envoycore.HealthCheck_Payload{
-								Payload: &envoycore.HealthCheck_Payload_Text{
+				Check: &envoy_config_core_v3.HealthCheck{
+					HealthChecker: &envoy_config_core_v3.HealthCheck_TcpHealthCheck_{
+						TcpHealthCheck: &envoy_config_core_v3.HealthCheck_TcpHealthCheck{
+							Send: &envoy_config_core_v3.HealthCheck_Payload{
+								Payload: &envoy_config_core_v3.HealthCheck_Payload_Text{
 									Text: "AAAA",
 								},
 							},
-							Receive: []*envoycore.HealthCheck_Payload{
+							Receive: []*envoy_config_core_v3.HealthCheck_Payload{
 								{
-									Payload: &envoycore.HealthCheck_Payload_Text{
+									Payload: &envoy_config_core_v3.HealthCheck_Payload_Text{
 										Text: "AAAA",
 									},
 								},
@@ -139,31 +137,37 @@ var _ = Describe("Health Checks", func() {
 			},
 		}
 
-		for _, v := range tests {
-			v := v
-			It(v.Name, func() {
+		for _, envoyHealthCheckTest := range tests {
+			envoyHealthCheckTest := envoyHealthCheckTest
+
+			It(envoyHealthCheckTest.Name, func() {
+				// by default we disable panic mode
+				// this purpose of this test is to verify panic modes behavior so we need to enable it
+				envoyInstance.EnablePanicMode()
+
+				// get the upstream
 				us, err := testClients.UpstreamClient.Read(tu.Upstream.Metadata.Namespace, tu.Upstream.Metadata.Name, clients.ReadOpts{})
 				Expect(err).NotTo(HaveOccurred())
-				v.Check.Timeout = gogoutils.DurationStdToProto(&translator.DefaultHealthCheckTimeout)
-				v.Check.Interval = gogoutils.DurationStdToProto(&translator.DefaultHealthCheckInterval)
-				v.Check.HealthyThreshold = gogoutils.UInt32GogoToProto(translator.DefaultThreshold)
-				v.Check.UnhealthyThreshold = gogoutils.UInt32GogoToProto(translator.DefaultThreshold)
-				us.HealthChecks, err = gogoutils.ToGlooHealthCheckList([]*envoycore.HealthCheck{v.Check})
+
+				// update the health check configuration
+				envoyHealthCheckTest.Check.Timeout = translator.DefaultHealthCheckTimeout
+				envoyHealthCheckTest.Check.Interval = translator.DefaultHealthCheckInterval
+				envoyHealthCheckTest.Check.HealthyThreshold = translator.DefaultThreshold
+				envoyHealthCheckTest.Check.UnhealthyThreshold = translator.DefaultThreshold
+
+				// persist the health check configuration
+				us.HealthChecks, err = api_conversion.ToGlooHealthCheckList([]*envoy_config_core_v3.HealthCheck{envoyHealthCheckTest.Check})
 				Expect(err).NotTo(HaveOccurred())
 
-				_, err = testClients.UpstreamClient.Write(us, clients.WriteOpts{
-					OverwriteExisting: true,
-				})
+				_, err = testClients.UpstreamClient.Write(us, clients.WriteOpts{OverwriteExisting: true})
 				Expect(err).NotTo(HaveOccurred())
 
 				vs := getGrpcVs(writeNamespace, tu.Upstream.Metadata.Ref())
 				_, err = testClients.VirtualServiceClient.Write(vs, clients.WriteOpts{})
 				Expect(err).NotTo(HaveOccurred())
 
-				body := []byte(`{"str": "foo"}`)
-
-				testRequest := basicReq(body)
-
+				// ensure that a request fails the health check but is handled by the upstream anyway
+				testRequest := basicReq([]byte(`{"str": "foo"}`))
 				Eventually(testRequest, 30, 1).Should(Equal(`{"str":"foo"}`))
 
 				Eventually(tu.C).Should(Receive(PointTo(MatchFields(IgnoreExtras, Fields{
@@ -175,7 +179,7 @@ var _ = Describe("Health Checks", func() {
 		It("outlier detection", func() {
 			us, err := testClients.UpstreamClient.Read(tu.Upstream.Metadata.Namespace, tu.Upstream.Metadata.Name, clients.ReadOpts{})
 			Expect(err).NotTo(HaveOccurred())
-			us.OutlierDetection = gogoutils.ToGlooOutlierDetection(&envoycluster.OutlierDetection{
+			us.OutlierDetection = api_conversion.ToGlooOutlierDetection(&envoy_config_cluster_v3.OutlierDetection{
 				Interval: &duration.Duration{Seconds: 1},
 			})
 
@@ -207,7 +211,7 @@ var _ = Describe("Health Checks", func() {
 			_, err := testClients.UpstreamClient.Write(tu.Upstream, clients.WriteOpts{})
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(func() error { return envoyInstance.SetPanicThreshold() }, time.Second*5, time.Second/4).Should(BeNil())
+			Eventually(func() error { return envoyInstance.DisablePanicMode() }, time.Second*5, time.Second/4).Should(BeNil())
 
 			tu = v1helpers.NewTestGRPCUpstream(ctx, envoyInstance.LocalAddr(), 5)
 			_, err = testClients.UpstreamClient.Write(tu.Upstream, clients.WriteOpts{})
@@ -216,14 +220,14 @@ var _ = Describe("Health Checks", func() {
 			us, err := testClients.UpstreamClient.Read(tu.Upstream.Metadata.Namespace, tu.Upstream.Metadata.Name, clients.ReadOpts{})
 			Expect(err).NotTo(HaveOccurred())
 
-			us.HealthChecks, err = gogoutils.ToGlooHealthCheckList([]*envoycore.HealthCheck{
+			us.HealthChecks, err = api_conversion.ToGlooHealthCheckList([]*envoy_config_core_v3.HealthCheck{
 				{
-					Timeout:            gogoutils.DurationStdToProto(&translator.DefaultHealthCheckTimeout),
-					Interval:           gogoutils.DurationStdToProto(&translator.DefaultHealthCheckInterval),
-					UnhealthyThreshold: gogoutils.UInt32GogoToProto(translator.DefaultThreshold),
-					HealthyThreshold:   gogoutils.UInt32GogoToProto(translator.DefaultThreshold),
-					HealthChecker: &envoycore.HealthCheck_GrpcHealthCheck_{
-						GrpcHealthCheck: &envoycore.HealthCheck_GrpcHealthCheck{
+					Timeout:            translator.DefaultHealthCheckTimeout,
+					Interval:           translator.DefaultHealthCheckInterval,
+					UnhealthyThreshold: translator.DefaultThreshold,
+					HealthyThreshold:   translator.DefaultThreshold,
+					HealthChecker: &envoy_config_core_v3.HealthCheck_GrpcHealthCheck_{
+						GrpcHealthCheck: &envoy_config_core_v3.HealthCheck_GrpcHealthCheck{
 							ServiceName: "TestService",
 						},
 					},

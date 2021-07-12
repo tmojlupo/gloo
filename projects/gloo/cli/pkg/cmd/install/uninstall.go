@@ -1,6 +1,7 @@
 package install
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -17,10 +18,7 @@ import (
 func Uninstall(opts *options.Options, cli install.KubeCli, mode Mode) error {
 	uninstaller := NewUninstaller(DefaultHelmClient(), cli)
 	uninstallArgs := &opts.Uninstall.GlooUninstall
-	if mode == Federation {
-		uninstallArgs = &opts.Uninstall.FedUninstall
-	}
-	if err := uninstaller.Uninstall(uninstallArgs, mode); err != nil {
+	if err := uninstaller.Uninstall(opts.Top.Ctx, uninstallArgs, mode); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "Uninstall failed. Detailed logs available at %s.\n", cliutil.GetLogsPath())
 		return err
 	}
@@ -28,7 +26,7 @@ func Uninstall(opts *options.Options, cli install.KubeCli, mode Mode) error {
 }
 
 type Uninstaller interface {
-	Uninstall(cliArgs *options.HelmUninstall, mode Mode) error
+	Uninstall(ctx context.Context, cliArgs *options.HelmUninstall, mode Mode) error
 }
 
 type uninstaller struct {
@@ -50,7 +48,15 @@ func NewUninstallerWithOutput(helmClient HelmClient, kubeCli install.KubeCli, ou
 	}
 }
 
-func (u *uninstaller) Uninstall(cliArgs *options.HelmUninstall, mode Mode) error {
+func (u *uninstaller) Uninstall(ctx context.Context, cliArgs *options.HelmUninstall, mode Mode) error {
+	err := u.runUninstall(ctx, cliArgs, mode)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *uninstaller) runUninstall(ctx context.Context, cliArgs *options.HelmUninstall, mode Mode) error {
 	namespace := cliArgs.Namespace
 	releaseName := cliArgs.HelmReleaseName
 
@@ -88,9 +94,6 @@ func (u *uninstaller) Uninstall(cliArgs *options.HelmUninstall, mode Mode) error
 		// The release object does not exist, so it is not possible to exactly tell which resources are part of
 		// the originals installation. We take a best effort approach.
 		glooLabels := LabelsToFlagString(GlooComponentLabels)
-		if mode == Federation {
-			glooLabels = LabelsToFlagString(GlooFedComponentLabels)
-		}
 		for _, kind := range GlooNamespacedKinds {
 			if err := u.kubeCli.Kubectl(nil, "delete", kind, "-n", namespace, "-l", glooLabels); err != nil {
 				return err
@@ -107,20 +110,14 @@ func (u *uninstaller) Uninstall(cliArgs *options.HelmUninstall, mode Mode) error
 		}
 	}
 
-	if mode != Federation {
-		u.uninstallKnativeIfNecessary()
-	}
+	u.uninstallKnativeIfNecessary(ctx)
 
 	// may need to delete hard-coded crd names even if releaseExists because helm chart for glooe doesn't show gloo dependency (https://github.com/helm/helm/issues/7847)
 	if cliArgs.DeleteCrds || cliArgs.DeleteAll {
-		if mode == Federation {
-			u.deleteGlooCrds(GlooFedCrdNames)
-		} else {
-			if len(crdNames) == 0 {
-				crdNames = GlooCrdNames
-			}
-			u.deleteGlooCrds(crdNames)
+		if len(crdNames) == 0 {
+			crdNames = GlooCrdNames
 		}
+		u.deleteGlooCrds(crdNames)
 	}
 
 	if cliArgs.DeleteNamespace || cliArgs.DeleteAll {
@@ -167,9 +164,7 @@ func (u *uninstaller) deleteGlooCrds(crdNames []string) {
 
 	_, _ = fmt.Fprintf(u.output, "Removing Gloo CRDs...\n")
 	args := []string{"delete", "crd"}
-	for _, crdName := range crdNames {
-		args = append(args, crdName)
-	}
+	args = append(args, crdNames...)
 	if err := u.kubeCli.Kubectl(nil, args...); err != nil {
 		_, _ = fmt.Fprintf(u.output, "Unable to delete Gloo CRDs. Continuing...\n")
 	}
@@ -196,8 +191,8 @@ func makeUnstructured(manifest string) (*unstructured.Unstructured, error) {
 	return runtimeObj.(*unstructured.Unstructured), nil
 }
 
-func (u *uninstaller) uninstallKnativeIfNecessary() {
-	_, installOpts, err := checkKnativeInstallation()
+func (u *uninstaller) uninstallKnativeIfNecessary(ctx context.Context) {
+	_, installOpts, err := checkKnativeInstallation(ctx)
 	if err != nil {
 		_, _ = fmt.Fprintf(u.output, "Finding knative installation\n")
 		return

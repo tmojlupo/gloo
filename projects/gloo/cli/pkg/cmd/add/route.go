@@ -3,10 +3,10 @@ package add
 import (
 	"sort"
 
+	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/solo-io/go-utils/contextutils"
 	"go.uber.org/zap"
 
-	"github.com/gogo/protobuf/types"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
 
 	"github.com/solo-io/gloo/pkg/utils/selectionutils"
@@ -98,7 +98,7 @@ func addRoute(opts *options.Options) error {
 			Namespace: opts.Metadata.Namespace,
 			Name:      opts.Metadata.Name,
 		}
-		selector := selectionutils.NewRouteTableSelector(helpers.MustNamespacedRouteTableClient(opts.Metadata.GetNamespace()), defaults.GlooSystem)
+		selector := selectionutils.NewRouteTableSelector(helpers.MustNamespacedRouteTableClient(opts.Top.Ctx, opts.Metadata.GetNamespace()), defaults.GlooSystem)
 		routeTable, err := selector.SelectOrBuildRouteTable(opts.Top.Ctx, rtRef)
 		if err != nil {
 			return err
@@ -110,7 +110,7 @@ func addRoute(opts *options.Options) error {
 		routeTable.Routes[index] = v1Route
 
 		if !opts.Add.DryRun {
-			routeTable, err = helpers.MustNamespacedRouteTableClient(opts.Metadata.GetNamespace()).Write(routeTable, clients.WriteOpts{
+			routeTable, err = helpers.MustNamespacedRouteTableClient(opts.Top.Ctx, opts.Metadata.GetNamespace()).Write(routeTable, clients.WriteOpts{
 				Ctx:               opts.Top.Ctx,
 				OverwriteExisting: true,
 			})
@@ -128,10 +128,10 @@ func addRoute(opts *options.Options) error {
 		Namespace: opts.Metadata.Namespace,
 		Name:      opts.Metadata.Name,
 	}
-	vsClient := helpers.MustNamespacedVirtualServiceClient(opts.Metadata.GetNamespace())
+	vsClient := helpers.MustNamespacedVirtualServiceClient(opts.Top.Ctx, opts.Metadata.GetNamespace())
 	nsLister := helpers.NewProvidedNamespaceLister([]string{opts.Metadata.GetNamespace()})
 	if opts.Add.Route.ClusterScopedVsClient {
-		vsClient = helpers.MustVirtualServiceClient()
+		vsClient = helpers.MustVirtualServiceClient(opts.Top.Ctx)
 		nsLister = helpers.NewNamespaceLister()
 	}
 	selector := selectionutils.NewVirtualServiceSelector(vsClient, nsLister, defaults.GlooSystem)
@@ -156,7 +156,7 @@ func addRoute(opts *options.Options) error {
 		contextutils.LoggerFrom(opts.Top.Ctx).Infow("Created new default virtual service", zap.Any("virtualService", virtualService))
 	}
 
-	_ = printers.PrintVirtualServices(gatewayv1.VirtualServiceList{virtualService}, opts.Top.Output, opts.Metadata.Namespace)
+	_ = printers.PrintVirtualServices(opts.Top.Ctx, gatewayv1.VirtualServiceList{virtualService}, opts.Top.Output, opts.Metadata.Namespace)
 	return nil
 }
 
@@ -255,7 +255,7 @@ func pluginsFromInput(input options.RoutePlugins) (*v1.RouteOptions, error) {
 		return nil, nil
 	}
 	return &v1.RouteOptions{
-		PrefixRewrite: &types.StringValue{Value: *input.PrefixRewrite.Value},
+		PrefixRewrite: &wrappers.StringValue{Value: *input.PrefixRewrite.Value},
 	}, nil
 }
 

@@ -12,6 +12,7 @@ weight: 5
 
 
 - [TcpProxySettings](#tcpproxysettings)
+- [TunnelingConfig](#tunnelingconfig)
   
 
 
@@ -32,13 +33,33 @@ See here for more information: https://www.envoyproxy.io/docs/envoy/v1.10.0/api-
 ```yaml
 "maxConnectAttempts": .google.protobuf.UInt32Value
 "idleTimeout": .google.protobuf.Duration
+"tunnelingConfig": .tcp.options.gloo.solo.io.TcpProxySettings.TunnelingConfig
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `maxConnectAttempts` | [.google.protobuf.UInt32Value](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/u-int-32-value) |  |  |
-| `idleTimeout` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `maxConnectAttempts` | [.google.protobuf.UInt32Value](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/u-int-32-value) |  |
+| `idleTimeout` | [.google.protobuf.Duration](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/duration) |  |
+| `tunnelingConfig` | [.tcp.options.gloo.solo.io.TcpProxySettings.TunnelingConfig](../tcp.proto.sk/#tunnelingconfig) | If set, this configures tunneling, e.g. configuration options to tunnel multiple TCP payloads over a shared HTTP tunnel. If this message is absent, the payload will be proxied upstream as per usual. |
+
+
+
+
+---
+### TunnelingConfig
+
+ 
+Configuration for tunneling TCP over other transports or application layers.
+
+```yaml
+"hostname": string
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `hostname` | `string` | The hostname to send in the synthesized CONNECT headers to the upstream proxy. |
 
 
 

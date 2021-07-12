@@ -16,14 +16,14 @@ import (
 
 func NewIngress(namespace, name string) *Ingress {
 	ingress := &Ingress{}
-	ingress.SetMetadata(core.Metadata{
+	ingress.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return ingress
 }
 
-func (r *Ingress) SetMetadata(meta core.Metadata) {
+func (r *Ingress) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
@@ -135,12 +135,6 @@ var (
 		false,
 		&Ingress{})
 )
-
-func init() {
-	if err := crd.AddCrd(IngressCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	IngressGVK = schema.GroupVersionKind{

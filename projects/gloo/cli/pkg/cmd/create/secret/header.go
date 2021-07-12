@@ -35,7 +35,7 @@ func headerCmd(opts *options.Options) *cobra.Command {
 				}
 			}
 			// create the secret
-			if err := createHeaderSecret(opts.Top.Ctx, opts.Metadata, *input, opts.Create.DryRun, opts.Top.Output); err != nil {
+			if err := createHeaderSecret(opts.Top.Ctx, &opts.Metadata, *input, opts.Create.DryRun, opts.Top.Output); err != nil {
 				return err
 			}
 			return nil
@@ -58,7 +58,7 @@ func HeaderSecretArgsInteractive(input *options.HeaderSecret) error {
 	return nil
 }
 
-func createHeaderSecret(ctx context.Context, meta core.Metadata, input options.HeaderSecret, dryRun bool, outputType printers.OutputType) error {
+func createHeaderSecret(ctx context.Context, meta *core.Metadata, input options.HeaderSecret, dryRun bool, outputType printers.OutputType) error {
 	if input.Headers.Entries == nil {
 		return errors.Errorf("must provide headers")
 	}
@@ -73,7 +73,7 @@ func createHeaderSecret(ctx context.Context, meta core.Metadata, input options.H
 
 	if !dryRun {
 		var err error
-		secretClient := helpers.MustSecretClientWithOptions(0, []string{meta.Namespace})
+		secretClient := helpers.MustSecretClientWithOptions(ctx, 0, []string{meta.Namespace})
 		if secret, err = secretClient.Write(secret, clients.WriteOpts{Ctx: ctx}); err != nil {
 			return err
 		}

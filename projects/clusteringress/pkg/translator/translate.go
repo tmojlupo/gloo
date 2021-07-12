@@ -7,7 +7,7 @@ import (
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/knative/pkg/translator"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-	knativev1alpha1 "knative.dev/serving/pkg/apis/networking/v1alpha1"
+	knativev1alpha1 "knative.dev/networking/pkg/apis/networking/v1alpha1"
 )
 
 const (
@@ -20,7 +20,7 @@ func translateProxy(ctx context.Context, namespace string, snap *v1.TranslatorSn
 	ingresses := make(map[*core.Metadata]knativev1alpha1.IngressSpec)
 	for _, ing := range snap.Clusteringresses {
 		meta := ing.GetMetadata()
-		ingresses[&meta] = ing.Spec
+		ingresses[meta] = ing.Spec
 	}
 	return translator.TranslateProxyFromSpecs(ctx, proxyName, namespace, ingresses)
 }

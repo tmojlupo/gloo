@@ -1,6 +1,6 @@
 package test
 
-import "github.com/solo-io/go-utils/manifesttestutils"
+import "github.com/solo-io/k8s-utils/manifesttestutils"
 
 func GetServiceAccountPermissions(namespace string) *manifesttestutils.ServiceAccountPermissions {
 	permissions := &manifesttestutils.ServiceAccountPermissions{}
@@ -28,7 +28,7 @@ func GetServiceAccountPermissions(namespace string) *manifesttestutils.ServiceAc
 		"gloo-system.gateway",
 		namespace,
 		[]string{"gateway.solo.io"},
-		[]string{"virtualservices", "routetables"},
+		[]string{"virtualservices", "routetables", "virtualhostoptions", "routeoptions"},
 		[]string{"get", "list", "watch", "update"})
 
 	// Gloo

@@ -1,6 +1,8 @@
 package create_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/solo-io/gloo/pkg/cliutil/testutil"
@@ -10,6 +12,7 @@ import (
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	"github.com/solo-io/solo-kit/test/matchers"
 )
 
 var _ = Describe("Upstream Interactive Mode", func() {
@@ -22,9 +25,17 @@ var _ = Describe("Upstream Interactive Mode", func() {
 		azureSecretPrompt    = "Choose an Azure credentials secret to link to this upstream"
 	)
 
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 	})
+
+	AfterEach(func() { cancel() })
 
 	It("should not be allowed for Kube", func() {
 		testutil.ExpectInteractive(func(c *testutil.Console) {
@@ -33,7 +44,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 			c.ExpectEOF()
 		}, func() {
 			var upstream options.InputUpstream
-			err := AddUpstreamFlagsInteractive(&upstream)
+			err := AddUpstreamFlagsInteractive(ctx, &upstream)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(Equal("interactive mode not currently available for type kube"))
 		})
@@ -46,7 +57,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 			c.ExpectEOF()
 		}, func() {
 			var upstream options.InputUpstream
-			err := AddUpstreamFlagsInteractive(&upstream)
+			err := AddUpstreamFlagsInteractive(ctx, &upstream)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(Equal("interactive mode not currently available for type consul"))
 		})
@@ -61,7 +72,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 			c.ExpectEOF()
 		}, func() {
 			var upstream options.InputUpstream
-			err := AddUpstreamFlagsInteractive(&upstream)
+			err := AddUpstreamFlagsInteractive(ctx, &upstream)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(Equal("no AWS secrets found. create an AWS credentials secret using " +
 				"glooctl create secret aws --help"))
@@ -77,13 +88,13 @@ var _ = Describe("Upstream Interactive Mode", func() {
 		)
 
 		var (
-			secretRef core.ResourceRef
+			secretRef *core.ResourceRef
 		)
 
 		BeforeEach(func() {
-			secretClient := helpers.MustSecretClient()
+			secretClient := helpers.MustSecretClient(ctx)
 			secret := &gloov1.Secret{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Name:      awsSecretName,
 					Namespace: awsSecretNamespace,
 				},
@@ -95,7 +106,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 				},
 			}
 			_, err := secretClient.Write(secret, clients.WriteOpts{})
-			secretRef = core.ResourceRef{
+			secretRef = &core.ResourceRef{
 				Name:      awsSecretName,
 				Namespace: awsSecretNamespace,
 			}
@@ -114,9 +125,9 @@ var _ = Describe("Upstream Interactive Mode", func() {
 				c.ExpectEOF()
 			}, func() {
 				var upstream options.InputUpstream
-				err := AddUpstreamFlagsInteractive(&upstream)
+				err := AddUpstreamFlagsInteractive(ctx, &upstream)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(upstream.Aws.Secret).To(Equal(localSecretRef))
+				Expect(&upstream.Aws.Secret).To(matchers.MatchProto(localSecretRef))
 				Expect(upstream.Aws.Region).To(Equal(defaultAwsRegion))
 			})
 		})
@@ -133,9 +144,9 @@ var _ = Describe("Upstream Interactive Mode", func() {
 				c.ExpectEOF()
 			}, func() {
 				var upstream options.InputUpstream
-				err := AddUpstreamFlagsInteractive(&upstream)
+				err := AddUpstreamFlagsInteractive(ctx, &upstream)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(upstream.Aws.Secret).To(Equal(localSecretRef))
+				Expect(&upstream.Aws.Secret).To(matchers.MatchProto(localSecretRef))
 				Expect(upstream.Aws.Region).To(Equal("custom-region"))
 			})
 		})
@@ -150,7 +161,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 			c.ExpectEOF()
 		}, func() {
 			var upstream options.InputUpstream
-			err := AddUpstreamFlagsInteractive(&upstream)
+			err := AddUpstreamFlagsInteractive(ctx, &upstream)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(upstream.Static.Hosts).To(BeNil())
 		})
@@ -169,7 +180,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 			c.ExpectEOF()
 		}, func() {
 			var upstream options.InputUpstream
-			err := AddUpstreamFlagsInteractive(&upstream)
+			err := AddUpstreamFlagsInteractive(ctx, &upstream)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(upstream.Static.Hosts).To(BeEquivalentTo([]string{"foo", "bar"}))
 		})
@@ -184,7 +195,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 			c.ExpectEOF()
 		}, func() {
 			var upstream options.InputUpstream
-			err := AddUpstreamFlagsInteractive(&upstream)
+			err := AddUpstreamFlagsInteractive(ctx, &upstream)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(Equal("no Azure secrets found. create an Azure credentials secret using " +
 				"glooctl create secret azure --help"))
@@ -203,9 +214,9 @@ var _ = Describe("Upstream Interactive Mode", func() {
 		)
 
 		BeforeEach(func() {
-			secretClient := helpers.MustSecretClient()
+			secretClient := helpers.MustSecretClient(ctx)
 			secret := &gloov1.Secret{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Name:      azureSecretName,
 					Namespace: azureSecretNamespace,
 				},
@@ -238,7 +249,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 				c.ExpectEOF()
 			}, func() {
 				var upstream options.InputUpstream
-				err := AddUpstreamFlagsInteractive(&upstream)
+				err := AddUpstreamFlagsInteractive(ctx, &upstream)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(upstream.Azure.Secret).To(Equal(localSecretRef))
 				Expect(upstream.Azure.FunctionAppName).To(Equal(""))
@@ -258,7 +269,7 @@ var _ = Describe("Upstream Interactive Mode", func() {
 				c.ExpectEOF()
 			}, func() {
 				var upstream options.InputUpstream
-				err := AddUpstreamFlagsInteractive(&upstream)
+				err := AddUpstreamFlagsInteractive(ctx, &upstream)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(upstream.Azure.Secret).To(Equal(localSecretRef))
 				Expect(upstream.Azure.FunctionAppName).To(Equal("custom"))

@@ -4,6 +4,7 @@ import (
 	"github.com/solo-io/go-utils/log"
 	"github.com/solo-io/solo-kit/pkg/code-generator/cmd"
 	"github.com/solo-io/solo-kit/pkg/code-generator/docgen/options"
+	"github.com/solo-io/solo-kit/pkg/code-generator/schemagen"
 	"github.com/solo-io/solo-kit/pkg/code-generator/sk_anyvendor"
 )
 
@@ -27,7 +28,7 @@ func main() {
 	generateOptions := cmd.GenerateOptions{
 		SkipGenMocks: true,
 		CustomCompileProtos: []string{
-			"projects/gloo/api/grpc",
+			"github.com/solo-io/gloo/projects/gloo/api/grpc",
 		},
 		SkipGeneratedTests: true,
 		// helps to cut down on time spent searching for imports, not strictly necessary
@@ -46,6 +47,10 @@ func main() {
 			},
 		},
 		ExternalImports: protoImports,
+		ValidationSchemaOptions: &schemagen.ValidationSchemaOptions{
+			CrdDirectory:   "install/helm/gloo/crds",
+			JsonSchemaTool: "protoc",
+		},
 	}
 	if err := cmd.Generate(generateOptions); err != nil {
 		log.Fatalf("generate failed!: %v", err)

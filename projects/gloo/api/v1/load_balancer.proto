@@ -2,15 +2,13 @@ syntax = "proto3";
 package gloo.solo.io;
 option go_package = "github.com/solo-io/gloo/projects/gloo/pkg/api/v1";
 
-import "gloo/projects/gloo/api/v1/options/lbhash/lbhash.proto";
-
-import "gogoproto/gogo.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/wrappers.proto";
+import "google/protobuf/empty.proto";
 
-option (gogoproto.equal_all) = true;
 import "extproto/ext.proto";
 option (extproto.hash_all) = true;
+option (extproto.equal_all) = true;
 
 
 
@@ -25,7 +23,7 @@ message LoadBalancerConfig {
     // This allows batch updates of endpoints health/weight/metadata that happen during a time window.
     // this help lower cpu usage when endpoint change rate is high. defaults to 1 second.
     // Set to 0 to disable and have changes applied immediately.
-    google.protobuf.Duration update_merge_window = 2 [ (gogoproto.stdduration) = true ];
+    google.protobuf.Duration update_merge_window = 2;
 
     message RoundRobin {}
     message LeastRequest {
@@ -64,6 +62,14 @@ message LoadBalancerConfig {
         RingHash ring_hash = 6;
         // Use maglev for load balancing.
         Maglev maglev = 7;
+    }
+
+    oneof locality_config {
+        // (Enterprise Only)
+        // https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/locality_weight#locality-weighted-load-balancing
+        // Locality weighted load balancing enables weighting assignments across different zones and geographical locations by using explicit weights.
+        // This field is required to enable locality weighted load balancing
+        google.protobuf.Empty locality_weighted_lb_config = 8;
     }
 
 }

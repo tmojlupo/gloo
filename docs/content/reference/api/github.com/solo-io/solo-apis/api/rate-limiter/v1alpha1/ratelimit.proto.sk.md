@@ -16,6 +16,8 @@ weight: 5
 - [RateLimitConfigStatus](#ratelimitconfigstatus)
 - [State](#state)
 - [Descriptor](#descriptor)
+- [SetDescriptor](#setdescriptor)
+- [SimpleDescriptor](#simpledescriptor)
 - [RateLimitActions](#ratelimitactions)
 - [RateLimit](#ratelimit)
 - [Unit](#unit)
@@ -28,6 +30,10 @@ weight: 5
 - [HeaderValueMatch](#headervaluematch)
 - [HeaderMatcher](#headermatcher)
 - [Int64Range](#int64range)
+- [MetaData](#metadata)
+- [MetadataKey](#metadatakey)
+- [PathSegment](#pathsegment)
+- [Source](#source)
   
 
 
@@ -49,9 +55,9 @@ A `RateLimitConfig` describes a rate limit policy.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `raw` | [.ratelimit.api.solo.io.RateLimitConfigSpec.Raw](../ratelimit.proto.sk/#raw) | Define a policy using the raw configuration format used by the server and the client (Envoy). |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `raw` | [.ratelimit.api.solo.io.RateLimitConfigSpec.Raw](../ratelimit.proto.sk/#raw) | Define a policy using the raw configuration format used by the server and the client (Envoy). |
 
 
 
@@ -69,13 +75,15 @@ collisions between raw configurations defined on separate `RateLimitConfig` reso
 ```yaml
 "descriptors": []ratelimit.api.solo.io.Descriptor
 "rateLimits": []ratelimit.api.solo.io.RateLimitActions
+"setDescriptors": []ratelimit.api.solo.io.SetDescriptor
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `descriptors` | [[]ratelimit.api.solo.io.Descriptor](../ratelimit.proto.sk/#descriptor) | The descriptors that will be applied to the server. |  |
-| `rateLimits` | [[]ratelimit.api.solo.io.RateLimitActions](../ratelimit.proto.sk/#ratelimitactions) | Actions specify how the client (Envoy) will compose the descriptors that will be sent to the server to make a rate limiting decision. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `descriptors` | [[]ratelimit.api.solo.io.Descriptor](../ratelimit.proto.sk/#descriptor) | The descriptors that will be applied to the server. |
+| `rateLimits` | [[]ratelimit.api.solo.io.RateLimitActions](../ratelimit.proto.sk/#ratelimitactions) | Actions specify how the client (Envoy) will compose the descriptors that will be sent to the server to make a rate limiting decision. |
+| `setDescriptors` | [[]ratelimit.api.solo.io.SetDescriptor](../ratelimit.proto.sk/#setdescriptor) | The set descriptors that will be applied to the server. |
 
 
 
@@ -93,11 +101,11 @@ The current status of the `RateLimitConfig`.
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `state` | [.ratelimit.api.solo.io.RateLimitConfigStatus.State](../ratelimit.proto.sk/#state) | The current state of the `RateLimitConfig`. |  |
-| `message` | `string` | A human-readable string explaining the status. |  |
-| `observedGeneration` | `int` | The observed generation of the resource. When this matches the metadata.generation of the resource, it indicates the status is up-to-date. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `state` | [.ratelimit.api.solo.io.RateLimitConfigStatus.State](../ratelimit.proto.sk/#state) | The current state of the `RateLimitConfig`. |
+| `message` | `string` | A human-readable string explaining the status. |
+| `observedGeneration` | `int` | The observed generation of the resource. When this matches the metadata.generation of the resource, it indicates the status is up-to-date. |
 
 
 
@@ -126,7 +134,7 @@ the correct rate limit to use when limiting. Descriptors are case-sensitive.
 Each configuration contains a top level descriptor list and potentially multiple nested lists beneath that.
 The format is:
 
-```yaml
+```
 descriptors:
   - key: <rule key: required>
     value: <rule value: optional>
@@ -152,14 +160,92 @@ Otherwise, nested descriptors allow more complex matching and rate limiting scen
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `key` | `string` | The key of the descriptor. Ths field is required. |  |
-| `value` | `string` | Optional value for the descriptor. If omitted, the server will create a rate limit for each value that is provided for this descriptor in rate limit requests. |  |
-| `rateLimit` | [.ratelimit.api.solo.io.RateLimit](../ratelimit.proto.sk/#ratelimit) | Optional rate limit rule for the descriptor. |  |
-| `descriptors` | [[]ratelimit.api.solo.io.Descriptor](../ratelimit.proto.sk/#descriptor) | Nested descriptors. |  |
-| `weight` | `int` | Each top-level Descriptor defines a new Rate Limit "rule". When a request comes in, rate limit actions are applied to the request to generate descriptor tuples that are sent to the rate limit server. If any rule is triggered then the entire request returns HTTP 429 Too Many Requests. Typically, rule priority is signalled by nesting descriptors, as the most specific rule match for the descriptor tuple generated by the rate limit actions is used. In rare cases this is too restrictive; instead you can set rule priority by setting weights on your descriptors. All rules with the highest weight are processed, if any of these rules trigger rate limiting then the entire request will return a 429. Rules that are not considered for rate limiting are ignored in the rate limit server, and their request count is not incremented in the rate limit server cache. Defaults to 0; thus all rules are evaluated by default. |  |
-| `alwaysApply` | `bool` | A boolean override for rule priority via weighted rules. Any rule with `alwaysApply` set to `true` will always be considered for rate limiting, regardless of the rule's weight. The rule with the highest weight will still be considered. (this can be a rule that also has `alwaysApply` set to `true`) Defaults to false. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `key` | `string` | The key of the descriptor. This field is required. |
+| `value` | `string` | Optional value for the descriptor. If omitted, the server will create a rate limit for each value that is provided for this descriptor in rate limit requests. |
+| `rateLimit` | [.ratelimit.api.solo.io.RateLimit](../ratelimit.proto.sk/#ratelimit) | Optional rate limit rule for the descriptor. |
+| `descriptors` | [[]ratelimit.api.solo.io.Descriptor](../ratelimit.proto.sk/#descriptor) | Nested descriptors. |
+| `weight` | `int` | Each top-level Descriptor defines a new Rate Limit "rule". When a request comes in, rate limit actions are applied to the request to generate descriptor tuples that are sent to the rate limit server. If any rule is triggered then the entire request returns HTTP 429 Too Many Requests. Typically, rule priority is signalled by nesting descriptors, as the most specific rule match for the descriptor tuple generated by the rate limit actions is used. In rare cases this is too restrictive; instead you can set rule priority by setting weights on your descriptors. All rules with the highest weight are processed, if any of these rules trigger rate limiting then the entire request will return a 429. Rules that are not considered for rate limiting are ignored in the rate limit server, and their request count is not incremented in the rate limit server cache. Defaults to 0; thus all rules are evaluated by default. |
+| `alwaysApply` | `bool` | A boolean override for rule priority via weighted rules. Any rule with `alwaysApply` set to `true` will always be considered for rate limiting, regardless of the rule's weight. The rule with the highest weight will still be considered. (this can be a rule that also has `alwaysApply` set to `true`) Defaults to false. |
+
+
+
+
+---
+### SetDescriptor
+
+ 
+A setDescriptor is a list of key/value pairs that the rate limit server uses to select
+the correct rate limit to use when limiting with the set style. Descriptors are case-sensitive.
+
+Each configuration contains a simpleDescriptor list and a rateLimit.
+The format is:
+
+```
+set_descriptors:
+ - simple_descriptors: (optional block)
+     - key: <rule key: required>
+       value: <rule value: optional>
+     - ... (repetition of above)
+   rate_limit:
+     requests_per_unit: <see below: required>
+     unit: <see below: required>
+   always_apply: <bool value: optional>
+ - ... (repetition of above)
+```
+
+Each SetDescriptor defines a new Rate Limit "rule". When a request comes in, rate limit
+actions are applied to the request to generate descriptor tuples that are sent to the rate limit
+server. If any rule is triggered then the entire request returns HTTP 429 Too Many Requests.
+
+The `rate_limit` block sets up an actual rate limit rule.
+
+```yaml
+"simpleDescriptors": []ratelimit.api.solo.io.SimpleDescriptor
+"rateLimit": .ratelimit.api.solo.io.RateLimit
+"alwaysApply": bool
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `simpleDescriptors` | [[]ratelimit.api.solo.io.SimpleDescriptor](../ratelimit.proto.sk/#simpledescriptor) | Simple descriptor key/value pairs. |
+| `rateLimit` | [.ratelimit.api.solo.io.RateLimit](../ratelimit.proto.sk/#ratelimit) | Rate limit rule for the descriptor. |
+| `alwaysApply` | `bool` | Typically, rule priority is signalled by rule ordering, as the first rule match for the descriptor tuple generated by the rate limit actions is used. In some cases this is too restrictive; A boolean override can be specified. Any rule with `alwaysApply` set to `true` will always be considered for rate limiting, regardless of the rule's place in the ordered list of rules. The first rule to match will still be considered. (This can be a rule that also has `alwaysApply` set to `true`.) If any of these rules trigger rate limiting then the entire request will return a 429. Rules that are not considered for rate limiting are ignored in the rate limit server, and their request count is not incremented in the rate limit server cache. Defaults to false. |
+
+
+
+
+---
+### SimpleDescriptor
+
+ 
+A simpleDescriptor is a list of key/value pairs that the rate limit server uses to select
+the correct rate limit to use when limiting with the set style. Descriptors are case-sensitive.
+
+The format is:
+
+```
+ simple_descriptors:
+   - key: <rule key: required>
+     value: <rule value: optional>
+   - ... (repetition of above)
+```
+
+Each simpleDescriptor in a simpleDescriptor list must have a key. It can also optionally have a value to enable
+a more specific match.
+
+```yaml
+"key": string
+"value": string
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `key` | `string` | The key of the descriptor. This field is required. |
+| `value` | `string` | Optional value for the descriptor. If omitted, the server will create a rate limit for each value that is provided for this descriptor in rate limit requests. |
 
 
 
@@ -168,9 +254,9 @@ Otherwise, nested descriptors allow more complex matching and rate limiting scen
 ### RateLimitActions
 
  
-Each action in the list maps part of the request (or its context) to a descriptor. The tuple of descriptors
+Each action and setAction in the lists maps part of the request (or its context) to a descriptor. The tuple or set of descriptors
 generated by the provided actions is sent to the rate limit server and matched against rate limit rules.
-Order matters on the provided actions, e.g. the following actions:
+Order matters on provided actions but not on setActions, e.g. the following actions:
 - actions:
   - requestHeaders:
      descriptorKey: account_id
@@ -196,14 +282,54 @@ descriptors:
      requestsPerUnit: 20
      unit: MINUTE
 
+Similarly, the following setActions:
+- setActions:
+  - requestHeaders:
+     descriptorKey: account_id
+     headerName: x-account-id
+  - requestHeaders:
+     descriptorKey: plan
+     headerName: x-plan
+define an unordered descriptor set like so: {('account_id', '<x-account-id value>'), ('plan', '<x-plan value>')}
+
+This set would match the following setDescriptor:
+
+setDescriptors:
+- simpleDescriptors:
+  - key: plan
+    value: BASIC
+  - key: account_id
+ rateLimit:
+   requestsPerUnit: 20
+   unit: MINUTE
+
+It would also match the following setDescriptor which includes only a subset of the setActions enumerated:
+
+setDescriptors:
+- simpleDescriptors:
+  - key: account_id
+ rateLimit:
+   requestsPerUnit: 20
+   unit: MINUTE
+
+It would even match the following setDescriptor.
+Any setActions list would match this setDescriptor which has simpleDescriptors omitted entirely:
+
+setDescriptors:
+- rateLimit:
+   requestsPerUnit: 20
+   unit: MINUTE
+
 ```yaml
 "actions": []ratelimit.api.solo.io.Action
+"setActions": []ratelimit.api.solo.io.Action
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `actions` | [[]ratelimit.api.solo.io.Action](../ratelimit.proto.sk/#action) |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `actions` | [[]ratelimit.api.solo.io.Action](../ratelimit.proto.sk/#action) |  |
+| `setActions` | [[]ratelimit.api.solo.io.Action](../ratelimit.proto.sk/#action) |  |
 
 
 
@@ -220,10 +346,10 @@ A `RateLimit` specifies the actual rate limit that will be used when there is a 
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `unit` | [.ratelimit.api.solo.io.RateLimit.Unit](../ratelimit.proto.sk/#unit) |  |  |
-| `requestsPerUnit` | `int` |  |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `unit` | [.ratelimit.api.solo.io.RateLimit.Unit](../ratelimit.proto.sk/#unit) |  |
+| `requestsPerUnit` | `int` |  |
 
 
 
@@ -258,17 +384,19 @@ https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/route/v3/route_compone
 "remoteAddress": .ratelimit.api.solo.io.Action.RemoteAddress
 "genericKey": .ratelimit.api.solo.io.Action.GenericKey
 "headerValueMatch": .ratelimit.api.solo.io.Action.HeaderValueMatch
+"metadata": .ratelimit.api.solo.io.Action.MetaData
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `sourceCluster` | [.ratelimit.api.solo.io.Action.SourceCluster](../ratelimit.proto.sk/#sourcecluster) | Rate limit on source cluster. Only one of `sourceCluster`, `destinationCluster`, `requestHeaders`, `remoteAddress`, or `headerValueMatch` can be set. |  |
-| `destinationCluster` | [.ratelimit.api.solo.io.Action.DestinationCluster](../ratelimit.proto.sk/#destinationcluster) | Rate limit on destination cluster. Only one of `destinationCluster`, `sourceCluster`, `requestHeaders`, `remoteAddress`, or `headerValueMatch` can be set. |  |
-| `requestHeaders` | [.ratelimit.api.solo.io.Action.RequestHeaders](../ratelimit.proto.sk/#requestheaders) | Rate limit on request headers. Only one of `requestHeaders`, `sourceCluster`, `destinationCluster`, `remoteAddress`, or `headerValueMatch` can be set. |  |
-| `remoteAddress` | [.ratelimit.api.solo.io.Action.RemoteAddress](../ratelimit.proto.sk/#remoteaddress) | Rate limit on remote address. Only one of `remoteAddress`, `sourceCluster`, `destinationCluster`, `requestHeaders`, or `headerValueMatch` can be set. |  |
-| `genericKey` | [.ratelimit.api.solo.io.Action.GenericKey](../ratelimit.proto.sk/#generickey) | Rate limit on a generic key. Only one of `genericKey`, `sourceCluster`, `destinationCluster`, `requestHeaders`, or `headerValueMatch` can be set. |  |
-| `headerValueMatch` | [.ratelimit.api.solo.io.Action.HeaderValueMatch](../ratelimit.proto.sk/#headervaluematch) | Rate limit on the existence of request headers. Only one of `headerValueMatch`, `sourceCluster`, `destinationCluster`, `requestHeaders`, or `genericKey` can be set. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `sourceCluster` | [.ratelimit.api.solo.io.Action.SourceCluster](../ratelimit.proto.sk/#sourcecluster) | Rate limit on source cluster. Only one of `sourceCluster`, `destinationCluster`, `requestHeaders`, `remoteAddress`, `genericKey`, or `metadata` can be set. |
+| `destinationCluster` | [.ratelimit.api.solo.io.Action.DestinationCluster](../ratelimit.proto.sk/#destinationcluster) | Rate limit on destination cluster. Only one of `destinationCluster`, `sourceCluster`, `requestHeaders`, `remoteAddress`, `genericKey`, or `metadata` can be set. |
+| `requestHeaders` | [.ratelimit.api.solo.io.Action.RequestHeaders](../ratelimit.proto.sk/#requestheaders) | Rate limit on request headers. Only one of `requestHeaders`, `sourceCluster`, `destinationCluster`, `remoteAddress`, `genericKey`, or `metadata` can be set. |
+| `remoteAddress` | [.ratelimit.api.solo.io.Action.RemoteAddress](../ratelimit.proto.sk/#remoteaddress) | Rate limit on remote address. Only one of `remoteAddress`, `sourceCluster`, `destinationCluster`, `requestHeaders`, `genericKey`, or `metadata` can be set. |
+| `genericKey` | [.ratelimit.api.solo.io.Action.GenericKey](../ratelimit.proto.sk/#generickey) | Rate limit on a generic key. Only one of `genericKey`, `sourceCluster`, `destinationCluster`, `requestHeaders`, `remoteAddress`, or `metadata` can be set. |
+| `headerValueMatch` | [.ratelimit.api.solo.io.Action.HeaderValueMatch](../ratelimit.proto.sk/#headervaluematch) | Rate limit on the existence of request headers. Only one of `headerValueMatch`, `sourceCluster`, `destinationCluster`, `requestHeaders`, `remoteAddress`, or `metadata` can be set. |
+| `metadata` | [.ratelimit.api.solo.io.Action.MetaData](../ratelimit.proto.sk/#metadata) | Rate limit on metadata. Only one of `metadata`, `sourceCluster`, `destinationCluster`, `requestHeaders`, `remoteAddress`, or `headerValueMatch` can be set. |
 
 
 
@@ -289,8 +417,8 @@ The following descriptor entry is appended to the descriptor:
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
 
 
 
@@ -320,8 +448,8 @@ settings:
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
 
 
 
@@ -343,10 +471,10 @@ The following descriptor entry is appended when a header contains a key that mat
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `headerName` | `string` | The header name to be queried from the request headers. The header’s value is used to populate the value of the descriptor entry for the descriptor_key. |  |
-| `descriptorKey` | `string` | The key to use in the descriptor entry. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `headerName` | `string` | The header name to be queried from the request headers. The header’s value is used to populate the value of the descriptor entry for the descriptor_key. |
+| `descriptorKey` | `string` | The key to use in the descriptor entry. |
 
 
 
@@ -366,8 +494,8 @@ trusted address from `x-forwarded-for (config_http_conn_man_headers_x-forwarded-
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
 
 
 
@@ -387,9 +515,9 @@ The following descriptor entry is appended to the descriptor:
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `descriptorValue` | `string` | The value to use in the descriptor entry. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `descriptorValue` | `string` | The value to use in the descriptor entry. |
 
 
 
@@ -411,11 +539,11 @@ The following descriptor entry is appended to the descriptor:
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `descriptorValue` | `string` | The value to use in the descriptor entry. |  |
-| `expectMatch` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | If set to true, the action will append a descriptor entry when the request matches the headers. If set to false, the action will append a descriptor entry when the request does not match the headers. The default value is true. |  |
-| `headers` | [[]ratelimit.api.solo.io.Action.HeaderValueMatch.HeaderMatcher](../ratelimit.proto.sk/#headermatcher) | Specifies a set of headers that the rate limit action should match on. The action will check the request’s headers against all the specified headers in the config. A match will happen if all the headers in the config are present in the request with the same values (or based on presence if the value field is not in the config). |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `descriptorValue` | `string` | The value to use in the descriptor entry. |
+| `expectMatch` | [.google.protobuf.BoolValue](https://developers.google.com/protocol-buffers/docs/reference/csharp/class/google/protobuf/well-known-types/bool-value) | If set to true, the action will append a descriptor entry when the request matches the headers. If set to false, the action will append a descriptor entry when the request does not match the headers. The default value is true. |
+| `headers` | [[]ratelimit.api.solo.io.Action.HeaderValueMatch.HeaderMatcher](../ratelimit.proto.sk/#headermatcher) | Specifies a set of headers that the rate limit action should match on. The action will check the request’s headers against all the specified headers in the config. A match will happen if all the headers in the config are present in the request with the same values (or based on presence if the value field is not in the config). |
 
 
 
@@ -437,16 +565,16 @@ The following descriptor entry is appended to the descriptor:
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `name` | `string` | Specifies the name of the header in the request. |  |
-| `exactMatch` | `string` | If specified, header match will be performed based on the value of the header. Only one of `exactMatch`, `regexMatch`, `rangeMatch`, `presentMatch`, or `suffixMatch` can be set. |  |
-| `regexMatch` | `string` | If specified, this regex string is a regular expression rule which implies the entire request header value must match the regex. The rule will not match if only a subsequence of the request header value matches the regex. The regex grammar used in the value field is defined `(here)[https://en.cppreference.com/w/cpp/regex/ecmascript]`. Examples: * The regex *\d{3}* matches the value *123* * The regex *\d{3}* does not match the value *1234* * The regex *\d{3}* does not match the value *123.456*. Only one of `regexMatch`, `exactMatch`, `rangeMatch`, `presentMatch`, or `suffixMatch` can be set. |  |
-| `rangeMatch` | [.ratelimit.api.solo.io.Action.HeaderValueMatch.HeaderMatcher.Int64Range](../ratelimit.proto.sk/#int64range) | If specified, header match will be performed based on range. The rule will match if the request header value is within this range. The entire request header value must represent an integer in base 10 notation: consisting of an optional plus or minus sign followed by a sequence of digits. The rule will not match if the header value does not represent an integer. Match will fail for empty values, floating point numbers or if only a subsequence of the header value is an integer. Examples: * For range [-10,0), route will match for header value -1, but not for 0, "somestring", 10.9, "-1somestring". Only one of `rangeMatch`, `exactMatch`, `regexMatch`, `presentMatch`, or `suffixMatch` can be set. |  |
-| `presentMatch` | `bool` | If specified, header match will be performed based on whether the header is in the request. Only one of `presentMatch`, `exactMatch`, `regexMatch`, `rangeMatch`, or `suffixMatch` can be set. |  |
-| `prefixMatch` | `string` | If specified, header match will be performed based on the prefix of the header value. Note: empty prefix is not allowed, please use present_match instead. Examples: * The prefix *abcd* matches the value *abcdxyz*, but not for *abcxyz*. Only one of `prefixMatch`, `exactMatch`, `regexMatch`, `rangeMatch`, or `suffixMatch` can be set. |  |
-| `suffixMatch` | `string` | If specified, header match will be performed based on the suffix of the header value. Note: empty suffix is not allowed, please use present_match instead. Examples: * The suffix *abcd* matches the value *xyzabcd*, but not for *xyzbcd*. Only one of `suffixMatch`, `exactMatch`, `regexMatch`, `rangeMatch`, or `prefixMatch` can be set. |  |
-| `invertMatch` | `bool` | If specified, the match result will be inverted before checking. Defaults to false. Examples: * The regex *\d{3}* does not match the value *1234*, so it will match when inverted. * The range [-10,0) will match the value -1, so it will not match when inverted. |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `name` | `string` | Specifies the name of the header in the request. |
+| `exactMatch` | `string` | If specified, header match will be performed based on the value of the header. Only one of `exactMatch`, `regexMatch`, `rangeMatch`, `presentMatch`, or `suffixMatch` can be set. |
+| `regexMatch` | `string` | If specified, this regex string is a regular expression rule which implies the entire request header value must match the regex. The rule will not match if only a subsequence of the request header value matches the regex. The regex grammar used in the value field is defined `(here)[https://en.cppreference.com/w/cpp/regex/ecmascript]`. Examples: * The regex *\d{3}* matches the value *123* * The regex *\d{3}* does not match the value *1234* * The regex *\d{3}* does not match the value *123.456*. Only one of `regexMatch`, `exactMatch`, `rangeMatch`, `presentMatch`, or `suffixMatch` can be set. |
+| `rangeMatch` | [.ratelimit.api.solo.io.Action.HeaderValueMatch.HeaderMatcher.Int64Range](../ratelimit.proto.sk/#int64range) | If specified, header match will be performed based on range. The rule will match if the request header value is within this range. The entire request header value must represent an integer in base 10 notation: consisting of an optional plus or minus sign followed by a sequence of digits. The rule will not match if the header value does not represent an integer. Match will fail for empty values, floating point numbers or if only a subsequence of the header value is an integer. Examples: * For range [-10,0), route will match for header value -1, but not for 0, "somestring", 10.9, "-1somestring". Only one of `rangeMatch`, `exactMatch`, `regexMatch`, `presentMatch`, or `suffixMatch` can be set. |
+| `presentMatch` | `bool` | If specified, header match will be performed based on whether the header is in the request. Only one of `presentMatch`, `exactMatch`, `regexMatch`, `rangeMatch`, or `suffixMatch` can be set. |
+| `prefixMatch` | `string` | If specified, header match will be performed based on the prefix of the header value. Note: empty prefix is not allowed, please use present_match instead. Examples: * The prefix *abcd* matches the value *abcdxyz*, but not for *abcxyz*. Only one of `prefixMatch`, `exactMatch`, `regexMatch`, `rangeMatch`, or `suffixMatch` can be set. |
+| `suffixMatch` | `string` | If specified, header match will be performed based on the suffix of the header value. Note: empty suffix is not allowed, please use present_match instead. Examples: * The suffix *abcd* matches the value *xyzabcd*, but not for *xyzbcd*. Only one of `suffixMatch`, `exactMatch`, `regexMatch`, `rangeMatch`, or `prefixMatch` can be set. |
+| `invertMatch` | `bool` | If specified, the match result will be inverted before checking. Defaults to false. Examples: * The regex *\d{3}* does not match the value *1234*, so it will match when inverted. * The range [-10,0) will match the value -1, so it will not match when inverted. |
 
 
 
@@ -464,10 +592,108 @@ end).
 
 ```
 
-| Field | Type | Description | Default |
-| ----- | ---- | ----------- |----------- | 
-| `start` | `int` | start of the range (inclusive). |  |
-| `end` | `int` | end of the range (exclusive). |  |
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `start` | `int` | start of the range (inclusive). |
+| `end` | `int` | end of the range (exclusive). |
+
+
+
+
+---
+### MetaData
+
+ 
+The following descriptor entry is appended when the metadata contains a key value:
+  ("<descriptor_key>", "<value_queried_from_metadata>")
+
+```yaml
+"descriptorKey": string
+"metadataKey": .ratelimit.api.solo.io.Action.MetaData.MetadataKey
+"defaultValue": string
+"source": .ratelimit.api.solo.io.Action.MetaData.Source
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `descriptorKey` | `string` | Required. The key to use in the descriptor entry. |
+| `metadataKey` | [.ratelimit.api.solo.io.Action.MetaData.MetadataKey](../ratelimit.proto.sk/#metadatakey) | Required. Metadata struct that defines the key and path to retrieve the string value. A match will only happen if the value in the metadata is of type string. |
+| `defaultValue` | `string` | An optional value to use if *metadata_key* is empty. If not set and no value is present under the metadata_key then no descriptor is generated. |
+| `source` | [.ratelimit.api.solo.io.Action.MetaData.Source](../ratelimit.proto.sk/#source) | Source of metadata. |
+
+
+
+
+---
+### MetadataKey
+
+ 
+MetadataKey provides a general interface using `key` and `path` to retrieve value from
+[`Metadata`](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/base.proto#envoy-v3-api-msg-config-core-v3-metadata).
+
+For example, for the following Metadata:
+
+```yaml
+filter_metadata:
+  envoy.xxx:
+    prop:
+      foo: bar
+      xyz:
+        hello: envoy
+```
+
+The following MetadataKey will retrieve a string value "bar" from the Metadata.
+
+```yaml
+key: envoy.xxx
+path:
+- key: prop
+- key: foo
+```
+
+```yaml
+"key": string
+"path": []ratelimit.api.solo.io.Action.MetaData.MetadataKey.PathSegment
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `key` | `string` | Required. The key name of Metadata to retrieve the Struct from the metadata. Typically, it represents a builtin subsystem or custom extension. |
+| `path` | [[]ratelimit.api.solo.io.Action.MetaData.MetadataKey.PathSegment](../ratelimit.proto.sk/#pathsegment) | Must have at least one element. The path to retrieve the Value from the Struct. It can be a prefix or a full path, e.g. ``[prop, xyz]`` for a struct or ``[prop, foo]`` for a string in the example, which depends on the particular scenario. Note: Due to that only the key type segment is supported, the path can not specify a list unless the list is the last segment. |
+
+
+
+
+---
+### PathSegment
+
+ 
+Specifies the segment in a path to retrieve value from Metadata.
+Currently it is only supported to specify the key, i.e. field name, as one segment of a path.
+
+```yaml
+"key": string
+
+```
+
+| Field | Type | Description |
+| ----- | ---- | ----------- | 
+| `key` | `string` | Required. If specified, use the key to retrieve the value in a Struct. |
+
+
+
+
+---
+### Source
+
+
+
+| Name | Description |
+| ----- | ----------- | 
+| `DYNAMIC` | Query [dynamic metadata](https://www.envoyproxy.io/docs/envoy/latest/configuration/advanced/well_known_dynamic_metadata#well-known-dynamic-metadata). |
+| `ROUTE_ENTRY` | Query [route entry metadata](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/route/v3/route_components.proto#envoy-v3-api-field-config-route-v3-route-metadata). |
 
 
 

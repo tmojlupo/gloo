@@ -1,6 +1,8 @@
 package settings_test
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
@@ -12,22 +14,28 @@ import (
 	static_plugin_gloo "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/static"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	"github.com/solo-io/solo-kit/test/matchers"
 )
 
 var _ = Describe("Extauth", func() {
 	var (
 		settings       *gloov1.Settings
 		settingsClient gloov1.SettingsClient
+		ctx            context.Context
+		cancel         context.CancelFunc
 	)
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 		// create a settings object
 		settings = testutils.GetTestSettings()
-		settingsClient = helpers.MustSettingsClient()
+		settingsClient = helpers.MustSettingsClient(ctx)
 
 		_, err := settingsClient.Write(settings, clients.WriteOpts{OverwriteExisting: true})
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	AfterEach(func() { cancel() })
 
 	extAuthExtension := func() *extauthpb.Settings {
 		var err error
@@ -45,12 +53,12 @@ var _ = Describe("Extauth", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			extension := extAuthExtension()
-			Expect(extension).To(Equal(expected))
+			Expect(extension).To(matchers.MatchProto(expected))
 
 			// check that the rest of the settings were not changed.
 			settings.Extauth = nil
 			settings.Metadata.ResourceVersion = ""
-			Expect(*settings).To(Equal(originalSettings))
+			Expect(settings).To(matchers.MatchProto(&originalSettings))
 
 		},
 		Entry("edit name", "edit settings extauth --name default --extauth-server-name test",
@@ -79,9 +87,9 @@ var _ = Describe("Extauth", func() {
 	Context("Interactive tests", func() {
 
 		BeforeEach(func() {
-			upstreamClient := helpers.MustUpstreamClient()
+			upstreamClient := helpers.MustUpstreamClient(ctx)
 			upstream := &gloov1.Upstream{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Name:      "extauth",
 					Namespace: "gloo-system",
 				},
@@ -113,7 +121,7 @@ var _ = Describe("Extauth", func() {
 				err := testutils.Glooctl("edit settings externalauth -i")
 				Expect(err).NotTo(HaveOccurred())
 				extension := extAuthExtension()
-				Expect(extension).To(Equal(&extauthpb.Settings{
+				Expect(extension).To(matchers.MatchProto(&extauthpb.Settings{
 					ExtauthzServerRef: &core.ResourceRef{
 						Name:      "extauth",
 						Namespace: "gloo-system",

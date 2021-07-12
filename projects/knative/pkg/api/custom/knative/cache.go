@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/kube/controller"
-	knativeclient "knative.dev/serving/pkg/client/clientset/versioned"
-	knativeinformers "knative.dev/serving/pkg/client/informers/externalversions"
-	knativelisters "knative.dev/serving/pkg/client/listers/networking/v1alpha1"
+	knativeclient "knative.dev/networking/pkg/client/clientset/versioned"
+	knativeinformers "knative.dev/networking/pkg/client/informers/externalversions"
+	knativelisters "knative.dev/networking/pkg/client/listers/networking/v1alpha1"
 )
 
 type Cache interface {
@@ -37,7 +37,7 @@ func NewIngressCache(ctx context.Context, knativeClient knativeclient.Interface)
 	}
 
 	kubeController := controller.NewController("knative-resources-cache",
-		controller.NewLockingSyncHandler(k.updatedOccured),
+		controller.NewLockingSyncHandler(k.updatedOccurred),
 		ingress.Informer())
 
 	stop := ctx.Done()
@@ -72,7 +72,7 @@ func (k *knativeCache) Unsubscribe(c <-chan struct{}) {
 	}
 }
 
-func (k *knativeCache) updatedOccured() {
+func (k *knativeCache) updatedOccurred() {
 	k.cacheUpdatedWatchersMutex.Lock()
 	defer k.cacheUpdatedWatchersMutex.Unlock()
 	for _, cacheUpdated := range k.cacheUpdatedWatchers {

@@ -34,7 +34,7 @@ func RootCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.
 			}
 			if !opts.Top.Consul.UseConsul {
 				client := helpers.MustKubeClient()
-				_, err := client.CoreV1().Namespaces().Get(opts.Metadata.Namespace, metav1.GetOptions{})
+				_, err := client.CoreV1().Namespaces().Get(opts.Top.Ctx, opts.Metadata.Namespace, metav1.GetOptions{})
 				if err != nil {
 					if apierrors.IsNotFound(err) {
 						return UnsetNamespaceError
@@ -59,6 +59,7 @@ func RootCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.
 	cmd.AddCommand(Upstream(opts))
 	cmd.AddCommand(UpstreamGroup(opts))
 	cmd.AddCommand(AuthConfig(opts))
+	cmd.AddCommand(RateLimitConfig(opts))
 	cliutils.ApplyOptions(cmd, optionsFunc)
 	return cmd
 }

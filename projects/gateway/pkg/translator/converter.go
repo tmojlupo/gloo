@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/transformation"
+
+	"github.com/golang/protobuf/ptypes/wrappers"
 	"k8s.io/apimachinery/pkg/util/sets"
 
-	"github.com/gogo/protobuf/types"
-
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	errors "github.com/rotisserie/eris"
 	gatewayv1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gateway/pkg/defaults"
@@ -30,6 +31,7 @@ var (
 	MatcherCountErr      = errors.New("invalid route: routes with delegate actions must omit or specify a single matcher")
 	MissingPrefixErr     = errors.New("invalid route: routes with delegate actions must use a prefix matcher")
 	InvalidPrefixErr     = errors.New("invalid route: route table matchers must begin with the prefix of their parent route's matcher")
+	InvalidPathMatchErr  = errors.New("invalid route: route table matchers must have the same case sensitivity of their parent route's matcher")
 	InvalidHeaderErr     = errors.New("invalid route: route table matchers must have all headers that were specified on their parent route's matcher")
 	InvalidQueryParamErr = errors.New("invalid route: route table matchers must have all query params that were specified on their parent route's matcher")
 	InvalidMethodErr     = errors.New("invalid route: route table matchers must have all methods that were specified on their parent route's matcher")
@@ -49,15 +51,19 @@ var (
 	InvalidRouteTableForDelegateMethodsErr = func(delegateMethods, childMethods []string) error {
 		return errors.Wrapf(InvalidMethodErr, "required methods: %v, methods: %v", delegateMethods, childMethods)
 	}
-	TopLevelVirtualResourceErr = func(rtRef core.Metadata, err error) error {
+	TopLevelVirtualResourceErr = func(rtRef *core.Metadata, err error) error {
 		return errors.Wrapf(err, "on sub route table %s", rtRef.Ref().Key())
+	}
+
+	InvalidRouteTableForDelegateCaseSensitivePathMatchErr = func(delegateMatchCaseSensitive, matchCaseSensitive *wrappers.BoolValue) error {
+		return errors.Wrapf(InvalidPathMatchErr, "required caseSensitive: %v, caseSensitive: %v", delegateMatchCaseSensitive, matchCaseSensitive)
 	}
 )
 
 type RouteConverter interface {
 	// Converts a VirtualService to a set of Gloo API routes (i.e. routes on a Proxy resource).
 	// A non-nil error indicates an unexpected internal failure, all configuration errors are added to the given report object.
-	ConvertVirtualService(virtualService *gatewayv1.VirtualService, reports reporter.ResourceReports) ([]*gloov1.Route, error)
+	ConvertVirtualService(virtualService *gatewayv1.VirtualService, snapshot *gatewayv1.ApiSnapshot, reports reporter.ResourceReports) ([]*gloov1.Route, error)
 }
 
 func NewRouteConverter(selector RouteTableSelector, indexer RouteTableIndexer) RouteConverter {
@@ -113,12 +119,15 @@ type routeInfo struct {
 	hasName bool
 	// Whether any child route objects should inherit headers, methods, and query param matchers from the parent.
 	inheritableMatchers bool
+	// Whether any child route objects should inherit path matchers from the parent.
+	inheritablePathMatchers bool
 }
 
 // Helper object for reporting errors and warnings
 type reporterHelper struct {
 	reports                reporter.ResourceReports
 	topLevelVirtualService *gatewayv1.VirtualService
+	snapshot               *gatewayv1.ApiSnapshot
 }
 
 func (r *reporterHelper) addError(resource resources.InputResource, err error) {
@@ -139,7 +148,7 @@ func (r *reporterHelper) addWarning(resource resources.InputResource, err error)
 	}
 }
 
-func (rv *routeVisitor) ConvertVirtualService(virtualService *gatewayv1.VirtualService, reports reporter.ResourceReports) ([]*gloov1.Route, error) {
+func (rv *routeVisitor) ConvertVirtualService(virtualService *gatewayv1.VirtualService, snapshot *gatewayv1.ApiSnapshot, reports reporter.ResourceReports) ([]*gloov1.Route, error) {
 	wrapper := &visitableVirtualService{VirtualService: virtualService}
 	return rv.visit(
 		wrapper,
@@ -148,6 +157,7 @@ func (rv *routeVisitor) ConvertVirtualService(virtualService *gatewayv1.VirtualS
 		&reporterHelper{
 			reports:                reports,
 			topLevelVirtualService: virtualService,
+			snapshot:               snapshot,
 		},
 	)
 }
@@ -171,6 +181,26 @@ func (rv *routeVisitor) visit(
 		name, routeHasName := routeName(resource.InputResource(), routeClone, parentRoute)
 		routeClone.Name = name
 
+		// Merge delegated options into route options
+		// Route options specified on the Route override delegated options
+		optionRefs := routeClone.GetOptionsConfigRefs().GetDelegateOptions()
+		for _, optionRef := range optionRefs {
+			routeOpts, err := reporterHelper.snapshot.RouteOptions.Find(optionRef.GetNamespace(), optionRef.GetName())
+			if err != nil {
+				reporterHelper.addError(resource.InputResource(), err)
+				continue
+			}
+			if routeClone.GetOptions() == nil {
+				routeClone.Options = routeOpts.GetOptions()
+				continue
+			}
+			routeClone.Options, err = mergeRouteOptions(routeClone.GetOptions(), routeOpts.GetOptions())
+			if err != nil {
+				reporterHelper.addError(resource.InputResource(), err)
+				continue
+			}
+		}
+
 		// If the parent route is not nil, this route has been delegated to and we need to perform additional operations
 		if parentRoute != nil {
 			var err error
@@ -178,6 +208,13 @@ func (rv *routeVisitor) visit(
 			if err != nil {
 				reporterHelper.addError(resource.InputResource(), err)
 				continue
+			}
+		} else {
+			// if parent route is nil, parent is virtual host
+			if routeClone.GetOptions().GetStagedTransformations().GetInheritTransformation() {
+				parentVirtualHost := reporterHelper.topLevelVirtualService.GetVirtualHost()
+				// merge StagedTransformations config from virtualHost to child route
+				inheritStagedTransformations(routeClone, parentVirtualHost.GetOptions().GetStagedTransformations())
 			}
 		}
 
@@ -192,7 +229,7 @@ func (rv *routeVisitor) visit(
 			}
 
 			// Determine the route tables to delegate to
-			routeTables, err := rv.routeTableSelector.SelectRouteTables(action.DelegateAction, resource.InputResource().GetMetadata().Namespace)
+			routeTables, err := rv.routeTableSelector.SelectRouteTables(action.DelegateAction, resource.InputResource().GetMetadata().GetNamespace())
 			if err != nil {
 				reporterHelper.addWarning(resource.InputResource(), err)
 				continue
@@ -201,7 +238,7 @@ func (rv *routeVisitor) visit(
 			// Default missing weights to 0
 			for _, routeTable := range routeTables {
 				if routeTable.GetWeight() == nil {
-					routeTable.Weight = &types.Int32Value{Value: defaultTableWeight}
+					routeTable.Weight = &wrappers.Int32Value{Value: defaultTableWeight}
 				}
 			}
 
@@ -224,11 +261,12 @@ func (rv *routeVisitor) visit(
 
 					// Collect information about this route that are relevant when visiting the delegated route table
 					currentRouteInfo := &routeInfo{
-						matcher:             delegateMatcher,
-						options:             routeClone.Options,
-						name:                name,
-						hasName:             routeHasName,
-						inheritableMatchers: routeClone.InheritableMatchers.GetValue(),
+						matcher:                 delegateMatcher,
+						options:                 routeClone.Options,
+						name:                    name,
+						hasName:                 routeHasName,
+						inheritableMatchers:     routeClone.InheritableMatchers.GetValue(),
+						inheritablePathMatchers: routeClone.InheritablePathMatchers.GetValue(),
 					}
 
 					// Make a copy of the existing set of visited route tables. We need to pass this information into
@@ -316,7 +354,7 @@ func routeName(resource resources.InputResource, route *gatewayv1.Route, parentR
 	default:
 		// Should never happen
 	}
-	resourceName := resource.GetMetadata().Name
+	resourceName := resource.GetMetadata().GetName()
 
 	var isRouteNamed bool
 	routeDisplayName := route.Name
@@ -334,8 +372,8 @@ func routeName(resource resources.InputResource, route *gatewayv1.Route, parentR
 
 func convertSimpleAction(simpleRoute *gatewayv1.Route) (*gloov1.Route, error) {
 	matchers := []*matchersv1.Matcher{defaults.DefaultMatcher()}
-	if len(simpleRoute.Matchers) > 0 {
-		matchers = simpleRoute.Matchers
+	if len(simpleRoute.GetMatchers()) > 0 {
+		matchers = simpleRoute.GetMatchers()
 	}
 
 	glooRoute := &gloov1.Route{
@@ -400,19 +438,49 @@ func getDelegateRouteMatcher(route *gatewayv1.Route) (*matchersv1.Matcher, error
 func validateAndMergeParentRoute(child *gatewayv1.Route, parent *routeInfo) (*gatewayv1.Route, error) {
 
 	// inherit inheritance config from parent if unset
+	if child.InheritablePathMatchers == nil {
+		child.InheritablePathMatchers = &wrappers.BoolValue{
+			Value: parent.inheritablePathMatchers,
+		}
+	}
+
+	// inherit inheritance config from parent if unset
 	if child.InheritableMatchers == nil {
-		child.InheritableMatchers = &types.BoolValue{
+		child.InheritableMatchers = &wrappers.BoolValue{
 			Value: parent.inheritableMatchers,
 		}
 	}
 
 	// inherit route table config from parent
-	if parent.inheritableMatchers {
+	if child.GetInheritablePathMatchers().GetValue() {
+		for _, childMatch := range child.Matchers {
+			childMatch.PathSpecifier = parent.matcher.PathSpecifier
+			childMatch.CaseSensitive = parent.matcher.CaseSensitive
+		}
+		if len(child.Matchers) == 0 {
+			child.Matchers = []*matchersv1.Matcher{{
+				PathSpecifier: parent.matcher.PathSpecifier,
+				CaseSensitive: parent.matcher.CaseSensitive,
+			}}
+		}
+	}
+
+	// If the route has no matchers, we fall back to the default prefix matcher like for regular routes.
+	if len(child.Matchers) == 0 {
+		child.Matchers = []*matchersv1.Matcher{defaults.DefaultMatcher()}
+	}
+
+	// inherit route table config from parent
+	if child.GetInheritableMatchers().GetValue() {
 		for _, childMatch := range child.Matchers {
 			childMatch.Headers = append(parent.matcher.Headers, childMatch.Headers...)
 			childMatch.Methods = append(parent.matcher.Methods, childMatch.Methods...)
 			childMatch.QueryParameters = append(parent.matcher.QueryParameters, childMatch.QueryParameters...)
 		}
+	}
+	// If child has inheritTransformations specified, append transformations from parent to child route
+	if child.GetOptions().GetStagedTransformations().GetInheritTransformation() {
+		inheritStagedTransformations(child, parent.options.GetStagedTransformations())
 	}
 
 	// Verify that the matchers are compatible with the parent prefix
@@ -420,11 +488,12 @@ func validateAndMergeParentRoute(child *gatewayv1.Route, parent *routeInfo) (*ga
 		return nil, err
 	}
 
-	// Merge plugins from parent routes
-	merged, err := mergeRoutePlugins(child.GetOptions(), parent.options)
+	// Merge options from parent routes
+	// If an option is defined on a parent route, it will override the child route's option
+	merged, err := mergeRouteOptions(child.GetOptions(), parent.options)
 	if err != nil {
 		// Should never happen
-		return nil, errors.Wrapf(err, "internal error: merging route plugins from parent to delegated route")
+		return nil, errors.Wrapf(err, "internal error: merging route options from parent to delegated route")
 	}
 
 	child.Options = merged
@@ -434,16 +503,15 @@ func validateAndMergeParentRoute(child *gatewayv1.Route, parent *routeInfo) (*ga
 
 func isRouteTableValidForDelegateMatcher(parentMatcher *matchersv1.Matcher, childRoute *gatewayv1.Route) error {
 
-	// If the route has no matchers, we fall back to the default prefix matcher like for regular routes.
-	// In these case, we only accept it if the parent also uses the default matcher.
-	if len(childRoute.Matchers) == 0 && parentMatcher.GetPrefix() != defaults.DefaultMatcher().GetPrefix() {
-		return InvalidRouteTableForDelegatePrefixErr(parentMatcher.GetPrefix(), defaults.DefaultMatcher().GetPrefix())
-	}
-
 	for _, childMatch := range childRoute.Matchers {
 		// ensure all sub-routes in the delegated route table match the parent prefix
 		if pathString := glooutils.PathAsString(childMatch); !strings.HasPrefix(pathString, parentMatcher.GetPrefix()) {
 			return InvalidRouteTableForDelegatePrefixErr(parentMatcher.GetPrefix(), pathString)
+		}
+
+		// ensure all sub-routes matches in the delegated route match the parent case sensitivity
+		if !proto.Equal(childMatch.GetCaseSensitive(), parentMatcher.GetCaseSensitive()) {
+			return InvalidRouteTableForDelegateCaseSensitivePathMatchErr(childMatch.CaseSensitive, parentMatcher.CaseSensitive)
 		}
 
 		// ensure all headers in the delegated route table are a superset of those from the parent route resource
@@ -499,4 +567,32 @@ func buildCycleInfoString(routeTables gatewayv1.RouteTableList) string {
 		visitedTables = append(visitedTables, fmt.Sprintf("[%s]", rt.Metadata.Ref().Key()))
 	}
 	return strings.Join(visitedTables, " -> ")
+}
+
+func inheritStagedTransformations(child *gatewayv1.Route, parentTransformationStages *transformation.TransformationStages) {
+	childTransformationStages := child.GetOptions().GetStagedTransformations()
+	// inherit transformation config from parent
+	mergeTransformations(&childTransformationStages.Regular,
+		parentTransformationStages.GetRegular())
+	mergeTransformations(&childTransformationStages.Early,
+		parentTransformationStages.GetEarly())
+}
+
+func mergeTransformations(childTransformationsPtr **transformation.RequestResponseTransformations, parentTransformations *transformation.RequestResponseTransformations) {
+	if parentTransformations == nil {
+		// no transformations from parent to merge in
+		return
+	}
+	childTransformations := *childTransformationsPtr
+	if childTransformations == nil {
+		// if child has no transformation config, merge in parent config
+		*childTransformationsPtr = parentTransformations
+		return
+	}
+	// Append transformations from parent after child transformation
+	// This means that on conflicting transformations, the transformation from the child will be applied
+	childTransformations.ResponseTransforms = append(childTransformations.GetResponseTransforms(),
+		parentTransformations.GetResponseTransforms()...)
+	childTransformations.RequestTransforms = append(childTransformations.GetRequestTransforms(),
+		parentTransformations.GetRequestTransforms()...)
 }

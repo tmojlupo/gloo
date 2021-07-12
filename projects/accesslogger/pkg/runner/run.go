@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"net"
 
-	envoy_data_accesslog_v2 "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v2"
-
-	pb "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v2"
+	envoy_data_accesslog_v3 "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v3"
+	pb "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
 	_struct "github.com/golang/protobuf/ptypes/struct"
 	"github.com/solo-io/gloo/pkg/utils"
 	"github.com/solo-io/gloo/projects/accesslogger/pkg/loggingservice"
@@ -97,13 +96,13 @@ func Run() {
 						// configuring transformations on VirtualServices, RouteTables, and/or UpstreamGroups.
 						//
 						// follow the guide here to create requests with the proper transformation to populate 'pod_name' in the access logs:
-						// https://docs.solo.io/gloo/latest/guides/traffic_management/request_processing/transformations/enrich_access_logs/#update-virtual-service
+						// https://docs.solo.io/gloo-edge/latest/guides/traffic_management/request_processing/transformations/enrich_access_logs/#update-virtual-service
 						podName := getTransformationValueFromDynamicMetadata("pod_name", meta)
 
 						// we could change the claim to any other jwt claim, such as client_id
 						//
 						// follow the guide here to create requests with a jwt that has the 'iss' claim, to populate issuer in the access logs:
-						// https://docs.solo.io/gloo/latest/guides/security/auth/jwt/access_control/#appendix---use-a-remote-json-web-key-set-jwks-server
+						// https://docs.solo.io/gloo-edge/latest/guides/security/auth/jwt/access_control/#appendix---use-a-remote-json-web-key-set-jwks-server
 						issuer := getClaimFromJwtInDynamicMetadata("iss", meta)
 
 						utils.MeasureOne(
@@ -191,7 +190,7 @@ func StartAccessLog(ctx context.Context, clientSettings Settings, service *loggi
 	srv := grpc.NewServer(grpc.StatsHandler(&ocgrpc.ServerHandler{}))
 
 	pb.RegisterAccessLogServiceServer(srv, service)
-	hc := healthchecker.NewGrpc(clientSettings.ServiceName, health.NewServer())
+	hc := healthchecker.NewGrpc(clientSettings.ServiceName, health.NewServer(), false, healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(srv, hc.GetServer())
 	reflection.Register(srv)
 
@@ -242,7 +241,7 @@ func getClaimFromJwtInDynamicMetadata(claim string, filterMetadata map[string]*_
 	return ""
 }
 
-func firstToFirstNs(entry *envoy_data_accesslog_v2.HTTPAccessLogEntry) int64 {
+func firstToFirstNs(entry *envoy_data_accesslog_v3.HTTPAccessLogEntry) int64 {
 	timeToFirstUpstreamRxByte := entry.GetCommonProperties().GetTimeToFirstUpstreamRxByte()
 	timeToFirstUpstreamRxByteNs := int64(timeToFirstUpstreamRxByte.GetNanos()) + (timeToFirstUpstreamRxByte.GetSeconds()*1 ^ 9)
 	timeToFirstUpstreamTxByte := entry.GetCommonProperties().GetTimeToFirstUpstreamTxByte()
@@ -253,7 +252,7 @@ func firstToFirstNs(entry *envoy_data_accesslog_v2.HTTPAccessLogEntry) int64 {
 	return upstreamRespTimeNs
 }
 
-func lastToFirstNs(entry *envoy_data_accesslog_v2.HTTPAccessLogEntry) int64 {
+func lastToFirstNs(entry *envoy_data_accesslog_v3.HTTPAccessLogEntry) int64 {
 	timeToFirstUpstreamRxByte := entry.GetCommonProperties().GetTimeToFirstUpstreamRxByte()
 	timeToFirstUpstreamRxByteNs := int64(timeToFirstUpstreamRxByte.GetNanos()) + (timeToFirstUpstreamRxByte.GetSeconds()*1 ^ 9)
 	timeToLastUpstreamTxByte := entry.GetCommonProperties().GetTimeToLastUpstreamTxByte()

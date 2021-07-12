@@ -2,6 +2,7 @@ package install_test
 
 import (
 	"bytes"
+	"context"
 
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -27,11 +28,12 @@ var _ = Describe("Install", func() {
 		ctrl                 *gomock.Controller
 		chart                *helmchart.Chart
 		helmRelease          *release.Release
+		ctx                  context.Context
+		cancel               context.CancelFunc
 
 		glooOsVersion          = "test"
 		glooOsChartUri         = "https://storage.googleapis.com/solo-public-helm/charts/gloo-test.tgz"
 		glooEnterpriseChartUri = "https://storage.googleapis.com/gloo-ee-helm/charts/gloo-ee-test.tgz"
-		glooFederationChartUri = "https://storage.googleapis.com/gloo-fed-helm/gloo-fed-test.tgz"
 		testCrdContent         = "test-crd-content"
 		testHookContent        = `
 kind: ClusterRoleBinding
@@ -80,6 +82,7 @@ rules:
 		ctrl = gomock.NewController(GinkgoT())
 		mockHelmClient = mocks.NewMockHelmClient(ctrl)
 		mockHelmInstallation = mocks.NewMockHelmInstallation(ctrl)
+		ctx, cancel = context.WithCancel(context.Background())
 
 		chart = &helmchart.Chart{
 			Metadata: &helmchart.Metadata{
@@ -107,6 +110,7 @@ rules:
 	AfterEach(func() {
 		version.Version = version.UndefinedVersion
 		ctrl.Finish()
+		cancel()
 	})
 
 	installWithConfig := func(mode install.Mode, expectedValues map[string]interface{}, expectedChartUri string, installConfig *options.Install) {
@@ -115,12 +119,14 @@ rules:
 			KubeConfig: "path-to-kube-config",
 		}
 
+		helmInstallConfig := installConfig.Gloo
+
 		mockHelmInstallation.EXPECT().
 			Run(chart, expectedValues).
 			Return(helmRelease, nil)
 
 		mockHelmClient.EXPECT().
-			NewInstall(installConfig.Namespace, installConfig.HelmReleaseName, installConfig.DryRun).
+			NewInstall(helmInstallConfig.Namespace, helmInstallConfig.HelmReleaseName, installConfig.DryRun).
 			Return(mockHelmInstallation, helmEnv, nil)
 
 		mockHelmClient.EXPECT().
@@ -128,7 +134,7 @@ rules:
 			Return(chart, nil)
 
 		mockHelmClient.EXPECT().
-			ReleaseExists(installConfig.Namespace, installConfig.HelmReleaseName).
+			ReleaseExists(helmInstallConfig.Namespace, helmInstallConfig.HelmReleaseName).
 			Return(false, nil)
 
 		dryRunOutputBuffer := new(bytes.Buffer)
@@ -143,22 +149,18 @@ rules:
 		Expect(dryRunOutputBuffer.String()).To(BeEmpty())
 
 		// Check that namespace was created
-		_, err = kubeNsClient.Get(installConfig.Namespace, metav1.GetOptions{})
+		_, err = kubeNsClient.Get(ctx, helmInstallConfig.Namespace, metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
 	}
 
 	defaultInstall := func(mode install.Mode, expectedValues map[string]interface{}, expectedChartUri string) {
 		installConfig := &options.Install{
-			HelmInstall: options.HelmInstall{
+			Gloo: options.HelmInstall{
 				Namespace:       defaults.GlooSystem,
 				HelmReleaseName: constants.GlooReleaseName,
-				Version:         "test",
 				CreateNamespace: true,
 			},
-		}
-		if mode == install.Federation {
-			installConfig.Namespace = defaults.GlooFed
-			installConfig.HelmReleaseName = constants.GlooFedReleaseName
+			Version: "test",
 		}
 
 		installWithConfig(mode, expectedValues, expectedChartUri, installConfig)
@@ -166,11 +168,7 @@ rules:
 
 	It("installs cleanly by default", func() {
 		defaultInstall(install.Gloo,
-			map[string]interface{}{
-				"crds": map[string]interface{}{
-					"create": false,
-				},
-			},
+			map[string]interface{}{},
 			glooOsChartUri)
 	})
 
@@ -178,27 +176,21 @@ rules:
 
 		chart.AddDependency(&helmchart.Chart{Metadata: &helmchart.Metadata{Name: constants.GlooReleaseName}})
 		defaultInstall(install.Enterprise,
-			map[string]interface{}{
-				"gloo": map[string]interface{}{
-					"crds": map[string]interface{}{
-						"create": false,
-					},
-				},
-			},
+			map[string]interface{}{},
 			glooEnterpriseChartUri)
 	})
 
 	It("installs federation cleanly by default", func() {
-
-		defaultInstall(install.Federation,
+		chart.AddDependency(&helmchart.Chart{Metadata: &helmchart.Metadata{Name: constants.GlooReleaseName}})
+		defaultInstall(install.Enterprise,
 			map[string]interface{}{},
-			glooFederationChartUri)
+			glooEnterpriseChartUri)
 	})
 
 	It("installs as enterprise cleanly if passed enterprise helmchart override", func() {
 
 		installConfig := &options.Install{
-			HelmInstall: options.HelmInstall{
+			Gloo: options.HelmInstall{
 				Namespace:         defaults.GlooSystem,
 				HelmReleaseName:   constants.GlooReleaseName,
 				CreateNamespace:   true,
@@ -208,13 +200,7 @@ rules:
 
 		chart.AddDependency(&helmchart.Chart{Metadata: &helmchart.Metadata{Name: constants.GlooReleaseName}})
 		installWithConfig(install.Gloo,
-			map[string]interface{}{
-				"gloo": map[string]interface{}{
-					"crds": map[string]interface{}{
-						"create": false,
-					},
-				},
-			},
+			map[string]interface{}{},
 			glooEnterpriseChartUri,
 			installConfig)
 	})
@@ -222,7 +208,7 @@ rules:
 	It("installs as open-source cleanly if passed open-source helmchart override with enterprise subcommand", func() {
 
 		installConfig := &options.Install{
-			HelmInstall: options.HelmInstall{
+			Gloo: options.HelmInstall{
 				Namespace:         defaults.GlooSystem,
 				HelmReleaseName:   constants.GlooReleaseName,
 				CreateNamespace:   true,
@@ -231,23 +217,19 @@ rules:
 		}
 
 		installWithConfig(install.Gloo,
-			map[string]interface{}{
-				"crds": map[string]interface{}{
-					"create": false,
-				},
-			},
+			map[string]interface{}{},
 			glooOsChartUri,
 			installConfig)
 	})
 
 	It("outputs the expected kinds when in a dry run", func() {
 		installConfig := &options.Install{
-			HelmInstall: options.HelmInstall{
+			Gloo: options.HelmInstall{
 				Namespace:       defaults.GlooSystem,
 				HelmReleaseName: constants.GlooReleaseName,
-				DryRun:          true,
-				Version:         glooOsVersion,
 			},
+			Version: glooOsVersion,
+			DryRun:  true,
 		}
 
 		helmEnv := &cli.EnvSettings{
@@ -255,15 +237,11 @@ rules:
 		}
 
 		mockHelmInstallation.EXPECT().
-			Run(chart, map[string]interface{}{
-				"crds": map[string]interface{}{
-					"create": false,
-				},
-			}).
+			Run(chart, map[string]interface{}{}).
 			Return(helmRelease, nil)
 
 		mockHelmClient.EXPECT().
-			NewInstall(defaults.GlooSystem, installConfig.HelmReleaseName, installConfig.DryRun).
+			NewInstall(defaults.GlooSystem, installConfig.Gloo.HelmReleaseName, installConfig.DryRun).
 			Return(mockHelmInstallation, helmEnv, nil)
 
 		mockHelmClient.EXPECT().
@@ -286,7 +264,7 @@ rules:
 		Expect(dryRunOutput).To(ContainSubstring("helm.sh/hook"), "Should output non-cleanup hooks")
 
 		// Make sure that namespace was not created
-		_, err = kubeNsClient.Get(installConfig.Namespace, metav1.GetOptions{})
+		_, err = kubeNsClient.Get(ctx, installConfig.Gloo.Namespace, metav1.GetOptions{})
 		Expect(err).To(HaveOccurred())
 	})
 })

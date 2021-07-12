@@ -1,13 +1,14 @@
 package ingress_test
 
 import (
+	"context"
 	"time"
 
-	"github.com/solo-io/go-utils/testutils/helper"
+	"github.com/solo-io/k8s-utils/testutils/helper"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"github.com/solo-io/go-utils/kubeutils"
+	"github.com/solo-io/k8s-utils/kubeutils"
 	"k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -16,6 +17,17 @@ import (
 )
 
 var _ = Describe("Kube2e: Ingress", func() {
+
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+
+	BeforeEach(func() {
+		ctx, cancel = context.WithCancel(context.Background())
+	})
+
+	AfterEach(func() { cancel() })
 
 	It("works", func() {
 		cfg, err := kubeutils.GetConfig("", "")
@@ -31,7 +43,7 @@ var _ = Describe("Kube2e: Ingress", func() {
 				IntVal: helper.TestRunnerPort,
 			},
 		}
-		kubeIng, err := kubeIngressClient.Create(&v1beta1.Ingress{
+		kubeIng, err := kubeIngressClient.Create(ctx, &v1beta1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        "simple-ingress-route",
 				Namespace:   testHelper.InstallNamespace,
@@ -53,7 +65,7 @@ var _ = Describe("Kube2e: Ingress", func() {
 					},
 				},
 			},
-		})
+		}, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(kubeIng).NotTo(BeNil())
 

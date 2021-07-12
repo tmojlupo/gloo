@@ -1,6 +1,6 @@
-## Contributing to Gloo
+## Contributing to Gloo Edge
 
-Excited about Gloo and want to help make it better? 
+Excited about Gloo Edge and want to help make it better? 
 
 At Solo we strive to make the world of microservices, serverless and service mesh available to everyone. 
 If you want to help but don't know where to start, let us know, and we'll find something for you.
@@ -24,11 +24,26 @@ If an issue you have is already reported, please add additional information or a
 
 ### Improving the documentation
 
-The docs for Gloo are built from the contents found in the [`docs/content`](/docs/content) directory of this repository.
+The docs for Gloo Edge are built from the contents found in the [`docs/content`](/docs/content) directory of this repository.
 
-Improving the documentation, adding examples or use cases can be the easiest way to contribute to Gloo. If you see a piece of content that can be better, open a PR with an improvement, it doesn't matter how small!
+Improving the documentation, adding examples or use cases can be the easiest way to contribute to Gloo Edge. If you see a piece of content that can be better, open a PR with an improvement, it doesn't matter how small!
 
-For more detailed guidance on contributing to the documentation, check out the guide on the [docs website](https://docs.solo.io/gloo/latest/contributing).
+For more detailed guidance on contributing to the documentation, check out the guide on the [docs website](https://docs.solo.io/gloo-edge/latest/contributing).
+
+### Setting up the development environment
+
+Instructions for setting the development environment can be found in the [developer guide](https://docs.solo.io/gloo-edge/latest/guides/dev/setting-up-dev-environment/). 
+
+Useful make commands:
+
+| Command                                                   | Description |
+| ---                                                       |   ---      |
+| make install-go-tools generated-code -B                   | Makes all generated code which is required to get past CI. |
+| make glooctl                                              | Makes glooctl binary and places it in _output/glooctl |
+| make build-kind-chart                                     | Makes the .tgz helm file that locally built instances of glooctl require to install gloo |
+| make docker TAGGED_VERSION=(version)                      | Builds the docker images needed for the helm charts and tests |
+| make clean build-test-assets -B TAGGED_VERSION=v(version) | Builds a zipped helm chart for gloo that is configured to use the specified gloo version. This version must be a valid image in quay. This can include non-standard versions used for testing. |
+| make update-deps                                          | Updates the go dependencies |
 
 ### Small bug fixes
 
@@ -53,9 +68,9 @@ For significant changes to the repository, it’s important to settle on a desig
 
 ### Code review guidelines
 
-It’s important that every piece of code in Gloo is reviewed by at least one Solo team member familiar with that codebase.
+It’s important that every piece of code in Gloo Edge is reviewed by at least one Solo team member familiar with that codebase.
 
-1. **Changelog** Every PR in Gloo needs a changelog entry. For more information about changelogs, see the [readme](https://github.com/solo-io/go-utils/tree/master/changelogutils). 
+1. **Changelog** Every PR in Gloo Edge needs a changelog entry. For more information about changelogs, see the [readme](https://github.com/solo-io/go-utils/tree/master/changelogutils). 
 2. **CI check** A Solo team member needs to kick off the CI process by commenting `/test` on your PR.
 3. **Testing** Please write tests for your changes. Bias towards fast / unit testing. 
 4. **Comments** The code reviewer may leave comments to discuss changes. Minor preferences are often called out with `nit`. 

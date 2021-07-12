@@ -1,3 +1,4 @@
+{{- define "knativeInternalProxy.configMapSpec"}}
 {{- if .Values.settings.integrations.knative.enabled }}
 {{- if (semverCompare ">= 0.8.0" .Values.settings.integrations.knative.version ) }}
 
@@ -12,6 +13,14 @@ metadata:
     gloo: knative-internal-proxy
 data:
   envoy.yaml: |
+    layered_runtime:
+      layers:
+      - name: static_layer
+        static_layer:
+          overload:
+            global_downstream_max_connections: 250000
+      - name: admin_layer
+        admin_layer: {}
     node:
       cluster: knative
       id: "{{ `{{.PodName}}.{{.PodNamespace}}` }}"
@@ -35,6 +44,22 @@ data:
         upstream_connection_options:
           tcp_keepalive: {}
         type: STRICT_DNS
+      - name: rest_xds_cluster
+        alt_stat_name: rest_xds_cluster
+        connect_timeout: 5.000s
+        load_assignment:
+          cluster_name: rest_xds_cluster
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: gloo
+                    port_value: {{ $.Values.gloo.deployment.restXdsPort }}
+        upstream_connection_options:
+          tcp_keepalive: {}
+        type: STRICT_DNS
+        respect_dns_ttl: true
 {{- if .Values.settings.integrations.knative.proxy.stats }}
       - name: admin_port_cluster
         connect_timeout: 5.000s
@@ -76,26 +101,28 @@ data:
                                 - name: ":method"
                                   exact_match: GET
                               route:
-                                prefix_rewrite: "/stats/prometheus"
+                                prefix_rewrite: {{ .Values.global.glooStats.routePrefixRewrite }}
                                 cluster: admin_port_cluster
                     http_filters:
                       - name: envoy.filters.http.router
 {{- if .Values.settings.integrations.knative.proxy.tracing }}
                     tracing:
 {{ toYaml .Values.settings.integrations.knative.proxy.tracing | indent 22}}
-{{- end}} # if .Values.settings.integrations.knative.proxy.tracing
+{{- end}} {{/* if .Values.settings.integrations.knative.proxy.tracing */}}
 {{- end}}
-
 
     dynamic_resources:
       ads_config:
+        transport_api_version: V3
         api_type: GRPC
         rate_limit_settings: {}
         grpc_services:
         - envoy_grpc: {cluster_name: xds_cluster}
       cds_config:
+        resource_api_version: V3
         ads: {}
       lds_config:
+        resource_api_version: V3
         ads: {}
     admin:
       access_log_path: /dev/null
@@ -103,5 +130,17 @@ data:
         socket_address:
           address: {{ .Values.settings.integrations.knative.proxy.loopBackAddress }}
           port_value: 19000
-{{- end }}
-{{- end }}
+{{- end }} {{/* if (semverCompare ">= 0.8.0" .Values.settings.integrations.knative.version ) */}}
+{{- end }} {{/* if .Values.settings.integrations.knative.enabled */}}
+{{- end }} {{/*define "knativeInternalProxy.configMapSpec"*/}}
+
+{{/* Render template with yaml overrides */}}
+{{- $kubeResourceOverride := dict -}}
+{{- if .Values.settings.integrations.knative.proxy -}}
+{{- if .Values.settings.integrations.knative.proxy.internal -}}
+{{- if .Values.settings.integrations.knative.proxy.internal.configMap -}}
+{{- $kubeResourceOverride = .Values.settings.integrations.knative.proxy.internal.configMap.kubeResourceOverride  -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- include "gloo.util.merge" (list . $kubeResourceOverride "knativeInternalProxy.configMapSpec") -}}

@@ -10,16 +10,16 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/check"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/options"
 	clienthelpers "github.com/solo-io/gloo/projects/gloo/cli/pkg/helpers"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
-	"github.com/solo-io/go-utils/kubeutils"
-	"github.com/solo-io/go-utils/testutils/helper"
+	"github.com/solo-io/k8s-utils/kubeutils"
+	"github.com/solo-io/k8s-utils/testutils/helper"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 
-	"github.com/gogo/protobuf/types"
 	. "github.com/onsi/gomega"
 	errors "github.com/rotisserie/eris"
 	"k8s.io/client-go/kubernetes"
@@ -44,14 +44,11 @@ func GlooctlCheckEventuallyHealthy(offset int, testHelper *helper.SoloTestHelper
 				Ctx: context.Background(),
 			},
 		}
-		ok, err := check.CheckResources(opts)
+		err := check.CheckResources(opts)
 		if err != nil {
-			return errors.Wrap(err, "unable to run glooctl check")
+			return errors.New("glooctl check detected a problem with the installation")
 		}
-		if ok {
-			return nil
-		}
-		return errors.New("glooctl check detected a problem with the installation")
+		return nil
 	}, timeoutInterval, "5s").Should(BeNil())
 }
 
@@ -77,6 +74,9 @@ settings:
 gloo:
   deployment:
     disableUsageStatistics: true
+gatewayProxies:
+  gatewayProxy:
+    healthyPanicThreshold: 0
 `))
 	Expect(err).NotTo(HaveOccurred())
 
@@ -133,7 +133,7 @@ func getSnapOut(metricsPort string) string {
 		Expect(err).ToNot(HaveOccurred())
 		bodyResp = string(body)
 		return bodyResp
-	}, "3s", "0.5s").ShouldNot(BeEmpty())
+	}, "5s", "1s").ShouldNot(BeEmpty())
 
 	Expect(bodyResp).To(ContainSubstring("api_gloo_solo_io_emitter_snap_out"))
 	findSnapOut := regexp.MustCompile("api_gloo_solo_io_emitter_snap_out ([\\d]+)")
@@ -144,16 +144,23 @@ func getSnapOut(metricsPort string) string {
 }
 
 // enable/disable strict validation
-func UpdateAlwaysAcceptSetting(alwaysAccept bool, installNamespace string) {
+func UpdateAlwaysAcceptSetting(ctx context.Context, alwaysAccept bool, installNamespace string) {
 	UpdateSettings(func(settings *v1.Settings) {
 		Expect(settings.Gateway).NotTo(BeNil())
 		Expect(settings.Gateway.Validation).NotTo(BeNil())
-		settings.Gateway.Validation.AlwaysAccept = &types.BoolValue{Value: alwaysAccept}
-	}, installNamespace)
+		settings.Gateway.Validation.AlwaysAccept = &wrappers.BoolValue{Value: alwaysAccept}
+	}, ctx, installNamespace)
 }
 
-func UpdateSettings(f func(settings *v1.Settings), installNamespace string) {
-	settingsClient := clienthelpers.MustSettingsClient()
+func UpdateRestEdsSetting(ctx context.Context, enableRestEds bool, installNamespace string) {
+	UpdateSettings(func(settings *v1.Settings) {
+		Expect(settings.Gloo).NotTo(BeNil())
+		settings.Gloo.EnableRestEds = &wrappers.BoolValue{Value: enableRestEds}
+	}, ctx, installNamespace)
+}
+
+func UpdateSettings(f func(settings *v1.Settings), ctx context.Context, installNamespace string) {
+	settingsClient := clienthelpers.MustSettingsClient(ctx)
 	settings, err := settingsClient.Read(installNamespace, "default", clients.ReadOpts{})
 	Expect(err).NotTo(HaveOccurred())
 

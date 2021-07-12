@@ -4,26 +4,25 @@ import (
 	"context"
 	"time"
 
-	"github.com/solo-io/go-utils/testutils"
+	. "github.com/onsi/ginkgo/extensions/table"
 
+	"github.com/golang/protobuf/ptypes/duration"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/hashicorp/go-multierror"
-
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/waf"
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/als"
-
-	"github.com/solo-io/gloo/projects/gateway/pkg/defaults"
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
-	"github.com/solo-io/gloo/test/samples"
-
-	"github.com/gogo/protobuf/types"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	. "github.com/solo-io/gloo/projects/gateway/pkg/translator"
-	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/tcp"
-
 	v1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gateway/pkg/defaults"
+	. "github.com/solo-io/gloo/projects/gateway/pkg/translator"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/waf"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/als"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/tcp"
+	"github.com/solo-io/gloo/test/samples"
+	"github.com/solo-io/go-utils/testutils"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	"github.com/solo-io/solo-kit/pkg/utils/prototime"
 )
 
 const (
@@ -44,23 +43,26 @@ var _ = Describe("Translator", func() {
 			snap = &v1.ApiSnapshot{
 				Gateways: v1.GatewayList{
 					{
-						Metadata: core.Metadata{Namespace: ns, Name: "name"},
+						Metadata: &core.Metadata{Namespace: ns, Name: "name"},
 						GatewayType: &v1.Gateway_HttpGateway{
 							HttpGateway: &v1.HttpGateway{},
 						},
 						BindPort: 2,
 					},
 					{
-						Metadata: core.Metadata{Namespace: ns2, Name: "name2"},
+						Metadata: &core.Metadata{Namespace: ns2, Name: "name2"},
 						GatewayType: &v1.Gateway_HttpGateway{
 							HttpGateway: &v1.HttpGateway{},
 						},
 						BindPort: 2,
+						RouteOptions: &gloov1.RouteConfigurationOptions{
+							MaxDirectResponseBodySizeBytes: &wrappers.UInt32Value{Value: 2048},
+						},
 					},
 				},
 				VirtualServices: v1.VirtualServiceList{
 					{
-						Metadata: core.Metadata{Namespace: ns, Name: "name1"},
+						Metadata: &core.Metadata{Namespace: ns, Name: "name1"},
 						VirtualHost: &v1.VirtualHost{
 							Domains: []string{"d1.com"},
 							Routes: []*v1.Route{
@@ -80,7 +82,7 @@ var _ = Describe("Translator", func() {
 						},
 					},
 					{
-						Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+						Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 						VirtualHost: &v1.VirtualHost{
 							Domains: []string{"d2.com"},
 							Routes: []*v1.Route{
@@ -127,6 +129,8 @@ var _ = Describe("Translator", func() {
 				AccessLoggingService: als,
 			}
 
+			Expect(snap.Gateways[1].RouteOptions.MaxDirectResponseBodySizeBytes.Value).To(BeEquivalentTo(2048))
+
 			httpGateway := snap.Gateways[0].GetHttpGateway()
 			Expect(httpGateway).NotTo(BeNil())
 			waf := &waf.Settings{
@@ -153,7 +157,7 @@ var _ = Describe("Translator", func() {
 			snap.Gateways = append(
 				snap.Gateways,
 				&v1.Gateway{
-					Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+					Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 					GatewayType: &v1.Gateway_TcpGateway{
 						TcpGateway: &v1.TcpGateway{},
 					},
@@ -172,7 +176,7 @@ var _ = Describe("Translator", func() {
 			snap.Gateways = append(
 				snap.Gateways,
 				&v1.Gateway{
-					Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+					Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 					GatewayType: &v1.Gateway_HttpGateway{
 						HttpGateway: &v1.HttpGateway{},
 					},
@@ -189,7 +193,7 @@ var _ = Describe("Translator", func() {
 
 		It("should error on two gateways with the same port in the same namespace", func() {
 			dupeGateway := v1.Gateway{
-				Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+				Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 				BindPort: 2,
 			}
 			snap.Gateways = append(snap.Gateways, &dupeGateway)
@@ -236,14 +240,14 @@ var _ = Describe("Translator", func() {
 				snap = &v1.ApiSnapshot{
 					Gateways: v1.GatewayList{
 						{
-							Metadata: core.Metadata{Namespace: ns, Name: "name"},
+							Metadata: &core.Metadata{Namespace: ns, Name: "name"},
 							GatewayType: &v1.Gateway_HttpGateway{
 								HttpGateway: &v1.HttpGateway{},
 							},
 							BindPort: 2,
 						},
 						{
-							Metadata: core.Metadata{Namespace: ns2, Name: "name2"},
+							Metadata: &core.Metadata{Namespace: ns2, Name: "name2"},
 							GatewayType: &v1.Gateway_HttpGateway{
 								HttpGateway: &v1.HttpGateway{},
 							},
@@ -252,7 +256,7 @@ var _ = Describe("Translator", func() {
 					},
 					VirtualServices: v1.VirtualServiceList{
 						{
-							Metadata: core.Metadata{Namespace: ns, Name: "name1"},
+							Metadata: &core.Metadata{Namespace: ns, Name: "name1"},
 							VirtualHost: &v1.VirtualHost{
 								Domains: []string{"d1.com"},
 								Routes: []*v1.Route{
@@ -272,7 +276,7 @@ var _ = Describe("Translator", func() {
 							},
 						},
 						{
-							Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+							Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 							VirtualHost: &v1.VirtualHost{
 								Domains: []string{"d2.com"},
 								Routes: []*v1.Route{
@@ -321,14 +325,14 @@ var _ = Describe("Translator", func() {
 				snap = &v1.ApiSnapshot{
 					Gateways: v1.GatewayList{
 						{
-							Metadata: core.Metadata{Namespace: ns, Name: "name"},
+							Metadata: &core.Metadata{Namespace: ns, Name: "name"},
 							GatewayType: &v1.Gateway_HttpGateway{
 								HttpGateway: &v1.HttpGateway{},
 							},
 							BindPort: 2,
 						},
 						{
-							Metadata: core.Metadata{Namespace: ns2, Name: "name2"},
+							Metadata: &core.Metadata{Namespace: ns2, Name: "name2"},
 							GatewayType: &v1.Gateway_HttpGateway{
 								HttpGateway: &v1.HttpGateway{},
 							},
@@ -337,7 +341,7 @@ var _ = Describe("Translator", func() {
 					},
 					VirtualServices: v1.VirtualServiceList{
 						{
-							Metadata: core.Metadata{Namespace: ns, Name: "name1", Labels: labelSet},
+							Metadata: &core.Metadata{Namespace: ns, Name: "name1", Labels: labelSet},
 							VirtualHost: &v1.VirtualHost{
 								Domains: []string{"d1.com"},
 								Routes: []*v1.Route{
@@ -357,7 +361,7 @@ var _ = Describe("Translator", func() {
 							},
 						},
 						{
-							Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+							Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 							VirtualHost: &v1.VirtualHost{
 								Domains: []string{"d2.com"},
 								Routes: []*v1.Route{
@@ -377,7 +381,7 @@ var _ = Describe("Translator", func() {
 							},
 						},
 						{
-							Metadata: core.Metadata{Namespace: ns + "-other-namespace", Name: "name3", Labels: labelSet},
+							Metadata: &core.Metadata{Namespace: ns + "-other-namespace", Name: "name3", Labels: labelSet},
 							VirtualHost: &v1.VirtualHost{
 								Domains: []string{"d3.com"},
 								Routes: []*v1.Route{
@@ -437,7 +441,7 @@ var _ = Describe("Translator", func() {
 				It("should translate a gateway to only have its virtual services", func() {
 					snap.Gateways[0].GatewayType = &v1.Gateway_HttpGateway{
 						HttpGateway: &v1.HttpGateway{
-							VirtualServices: []core.ResourceRef{snap.VirtualServices[0].Metadata.Ref()},
+							VirtualServices: []*core.ResourceRef{snap.VirtualServices[0].Metadata.Ref()},
 						},
 					}
 
@@ -453,7 +457,7 @@ var _ = Describe("Translator", func() {
 				It("can include a virtual service from some other namespace", func() {
 					snap.Gateways[0].GatewayType = &v1.Gateway_HttpGateway{
 						HttpGateway: &v1.HttpGateway{
-							VirtualServices: []core.ResourceRef{snap.VirtualServices[2].Metadata.Ref()},
+							VirtualServices: []*core.ResourceRef{snap.VirtualServices[2].Metadata.Ref()},
 						},
 					}
 
@@ -592,26 +596,193 @@ var _ = Describe("Translator", func() {
 
 					Expect(errs.Error()).To(ContainSubstring(NoVirtualHostErr(snap.VirtualServices[0]).Error()))
 				})
+
+				It("should error when a virtual services has invalid regex", func() {
+					snap.VirtualServices[0].VirtualHost.Routes[0].Matchers[0] = &matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "["}}
+
+					_, reports := translator.Translate(context.Background(), defaults.GatewayProxyName, ns, snap, snap.Gateways)
+					Expect(reports.Validate()).To(HaveOccurred())
+
+					errs := reports.ValidateStrict()
+					Expect(errs).To(HaveOccurred())
+
+					Expect(errs.Error()).To(ContainSubstring("missing closing ]: `[`"))
+				})
+			})
+
+			Context("validate matcher short-circuiting warnings", func() {
+
+				BeforeEach(func() {
+					translator = NewTranslator([]ListenerFactory{&HttpTranslator{WarnOnRouteShortCircuiting: true}, &TcpTranslator{}}, Opts{})
+				})
+
+				DescribeTable("warns on route short-circuiting", func(earlyMatcher, lateMatcher *matchers.Matcher, expectedErr error) {
+					vs := &v1.VirtualService{
+						Metadata: &core.Metadata{Namespace: ns, Name: "name1", Labels: labelSet},
+						VirtualHost: &v1.VirtualHost{
+							Domains: []string{"d1.com"},
+							Routes: []*v1.Route{
+								{
+									Matchers: []*matchers.Matcher{earlyMatcher},
+									Action: &v1.Route_DirectResponseAction{
+										DirectResponseAction: &gloov1.DirectResponseAction{
+											Body: "d1",
+										},
+									},
+								},
+								// second route will be short-circuited by the first one
+								{
+									Matchers: []*matchers.Matcher{lateMatcher},
+									Action: &v1.Route_DirectResponseAction{
+										DirectResponseAction: &gloov1.DirectResponseAction{
+											Body: "d2",
+										},
+									},
+								},
+							},
+						},
+					}
+
+					snap.VirtualServices = v1.VirtualServiceList{vs}
+
+					_, reports := translator.Translate(context.Background(), defaults.GatewayProxyName, ns, snap, snap.Gateways)
+					errs := reports.ValidateStrict()
+					if expectedErr == nil {
+						Expect(errs).ToNot(HaveOccurred())
+						return
+					}
+					Expect(errs).To(HaveOccurred())
+
+					multiErr, ok := errs.(*multierror.Error)
+					Expect(ok).To(BeTrue())
+
+					Expect(multiErr.ErrorOrNil()).To(MatchError(ContainSubstring(expectedErr.Error())))
+				},
+					Entry("duplicate matchers",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						ConflictingMatcherErr("gloo-system.name1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}})),
+					Entry("duplicate paths but earlier has query parameter matcher",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						nil),
+					Entry("duplicate paths but later has query parameter matcher (prefix hijacking)",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}},
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}})),
+					Entry("duplicate paths but earlier has header matcher",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						nil),
+					Entry("duplicate paths but later has header matcher (prefix hijacking)",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}},
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}})),
+					Entry("duplicate paths but earlier has query parameter matchers that don't short circuit the latter",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "baz"}}},
+						nil),
+					Entry("duplicate paths but earlier has query parameter matchers that don't short circuit the latter, with extras first",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}, {Name: "foo2", Value: "bar2"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}},
+						nil),
+					Entry("duplicate paths but earlier has query parameter matchers that don't short circuit the latter, with extras second",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}, {Name: "foo2", Value: "bar2"}}},
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}, {Name: "foo2", Value: "bar2"}}})),
+					Entry("duplicate paths but earlier has header matchers that don't short circuit the latter",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "baz"}}},
+						nil),
+					Entry("duplicate paths but earlier has header matchers that don't short circuit the latter, with extras first",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}, {Name: "foo2", Value: "bar2"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}},
+						nil),
+					Entry("duplicate paths but earlier has header matchers that don't short circuit the latter, with extras second",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}, {Name: "foo2", Value: "bar2"}}},
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}, {Name: "foo2", Value: "bar2"}}})),
+					Entry("prefix hijacking",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1/2"}},
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1/2"}})),
+					Entry("prefix hijacking with inverted header matcher, late matcher unreachable",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: ":method", Value: "GET", InvertMatch: true}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: ":method", Value: "POST"}}},
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: ":method", Value: "POST"}}})),
+					Entry("prefix hijacking with inverted header matcher, late matcher reachable",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: ":method", Value: "GET", InvertMatch: true}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: ":method", Value: "GET"}}},
+						nil),
+					Entry("regex hijacking",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "/foo/.*/bar"}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}},
+						UnorderedRegexErr("gloo-system.name1", "/foo/.*/bar", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}})),
+					Entry("regex hijacking - with match all header matcher",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "/foo/.*/bar"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: ""}}}, // empty value will match anything
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}},
+						UnorderedRegexErr("gloo-system.name1", "/foo/.*/bar", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, Headers: []*matchers.HeaderMatcher{{Name: "foo", Value: "bar"}}})),
+					Entry("regex hijacking - with match all query parameter matcher",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "/foo/.*/bar"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: ""}}}, // empty value will match anything
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}},
+						UnorderedRegexErr("gloo-system.name1", "/foo/.*/bar", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, QueryParameters: []*matchers.QueryParameterMatcher{{Name: "foo", Value: "bar"}}})),
+					Entry("prefix hijacking - handles case sensitive",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo"}, CaseSensitive: &wrappers.BoolValue{Value: true}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo"}, CaseSensitive: &wrappers.BoolValue{Value: false}},
+						nil),
+					Entry("regex hijacking - handles case sensitive (by ignoring it if set on the regex, since envoy will ignore case sensitive on regex routes)",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "/foo/.*/bar"}, CaseSensitive: &wrappers.BoolValue{Value: true}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, CaseSensitive: &wrappers.BoolValue{Value: false}},
+						UnorderedRegexErr("gloo-system.name1", "/foo/.*/bar", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, CaseSensitive: &wrappers.BoolValue{Value: false}})),
+					Entry("regex hijacking - handles case sensitive (by skipping validation; we can't validate case insensitive against a regex)",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "/foo/.*/bar"}, CaseSensitive: &wrappers.BoolValue{Value: true}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo/user/info/bar"}, CaseSensitive: &wrappers.BoolValue{Value: true}},
+						nil),
+					Entry("inverted header matcher hijacks possible method matchers",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo"},
+							Headers: []*matchers.HeaderMatcher{
+								{
+									Name:        ":method",
+									Value:       "GET",
+									InvertMatch: true,
+								},
+							},
+						},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo"},
+							Methods: []string{"GET", "POST"}, // The POST method here is unreachable
+						},
+						UnorderedPrefixErr("gloo-system.name1", "/foo", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/foo"},
+							Methods: []string{"GET", "POST"},
+						})),
+					Entry("prefix hijacking with inverted header matcher, late matcher partially unreachable",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Headers: []*matchers.HeaderMatcher{{Name: ":method", Value: "GET", InvertMatch: true}}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Methods: []string{"GET", "POST"}}, // The POST method here is unreachable
+						UnorderedPrefixErr("gloo-system.name1", "/1", &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/1"}, Methods: []string{"GET", "POST"}})),
+					Entry("invalid regex doesn't crash",
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Regex{Regex: "["}},
+						&matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/"}},
+						InvalidRegexErr("gloo-system.name1", "error parsing regexp: missing closing ]: `[`")),
+				)
 			})
 		})
 
 		Context("using RouteTables and delegation", func() {
 			Context("valid configuration", func() {
-				dur := time.Minute
+				dur := prototime.DurationToProto(time.Minute)
 
-				rootLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: &types.StringValue{Value: "root route plugin"}}
-				midLevelRoutePlugins := &gloov1.RouteOptions{Timeout: &dur}
-				leafLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: &types.StringValue{Value: "leaf level plugin"}}
+				rootLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: &wrappers.StringValue{Value: "root route plugin"}}
+				midLevelRoutePlugins := &gloov1.RouteOptions{Timeout: dur}
+				leafLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: &wrappers.StringValue{Value: "leaf level plugin"}}
 
-				mergedMidLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: rootLevelRoutePlugins.PrefixRewrite, Timeout: &dur}
-				mergedLeafLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: &types.StringValue{Value: "leaf level plugin"}, Timeout: midLevelRoutePlugins.Timeout}
+				mergedMidLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: rootLevelRoutePlugins.PrefixRewrite, Timeout: dur}
+				mergedLeafLevelRoutePlugins := &gloov1.RouteOptions{PrefixRewrite: &wrappers.StringValue{Value: "leaf level plugin"}, Timeout: midLevelRoutePlugins.Timeout}
 
 				BeforeEach(func() {
 					translator = NewTranslator([]ListenerFactory{&HttpTranslator{}}, Opts{})
 					snap = &v1.ApiSnapshot{
 						Gateways: v1.GatewayList{
 							{
-								Metadata: core.Metadata{Namespace: ns, Name: "name"},
+								Metadata: &core.Metadata{Namespace: ns, Name: "name"},
 								GatewayType: &v1.Gateway_HttpGateway{
 									HttpGateway: &v1.HttpGateway{},
 								},
@@ -620,7 +791,7 @@ var _ = Describe("Translator", func() {
 						},
 						VirtualServices: v1.VirtualServiceList{
 							{
-								Metadata: core.Metadata{Namespace: ns, Name: "name1"},
+								Metadata: &core.Metadata{Namespace: ns, Name: "name1"},
 								VirtualHost: &v1.VirtualHost{
 									Domains: []string{"d1.com"},
 									Routes: []*v1.Route{
@@ -647,7 +818,7 @@ var _ = Describe("Translator", func() {
 								},
 							},
 							{
-								Metadata: core.Metadata{Namespace: ns, Name: "name2"},
+								Metadata: &core.Metadata{Namespace: ns, Name: "name2"},
 								VirtualHost: &v1.VirtualHost{
 									Domains: []string{"d2.com"},
 									Routes: []*v1.Route{
@@ -674,7 +845,7 @@ var _ = Describe("Translator", func() {
 						},
 						RouteTables: []*v1.RouteTable{
 							{
-								Metadata: core.Metadata{
+								Metadata: &core.Metadata{
 									Name:      "delegate-1",
 									Namespace: ns,
 								},
@@ -722,7 +893,7 @@ var _ = Describe("Translator", func() {
 								},
 							},
 							{
-								Metadata: core.Metadata{
+								Metadata: &core.Metadata{
 									Name:      "delegate-2",
 									Namespace: ns,
 								},
@@ -774,7 +945,7 @@ var _ = Describe("Translator", func() {
 								},
 							},
 							{
-								Metadata: core.Metadata{
+								Metadata: &core.Metadata{
 									Name:      "delegate-3",
 									Namespace: ns,
 								},
@@ -976,7 +1147,7 @@ var _ = Describe("Translator", func() {
 					snap = &v1.ApiSnapshot{
 						Gateways: v1.GatewayList{
 							{
-								Metadata: core.Metadata{Namespace: ns, Name: "name"},
+								Metadata: &core.Metadata{Namespace: ns, Name: "name"},
 								GatewayType: &v1.Gateway_HttpGateway{
 									HttpGateway: &v1.HttpGateway{},
 								},
@@ -985,7 +1156,7 @@ var _ = Describe("Translator", func() {
 						},
 						VirtualServices: v1.VirtualServiceList{
 							{
-								Metadata: core.Metadata{Namespace: ns, Name: "has-a-cycle"},
+								Metadata: &core.Metadata{Namespace: ns, Name: "has-a-cycle"},
 								VirtualHost: &v1.VirtualHost{
 									Domains: []string{"d1.com"},
 									Routes: []*v1.Route{
@@ -1007,7 +1178,7 @@ var _ = Describe("Translator", func() {
 						},
 						RouteTables: []*v1.RouteTable{
 							{
-								Metadata: core.Metadata{
+								Metadata: &core.Metadata{
 									Name:      "delegate-1",
 									Namespace: ns,
 								},
@@ -1027,7 +1198,7 @@ var _ = Describe("Translator", func() {
 								},
 							},
 							{
-								Metadata: core.Metadata{
+								Metadata: &core.Metadata{
 									Name:      "delegate-2",
 									Namespace: ns,
 								},
@@ -1062,20 +1233,21 @@ var _ = Describe("Translator", func() {
 
 	Context("tcp", func() {
 		var (
-			factory     *TcpTranslator
-			idleTimeout time.Duration
-			plugins     *gloov1.TcpListenerOptions
-			tcpHost     *gloov1.TcpHost
+			factory            *TcpTranslator
+			idleTimeout        *duration.Duration
+			tcpListenerOptions *gloov1.TcpListenerOptions
+			tcpHost            *gloov1.TcpHost
 		)
 		BeforeEach(func() {
 			factory = &TcpTranslator{}
 			translator = NewTranslator([]ListenerFactory{factory}, Opts{})
 
-			idleTimeout = 5 * time.Second
-			plugins = &gloov1.TcpListenerOptions{
+			idleTimeout = prototime.DurationToProto(5 * time.Second)
+			tcpListenerOptions = &gloov1.TcpListenerOptions{
 				TcpProxySettings: &tcp.TcpProxySettings{
-					MaxConnectAttempts: &types.UInt32Value{Value: 10},
-					IdleTimeout:        &idleTimeout,
+					MaxConnectAttempts: &wrappers.UInt32Value{Value: 10},
+					IdleTimeout:        idleTimeout,
+					TunnelingConfig:    &tcp.TcpProxySettings_TunnelingConfig{Hostname: "proxyhostname"},
 				},
 			}
 			tcpHost = &gloov1.TcpHost{
@@ -1093,10 +1265,10 @@ var _ = Describe("Translator", func() {
 			snap = &v1.ApiSnapshot{
 				Gateways: v1.GatewayList{
 					{
-						Metadata: core.Metadata{Namespace: ns, Name: "name"},
+						Metadata: &core.Metadata{Namespace: ns, Name: "name"},
 						GatewayType: &v1.Gateway_TcpGateway{
 							TcpGateway: &v1.TcpGateway{
-								Options:  plugins,
+								Options:  tcpListenerOptions,
 								TcpHosts: []*gloov1.TcpHost{tcpHost},
 							},
 						},
@@ -1111,7 +1283,7 @@ var _ = Describe("Translator", func() {
 
 			Expect(proxy.Listeners).To(HaveLen(1))
 			listener := proxy.Listeners[0].ListenerType.(*gloov1.Listener_TcpListener).TcpListener
-			Expect(listener.Options).To(Equal(plugins))
+			Expect(listener.Options).To(Equal(tcpListenerOptions))
 			Expect(listener.TcpHosts).To(HaveLen(1))
 			Expect(listener.TcpHosts[0]).To(Equal(tcpHost))
 		})
@@ -1125,7 +1297,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 		{
 			Sources: []SourceRef{
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-1",
 						Namespace: "gloo-system",
 					},
@@ -1133,7 +1305,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "name1",
 						Namespace: "gloo-system",
 					},
@@ -1145,7 +1317,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 		{
 			Sources: []SourceRef{
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-3",
 						Namespace: "gloo-system",
 					},
@@ -1153,7 +1325,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-1",
 						Namespace: "gloo-system",
 					},
@@ -1161,7 +1333,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "name1",
 						Namespace: "gloo-system",
 					},
@@ -1173,7 +1345,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 		{
 			Sources: []SourceRef{
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-3",
 						Namespace: "gloo-system",
 					},
@@ -1181,7 +1353,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-1",
 						Namespace: "gloo-system",
 					},
@@ -1189,7 +1361,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "name1",
 						Namespace: "gloo-system",
 					},
@@ -1203,7 +1375,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 		{
 			Sources: []SourceRef{
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-2",
 						Namespace: "gloo-system",
 					},
@@ -1211,7 +1383,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "name2",
 						Namespace: "gloo-system",
 					},
@@ -1223,7 +1395,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 		{
 			Sources: []SourceRef{
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "delegate-2",
 						Namespace: "gloo-system",
 					},
@@ -1231,7 +1403,7 @@ var expectedRouteMetadatas = [][]*SourceMetadata{
 					ObservedGeneration: 0,
 				},
 				{
-					ResourceRef: core.ResourceRef{
+					ResourceRef: &core.ResourceRef{
 						Name:      "name2",
 						Namespace: "gloo-system",
 					},

@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"time"
 
+	envoy_config_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-
-	envoyroute "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
+	"github.com/golang/protobuf/ptypes/duration"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
+	"github.com/solo-io/solo-kit/pkg/utils/prototime"
 )
 
 const (
@@ -19,8 +20,7 @@ const (
 	CustomDomain       = "custom"
 	requestType        = "both"
 
-	customStage    = 1
-	DefaultTimeout = 100 * time.Millisecond
+	CustomStage = 1
 )
 
 var (
@@ -30,11 +30,19 @@ var (
 	// we may want to rate limit before executing the AuthN and AuthZ stages
 	// notably, AuthZ still needs to occur after AuthN
 	beforeAuthStage = plugins.BeforeStage(plugins.AuthNStage)
+
+	DefaultTimeout = prototime.DurationToProto(100 * time.Millisecond)
 )
+
+// Compile-time assertion
+var _ plugins.Plugin = &Plugin{}
+var _ plugins.HttpFilterPlugin = &Plugin{}
+var _ plugins.VirtualHostPlugin = &Plugin{}
+var _ plugins.RoutePlugin = &Plugin{}
 
 type Plugin struct {
 	upstreamRef         *core.ResourceRef
-	timeout             *time.Duration
+	timeout             *duration.Duration
 	denyOnFail          bool
 	rateLimitBeforeAuth bool
 }
@@ -54,17 +62,20 @@ func (p *Plugin) Init(params plugins.InitParams) error {
 	return nil
 }
 
-func (p *Plugin) ProcessVirtualHost(params plugins.VirtualHostParams, in *v1.VirtualHost, out *envoyroute.VirtualHost) error {
+func (p *Plugin) ProcessVirtualHost(
+	params plugins.VirtualHostParams,
+	in *v1.VirtualHost, out *envoy_config_route_v3.VirtualHost,
+) error {
 	if newRateLimits := in.GetOptions().GetRatelimit().GetRateLimits(); len(newRateLimits) > 0 {
-		out.RateLimits = generateCustomEnvoyConfigForVhost(params.Ctx, newRateLimits)
+		out.RateLimits = toEnvoyRateLimits(params.Ctx, newRateLimits)
 	}
 	return nil
 }
 
-func (p *Plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoyroute.Route) error {
+func (p *Plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoy_config_route_v3.Route) error {
 	if rateLimits := in.GetOptions().GetRatelimit(); rateLimits != nil {
 		if ra := out.GetRoute(); ra != nil {
-			ra.RateLimits = generateCustomEnvoyConfigForVhost(params.Ctx, rateLimits.GetRateLimits())
+			ra.RateLimits = toEnvoyRateLimits(params.Ctx, rateLimits.GetRateLimits())
 			ra.IncludeVhRateLimits = &wrappers.BoolValue{Value: rateLimits.GetIncludeVhRateLimits()}
 		} else {
 			// TODO(yuval-k): maybe return nil here instead and just log a warning?
@@ -76,7 +87,7 @@ func (p *Plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *env
 
 func (p *Plugin) HttpFilters(_ plugins.Params, listener *v1.HttpListener) ([]plugins.StagedHttpFilter, error) {
 	var upstreamRef *core.ResourceRef
-	var timeout *time.Duration
+	var timeout *duration.Duration
 	var denyOnFail bool
 	var rateLimitBeforeAuth bool
 
@@ -96,9 +107,13 @@ func (p *Plugin) HttpFilters(_ plugins.Params, listener *v1.HttpListener) ([]plu
 		return nil, nil
 	}
 
-	customConf := generateEnvoyConfigForCustomFilter(*upstreamRef, timeout, denyOnFail)
+	customConf := GenerateEnvoyConfigForFilterWith(upstreamRef, CustomDomain, CustomStage, timeout, denyOnFail)
 
-	customStagedFilter, err := plugins.NewStagedFilterWithConfig(wellknown.HTTPRateLimit, customConf, DetermineFilterStage(rateLimitBeforeAuth))
+	customStagedFilter, err := plugins.NewStagedFilterWithConfig(
+		wellknown.HTTPRateLimit,
+		customConf,
+		DetermineFilterStage(rateLimitBeforeAuth),
+	)
 	if err != nil {
 		return nil, err
 	}

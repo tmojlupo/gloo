@@ -1,6 +1,7 @@
 package ratelimit_test
 
 import (
+	"context"
 	"io"
 
 	rltypes "github.com/solo-io/solo-apis/pkg/api/ratelimit.solo.io/v1alpha1"
@@ -21,14 +22,17 @@ var _ = Describe("CustomServerConfig", func() {
 	var (
 		settings       *gloov1.Settings
 		settingsClient gloov1.SettingsClient
+		ctx            context.Context
+		cancel         context.CancelFunc
 	)
 	BeforeEach(func() {
 		helpers.UseMemoryClients()
+		ctx, cancel = context.WithCancel(context.Background())
 		// create a settings object
-		settingsClient = helpers.MustSettingsClient()
+		settingsClient = helpers.MustSettingsClient(ctx)
 
 		settings = &gloov1.Settings{
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      "default",
 				Namespace: "gloo-system",
 			},
@@ -38,6 +42,8 @@ var _ = Describe("CustomServerConfig", func() {
 		settings, err = settingsClient.Write(settings, clients.WriteOpts{})
 		Expect(err).NotTo(HaveOccurred())
 	})
+
+	AfterEach(func() { cancel() })
 
 	Run := func(yaml string) error {
 
@@ -71,7 +77,14 @@ descriptors:
     value: default
     rate_limit:
       unit: second
-      requests_per_unit: 500`)
+      requests_per_unit: 500
+setDescriptors:
+  - simple_descriptors:
+    - key: foo
+      value: bar
+    rate_limit:
+      unit: second
+      requests_per_unit: 50`)
 
 		expectDescriptor := []*rltypes.Descriptor{
 			{
@@ -90,8 +103,21 @@ descriptors:
 				},
 			},
 		}
+		expectSetDescriptor := []*rltypes.SetDescriptor{
+			{
+				SimpleDescriptors: []*rltypes.SimpleDescriptor{{
+					Key:   "foo",
+					Value: "bar",
+				}},
+				RateLimit: &rltypes.RateLimit{
+					Unit:            rltypes.RateLimit_SECOND,
+					RequestsPerUnit: 50,
+				},
+			},
+		}
 
 		Expect(d.Descriptors).To(BeEquivalentTo(expectDescriptor))
+		Expect(d.SetDescriptors).To(BeEquivalentTo(expectSetDescriptor))
 	})
 
 	It("should parse example 2", func() {

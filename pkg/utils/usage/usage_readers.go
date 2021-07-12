@@ -1,12 +1,11 @@
 package usage
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/solo-io/gloo/projects/metrics/pkg/metricsservice"
 	"github.com/solo-io/reporting-client/pkg/client"
 )
 
@@ -19,52 +18,19 @@ const (
 	// report once per period
 	ReportingPeriod = time.Hour * 24
 
-	numEnvoys        = "numActiveEnvoys"
-	totalRequests    = "totalRequests"
-	totalConnections = "totalConnections"
-	args             = "args"
+	args = "args"
 )
 
 type DefaultUsageReader struct {
-	MetricsStorage metricsservice.StorageClient
 }
 
 var _ client.UsagePayloadReader = &DefaultUsageReader{}
 
-func (d *DefaultUsageReader) GetPayload() (map[string]string, error) {
-	usage, err := d.MetricsStorage.GetUsage()
-	if err != nil {
-		return nil, err
-	}
-
-	payload := map[string]string{}
-
-	if usage == nil || usage.EnvoyIdToUsage == nil {
-		return payload, nil
-	}
-
-	envoys := 0
-	requestsCount := float64(0)
-	connectionsCount := float64(0)
-
-	for _, envoyUsage := range usage.EnvoyIdToUsage {
-		if envoyUsage.Active {
-			envoys++
-			requestsCount += envoyUsage.EnvoyMetrics.HttpRequests
-			connectionsCount += envoyUsage.EnvoyMetrics.TcpConnections
-		}
-	}
-
-	payload[numEnvoys] = fmt.Sprintf("%d", envoys)
-
-	if requestsCount > 0 {
-		payload[totalRequests] = fmt.Sprintf("%d", requestsCount)
-	}
-	if connectionsCount > 0 {
-		payload[totalConnections] = fmt.Sprintf("%d", connectionsCount)
-	}
-
-	return payload, nil
+// Now that this implementation of GetPayload no longer requires a context,
+// the context isn't used by any GetPayload implementation. However, we opted to leave it as an input,
+// since there's a chance we might need it in the future.
+func (d *DefaultUsageReader) GetPayload(ctx context.Context) (map[string]string, error) {
+	return map[string]string{}, nil
 }
 
 type CliUsageReader struct {
@@ -73,7 +39,7 @@ type CliUsageReader struct {
 var _ client.UsagePayloadReader = &CliUsageReader{}
 
 // when reporting usage, also include the args that glooctl was invoked with
-func (c *CliUsageReader) GetPayload() (map[string]string, error) {
+func (c *CliUsageReader) GetPayload(ctx context.Context) (map[string]string, error) {
 	argsMap := map[string]string{}
 
 	if len(os.Args) > 1 {

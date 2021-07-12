@@ -8,10 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	envoy_data_accesslog_v2 "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v2"
-	envoyals "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v2"
+	envoy_data_accesslog_v3 "github.com/envoyproxy/go-control-plane/envoy/data/accesslog/v3"
+
+	envoyals "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
 	"github.com/fgrosse/zaptest"
-	"github.com/gogo/protobuf/types"
+	structpb "github.com/golang/protobuf/ptypes/struct"
 	. "github.com/onsi/ginkgo"
 	"github.com/onsi/ginkgo/config"
 	. "github.com/onsi/gomega"
@@ -109,7 +110,7 @@ var _ = Describe("Access Log", func() {
 			Context("Grpc", func() {
 
 				var (
-					msgChan <-chan *envoy_data_accesslog_v2.HTTPAccessLogEntry
+					msgChan <-chan *envoy_data_accesslog_v3.HTTPAccessLogEntry
 				)
 
 				BeforeEach(func() {
@@ -119,7 +120,7 @@ var _ = Describe("Access Log", func() {
 					contextutils.SetFallbackLogger(logger.Sugar())
 
 					envoyInstance.AccessLogPort = accessLogPort
-					err := envoyInstance.RunWithRole(writeNamespace+"~"+gwdefaults.GatewayProxyName, testClients.GlooPort)
+					err := envoyInstance.RunWithRoleAndRestXds(writeNamespace+"~"+gwdefaults.GatewayProxyName, testClients.GlooPort, testClients.RestXdsPort)
 					Expect(err).NotTo(HaveOccurred())
 
 					gatewaycli := testClients.GatewayClient
@@ -168,7 +169,7 @@ var _ = Describe("Access Log", func() {
 
 					TestUpstreamReachable()
 
-					var entry *envoy_data_accesslog_v2.HTTPAccessLogEntry
+					var entry *envoy_data_accesslog_v3.HTTPAccessLogEntry
 					Eventually(msgChan, 5*time.Second).Should(Receive(&entry))
 					Expect(entry.CommonProperties.UpstreamCluster).To(Equal(translator.UpstreamToClusterName(tu.Upstream.Metadata.Ref())))
 
@@ -280,15 +281,15 @@ var _ = Describe("Access Log", func() {
 										FileSink: &als.FileSink{
 											Path: path,
 											OutputFormat: &als.FileSink_JsonFormat{
-												JsonFormat: &types.Struct{
-													Fields: map[string]*types.Value{
+												JsonFormat: &structpb.Struct{
+													Fields: map[string]*structpb.Value{
 														"protocol": {
-															Kind: &types.Value_StringValue{
+															Kind: &structpb.Value_StringValue{
 																StringValue: "%PROTOCOL%",
 															},
 														},
 														"method": {
-															Kind: &types.Value_StringValue{
+															Kind: &structpb.Value_StringValue{
 																StringValue: "%REQ(:METHOD)%",
 															},
 														},
@@ -323,8 +324,8 @@ var _ = Describe("Access Log", func() {
 	})
 })
 
-func runAccessLog(ctx context.Context, accessLogPort uint32) <-chan *envoy_data_accesslog_v2.HTTPAccessLogEntry {
-	msgChan := make(chan *envoy_data_accesslog_v2.HTTPAccessLogEntry, 10)
+func runAccessLog(ctx context.Context, accessLogPort uint32) <-chan *envoy_data_accesslog_v3.HTTPAccessLogEntry {
+	msgChan := make(chan *envoy_data_accesslog_v3.HTTPAccessLogEntry, 10)
 
 	opts := loggingservice.Options{
 		Ordered: true,

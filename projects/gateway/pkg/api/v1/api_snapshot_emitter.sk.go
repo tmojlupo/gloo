@@ -83,26 +83,32 @@ type ApiEmitter interface {
 	VirtualService() VirtualServiceClient
 	RouteTable() RouteTableClient
 	Gateway() GatewayClient
+	VirtualHostOption() VirtualHostOptionClient
+	RouteOption() RouteOptionClient
 }
 
-func NewApiEmitter(virtualServiceClient VirtualServiceClient, routeTableClient RouteTableClient, gatewayClient GatewayClient) ApiEmitter {
-	return NewApiEmitterWithEmit(virtualServiceClient, routeTableClient, gatewayClient, make(chan struct{}))
+func NewApiEmitter(virtualServiceClient VirtualServiceClient, routeTableClient RouteTableClient, gatewayClient GatewayClient, virtualHostOptionClient VirtualHostOptionClient, routeOptionClient RouteOptionClient) ApiEmitter {
+	return NewApiEmitterWithEmit(virtualServiceClient, routeTableClient, gatewayClient, virtualHostOptionClient, routeOptionClient, make(chan struct{}))
 }
 
-func NewApiEmitterWithEmit(virtualServiceClient VirtualServiceClient, routeTableClient RouteTableClient, gatewayClient GatewayClient, emit <-chan struct{}) ApiEmitter {
+func NewApiEmitterWithEmit(virtualServiceClient VirtualServiceClient, routeTableClient RouteTableClient, gatewayClient GatewayClient, virtualHostOptionClient VirtualHostOptionClient, routeOptionClient RouteOptionClient, emit <-chan struct{}) ApiEmitter {
 	return &apiEmitter{
-		virtualService: virtualServiceClient,
-		routeTable:     routeTableClient,
-		gateway:        gatewayClient,
-		forceEmit:      emit,
+		virtualService:    virtualServiceClient,
+		routeTable:        routeTableClient,
+		gateway:           gatewayClient,
+		virtualHostOption: virtualHostOptionClient,
+		routeOption:       routeOptionClient,
+		forceEmit:         emit,
 	}
 }
 
 type apiEmitter struct {
-	forceEmit      <-chan struct{}
-	virtualService VirtualServiceClient
-	routeTable     RouteTableClient
-	gateway        GatewayClient
+	forceEmit         <-chan struct{}
+	virtualService    VirtualServiceClient
+	routeTable        RouteTableClient
+	gateway           GatewayClient
+	virtualHostOption VirtualHostOptionClient
+	routeOption       RouteOptionClient
 }
 
 func (c *apiEmitter) Register() error {
@@ -113,6 +119,12 @@ func (c *apiEmitter) Register() error {
 		return err
 	}
 	if err := c.gateway.Register(); err != nil {
+		return err
+	}
+	if err := c.virtualHostOption.Register(); err != nil {
+		return err
+	}
+	if err := c.routeOption.Register(); err != nil {
 		return err
 	}
 	return nil
@@ -128,6 +140,14 @@ func (c *apiEmitter) RouteTable() RouteTableClient {
 
 func (c *apiEmitter) Gateway() GatewayClient {
 	return c.gateway
+}
+
+func (c *apiEmitter) VirtualHostOption() VirtualHostOptionClient {
+	return c.virtualHostOption
+}
+
+func (c *apiEmitter) RouteOption() RouteOptionClient {
+	return c.routeOption
 }
 
 func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts) (<-chan *ApiSnapshot, <-chan error, error) {
@@ -170,6 +190,22 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 	gatewayChan := make(chan gatewayListWithNamespace)
 
 	var initialGatewayList GatewayList
+	/* Create channel for VirtualHostOption */
+	type virtualHostOptionListWithNamespace struct {
+		list      VirtualHostOptionList
+		namespace string
+	}
+	virtualHostOptionChan := make(chan virtualHostOptionListWithNamespace)
+
+	var initialVirtualHostOptionList VirtualHostOptionList
+	/* Create channel for RouteOption */
+	type routeOptionListWithNamespace struct {
+		list      RouteOptionList
+		namespace string
+	}
+	routeOptionChan := make(chan routeOptionListWithNamespace)
+
+	var initialRouteOptionList RouteOptionList
 
 	currentSnapshot := ApiSnapshot{}
 
@@ -228,6 +264,42 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 			defer done.Done()
 			errutils.AggregateErrs(ctx, errs, gatewayErrs, namespace+"-gateways")
 		}(namespace)
+		/* Setup namespaced watch for VirtualHostOption */
+		{
+			virtualHostOptions, err := c.virtualHostOption.List(namespace, clients.ListOpts{Ctx: opts.Ctx, Selector: opts.Selector})
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "initial VirtualHostOption list")
+			}
+			initialVirtualHostOptionList = append(initialVirtualHostOptionList, virtualHostOptions...)
+		}
+		virtualHostOptionNamespacesChan, virtualHostOptionErrs, err := c.virtualHostOption.Watch(namespace, opts)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "starting VirtualHostOption watch")
+		}
+
+		done.Add(1)
+		go func(namespace string) {
+			defer done.Done()
+			errutils.AggregateErrs(ctx, errs, virtualHostOptionErrs, namespace+"-virtualHostOptions")
+		}(namespace)
+		/* Setup namespaced watch for RouteOption */
+		{
+			routeOptions, err := c.routeOption.List(namespace, clients.ListOpts{Ctx: opts.Ctx, Selector: opts.Selector})
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "initial RouteOption list")
+			}
+			initialRouteOptionList = append(initialRouteOptionList, routeOptions...)
+		}
+		routeOptionNamespacesChan, routeOptionErrs, err := c.routeOption.Watch(namespace, opts)
+		if err != nil {
+			return nil, nil, errors.Wrapf(err, "starting RouteOption watch")
+		}
+
+		done.Add(1)
+		go func(namespace string) {
+			defer done.Done()
+			errutils.AggregateErrs(ctx, errs, routeOptionErrs, namespace+"-routeOptions")
+		}(namespace)
 
 		/* Watch for changes and update snapshot */
 		go func(namespace string) {
@@ -235,23 +307,50 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 				select {
 				case <-ctx.Done():
 					return
-				case virtualServiceList := <-virtualServiceNamespacesChan:
+				case virtualServiceList, ok := <-virtualServiceNamespacesChan:
+					if !ok {
+						return
+					}
 					select {
 					case <-ctx.Done():
 						return
 					case virtualServiceChan <- virtualServiceListWithNamespace{list: virtualServiceList, namespace: namespace}:
 					}
-				case routeTableList := <-routeTableNamespacesChan:
+				case routeTableList, ok := <-routeTableNamespacesChan:
+					if !ok {
+						return
+					}
 					select {
 					case <-ctx.Done():
 						return
 					case routeTableChan <- routeTableListWithNamespace{list: routeTableList, namespace: namespace}:
 					}
-				case gatewayList := <-gatewayNamespacesChan:
+				case gatewayList, ok := <-gatewayNamespacesChan:
+					if !ok {
+						return
+					}
 					select {
 					case <-ctx.Done():
 						return
 					case gatewayChan <- gatewayListWithNamespace{list: gatewayList, namespace: namespace}:
+					}
+				case virtualHostOptionList, ok := <-virtualHostOptionNamespacesChan:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case virtualHostOptionChan <- virtualHostOptionListWithNamespace{list: virtualHostOptionList, namespace: namespace}:
+					}
+				case routeOptionList, ok := <-routeOptionNamespacesChan:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case routeOptionChan <- routeOptionListWithNamespace{list: routeOptionList, namespace: namespace}:
 					}
 				}
 			}
@@ -263,6 +362,10 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 	currentSnapshot.RouteTables = initialRouteTableList.Sort()
 	/* Initialize snapshot for Gateways */
 	currentSnapshot.Gateways = initialGatewayList.Sort()
+	/* Initialize snapshot for VirtualHostOptions */
+	currentSnapshot.VirtualHostOptions = initialVirtualHostOptionList.Sort()
+	/* Initialize snapshot for RouteOptions */
+	currentSnapshot.RouteOptions = initialRouteOptionList.Sort()
 
 	snapshots := make(chan *ApiSnapshot)
 	go func() {
@@ -297,7 +400,15 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 		virtualServicesByNamespace := make(map[string]VirtualServiceList)
 		routeTablesByNamespace := make(map[string]RouteTableList)
 		gatewaysByNamespace := make(map[string]GatewayList)
-
+		virtualHostOptionsByNamespace := make(map[string]VirtualHostOptionList)
+		routeOptionsByNamespace := make(map[string]RouteOptionList)
+		defer func() {
+			close(snapshots)
+			// we must wait for done before closing the error chan,
+			// to avoid sending on close channel.
+			done.Wait()
+			close(errs)
+		}()
 		for {
 			record := func() { stats.Record(ctx, mApiSnapshotIn.M(1)) }
 
@@ -305,14 +416,14 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 			case <-timer.C:
 				sync()
 			case <-ctx.Done():
-				close(snapshots)
-				done.Wait()
-				close(errs)
 				return
 			case <-c.forceEmit:
 				sentSnapshot := currentSnapshot.Clone()
 				snapshots <- &sentSnapshot
-			case virtualServiceNamespacedList := <-virtualServiceChan:
+			case virtualServiceNamespacedList, ok := <-virtualServiceChan:
+				if !ok {
+					return
+				}
 				record()
 
 				namespace := virtualServiceNamespacedList.namespace
@@ -331,7 +442,10 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 					virtualServiceList = append(virtualServiceList, virtualServices...)
 				}
 				currentSnapshot.VirtualServices = virtualServiceList.Sort()
-			case routeTableNamespacedList := <-routeTableChan:
+			case routeTableNamespacedList, ok := <-routeTableChan:
+				if !ok {
+					return
+				}
 				record()
 
 				namespace := routeTableNamespacedList.namespace
@@ -350,7 +464,10 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 					routeTableList = append(routeTableList, routeTables...)
 				}
 				currentSnapshot.RouteTables = routeTableList.Sort()
-			case gatewayNamespacedList := <-gatewayChan:
+			case gatewayNamespacedList, ok := <-gatewayChan:
+				if !ok {
+					return
+				}
 				record()
 
 				namespace := gatewayNamespacedList.namespace
@@ -369,6 +486,50 @@ func (c *apiEmitter) Snapshots(watchNamespaces []string, opts clients.WatchOpts)
 					gatewayList = append(gatewayList, gateways...)
 				}
 				currentSnapshot.Gateways = gatewayList.Sort()
+			case virtualHostOptionNamespacedList, ok := <-virtualHostOptionChan:
+				if !ok {
+					return
+				}
+				record()
+
+				namespace := virtualHostOptionNamespacedList.namespace
+
+				skstats.IncrementResourceCount(
+					ctx,
+					namespace,
+					"virtual_host_option",
+					mApiResourcesIn,
+				)
+
+				// merge lists by namespace
+				virtualHostOptionsByNamespace[namespace] = virtualHostOptionNamespacedList.list
+				var virtualHostOptionList VirtualHostOptionList
+				for _, virtualHostOptions := range virtualHostOptionsByNamespace {
+					virtualHostOptionList = append(virtualHostOptionList, virtualHostOptions...)
+				}
+				currentSnapshot.VirtualHostOptions = virtualHostOptionList.Sort()
+			case routeOptionNamespacedList, ok := <-routeOptionChan:
+				if !ok {
+					return
+				}
+				record()
+
+				namespace := routeOptionNamespacedList.namespace
+
+				skstats.IncrementResourceCount(
+					ctx,
+					namespace,
+					"route_option",
+					mApiResourcesIn,
+				)
+
+				// merge lists by namespace
+				routeOptionsByNamespace[namespace] = routeOptionNamespacedList.list
+				var routeOptionList RouteOptionList
+				for _, routeOptions := range routeOptionsByNamespace {
+					routeOptionList = append(routeOptionList, routeOptions...)
+				}
+				currentSnapshot.RouteOptions = routeOptionList.Sort()
 			}
 		}
 	}()

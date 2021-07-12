@@ -9,7 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	mock_consul2 "github.com/solo-io/gloo/projects/gloo/pkg/plugins/consul/mocks"
+	proto_matchers "github.com/solo-io/solo-kit/test/matchers"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
 	mock_consul "github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul/mocks"
@@ -21,7 +23,6 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/rotisserie/eris"
-	"github.com/solo-io/gloo/pkg/utils"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	consulplugin "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/consul"
 	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams/consul"
@@ -448,7 +449,11 @@ var _ = Describe("Consul EDS", func() {
 
 			// Simulate the initial read when starting watch
 			serviceMetaProducer <- consulServiceSnapshot
-			Eventually(endpointsChan).Should(Receive(matchers.BeEquivalentToDiff(expectedEndpointsFirstAttempt)))
+			var asProtos []proto.Message
+			for _, v := range expectedEndpointsFirstAttempt {
+				asProtos = append(asProtos, v)
+			}
+			Eventually(endpointsChan).Should(Receive(proto_matchers.ConsistOfProtos(asProtos...)))
 
 			// Wait for error monitoring routine to stop, we want to simulate an error
 			errRoutineCancel()
@@ -542,7 +547,7 @@ var _ = Describe("Consul EDS", func() {
 			for _, svc := range svcs {
 				trackedServiceToUpstreams[svc.ServiceName] = []*v1.Upstream{
 					{
-						Metadata: core.Metadata{
+						Metadata: &core.Metadata{
 							Name:      "n",
 							Namespace: "n",
 						},
@@ -553,7 +558,7 @@ var _ = Describe("Consul EDS", func() {
 							},
 						},
 					}, {
-						Metadata: core.Metadata{
+						Metadata: &core.Metadata{
 							Name:      "n1",
 							Namespace: "n",
 						},
@@ -564,7 +569,7 @@ var _ = Describe("Consul EDS", func() {
 							},
 						},
 					}, {
-						Metadata: core.Metadata{
+						Metadata: &core.Metadata{
 							Name:      "n2",
 							Namespace: "n",
 						},
@@ -579,13 +584,14 @@ var _ = Describe("Consul EDS", func() {
 
 			// make sure the we have a correct number of generated endpoints:
 
-			endpoints := buildEndpointsFromSpecs(context.TODO(), writeNamespace, mockDnsResolver, svcs, trackedServiceToUpstreams)
+			previousResolutions := make(map[string][]string)
+			endpoints := buildEndpointsFromSpecs(context.TODO(), writeNamespace, mockDnsResolver, svcs, trackedServiceToUpstreams, previousResolutions)
 			endpontNames := map[string]bool{}
 			for _, endpoint := range endpoints {
 				fmt.Fprintf(GinkgoWriter, "%s%v\n", "endpoint: ", endpoint)
 				endpontNames[endpoint.GetMetadata().Name] = true
 
-				Expect(endpoint.Upstreams).To(ContainElement(&core.ResourceRef{
+				Expect(endpoint.Upstreams).To(proto_matchers.ContainProto(&core.ResourceRef{
 					Name:      "n2",
 					Namespace: "n",
 				}))
@@ -593,18 +599,18 @@ var _ = Describe("Consul EDS", func() {
 				case 1235:
 					// 1235 is the http endpoint above
 					Expect(endpoint.Upstreams).To(HaveLen(2))
-					Expect(endpoint.Upstreams).To(ContainElement(&core.ResourceRef{
+					Expect(endpoint.Upstreams).To(proto_matchers.ContainProto(&core.ResourceRef{
 						Name:      "n",
 						Namespace: "n",
 					}))
 				case 1237:
 					// 1237 is the ftp,http endpoint above
 					Expect(endpoint.Upstreams).To(HaveLen(3))
-					Expect(endpoint.Upstreams).To(ContainElement(&core.ResourceRef{
+					Expect(endpoint.Upstreams).To(proto_matchers.ContainProto(&core.ResourceRef{
 						Name:      "n1",
 						Namespace: "n",
 					}))
-					Expect(endpoint.Upstreams).To(ContainElement(&core.ResourceRef{
+					Expect(endpoint.Upstreams).To(proto_matchers.ContainProto(&core.ResourceRef{
 						Name:      "n",
 						Namespace: "n",
 					}))
@@ -631,11 +637,12 @@ var _ = Describe("Consul EDS", func() {
 			// add another upstream so to test that tag2 is in the labels.
 			upstream2 := createTestFilteredUpstream("my-svc-2", "my-svc", []string{"tag-2"}, []string{"serf"}, []string{"dc-1", "dc-2"})
 
-			endpoints, err := buildEndpoints(context.TODO(), writeNamespace, nil, consulService, v1.UpstreamList{upstream, upstream2})
+			previousResolutions := make(map[string][]string)
+			endpoints, err := buildEndpoints(context.TODO(), writeNamespace, nil, consulService, v1.UpstreamList{upstream, upstream2}, previousResolutions)
 			Expect(err).To(BeNil())
 			Expect(endpoints).To(HaveLen(1))
 			Expect(endpoints[0]).To(matchers.BeEquivalentToDiff(&v1.Endpoint{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Namespace: writeNamespace,
 					Name:      "127-0-0-1-my-svc-my-svc-0-1234",
 					Labels: map[string]string{
@@ -647,7 +654,7 @@ var _ = Describe("Consul EDS", func() {
 					},
 					ResourceVersion: "9876",
 				},
-				Upstreams: []*core.ResourceRef{utils.ResourceRefPtr(upstream.Metadata.Ref())},
+				Upstreams: []*core.ResourceRef{upstream.Metadata.Ref()},
 				Address:   "127.0.0.1",
 				Port:      1234,
 			}))
@@ -671,11 +678,12 @@ var _ = Describe("Consul EDS", func() {
 			mockDnsResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Do(func(context.Context, string) {
 				fmt.Fprint(GinkgoWriter, "Initial resolve called.")
 			}).Return(initialIps, nil).Times(1) // once for each consul service
-			endpoints, err := buildEndpoints(context.TODO(), writeNamespace, mockDnsResolver, consulService, v1.UpstreamList{upstream})
+			previousResolutions := make(map[string][]string)
+			endpoints, err := buildEndpoints(context.TODO(), writeNamespace, mockDnsResolver, consulService, v1.UpstreamList{upstream}, previousResolutions)
 			Expect(err).To(BeNil())
 			Expect(endpoints).To(HaveLen(1))
 			Expect(endpoints[0]).To(matchers.BeEquivalentToDiff(&v1.Endpoint{
-				Metadata: core.Metadata{
+				Metadata: &core.Metadata{
 					Namespace: writeNamespace,
 					Name:      "127-0-0-1-my-svc-my-svc-0-1234",
 					Labels: map[string]string{
@@ -686,11 +694,81 @@ var _ = Describe("Consul EDS", func() {
 					},
 					ResourceVersion: "9876",
 				},
-				Upstreams:   []*core.ResourceRef{utils.ResourceRefPtr(upstream.Metadata.Ref())},
+				Upstreams:   []*core.ResourceRef{upstream.Metadata.Ref()},
 				Address:     "127.0.0.1",
 				Port:        1234,
 				Hostname:    "hostname.foo.com",
 				HealthCheck: &v1.HealthCheckConfig{Hostname: "hostname.foo.com"},
+			}))
+		})
+
+		It("uses the previous IP addresses if DNS resolution fails", func() {
+			consulService := &consulapi.CatalogService{
+				ServiceID:   "my-svc-0",
+				ServiceName: "my-svc",
+				Address:     "my.address.io",
+				ServicePort: 1234,
+				Datacenter:  "dc-1",
+				ServiceTags: []string{"tag-1", "http"},
+				ModifyIndex: 9876,
+			}
+
+			initialIps := []net.IPAddr{{IP: net.IPv4(127, 0, 0, 1)}}
+			mockDnsResolver := mock_consul2.NewMockDnsResolver(ctrl)
+			mockDnsResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Do(func(context.Context, string) {
+				fmt.Fprint(GinkgoWriter, "Initial resolve called.")
+			}).Return(initialIps, nil).Times(1)
+
+			upstream := createTestFilteredUpstream("my-svc", "my-svc", []string{"tag-1"}, []string{"http"}, []string{"dc-1", "dc-2"})
+
+			previousResolutions := make(map[string][]string)
+			// Initial call should be successfull
+			endpoints, err := buildEndpoints(context.TODO(), writeNamespace, mockDnsResolver, consulService, v1.UpstreamList{upstream}, previousResolutions)
+			Expect(err).To(BeNil())
+			Expect(endpoints).To(HaveLen(1))
+			Expect(endpoints[0]).To(matchers.BeEquivalentToDiff(&v1.Endpoint{
+				Metadata: &core.Metadata{
+					Namespace: writeNamespace,
+					Name:      "127-0-0-1-my-svc-my-svc-0-1234",
+					Labels: map[string]string{
+						ConsulTagKeyPrefix + "tag-1":       ConsulEndpointMetadataMatchTrue,
+						ConsulDataCenterKeyPrefix + "dc-1": ConsulEndpointMetadataMatchTrue,
+						ConsulDataCenterKeyPrefix + "dc-2": ConsulEndpointMetadataMatchFalse,
+					},
+					ResourceVersion: "9876",
+				},
+				Upstreams:   []*core.ResourceRef{upstream.Metadata.Ref()},
+				Address:     "127.0.0.1",
+				Port:        1234,
+				Hostname:    "my.address.io",
+				HealthCheck: &v1.HealthCheckConfig{Hostname: "my.address.io"},
+			}))
+
+			failErr := eris.New("fail")
+			mockDnsResolver.EXPECT().Resolve(gomock.Any(), gomock.Any()).Do(func(context.Context, string) {
+				fmt.Fprint(GinkgoWriter, "Errored resolve called.")
+			}).Return(nil, failErr).Times(1)
+
+			// Following call should also be successfull despite the error
+			endpoints, err = buildEndpoints(context.TODO(), writeNamespace, mockDnsResolver, consulService, v1.UpstreamList{upstream}, previousResolutions)
+			Expect(err).To(BeNil())
+			Expect(endpoints).To(HaveLen(1))
+			Expect(endpoints[0]).To(matchers.BeEquivalentToDiff(&v1.Endpoint{
+				Metadata: &core.Metadata{
+					Namespace: writeNamespace,
+					Name:      "127-0-0-1-my-svc-my-svc-0-1234",
+					Labels: map[string]string{
+						ConsulTagKeyPrefix + "tag-1":       ConsulEndpointMetadataMatchTrue,
+						ConsulDataCenterKeyPrefix + "dc-1": ConsulEndpointMetadataMatchTrue,
+						ConsulDataCenterKeyPrefix + "dc-2": ConsulEndpointMetadataMatchFalse,
+					},
+					ResourceVersion: "9876",
+				},
+				Upstreams:   []*core.ResourceRef{upstream.Metadata.Ref()},
+				Address:     "127.0.0.1",
+				Port:        1234,
+				Hostname:    "my.address.io",
+				HealthCheck: &v1.HealthCheckConfig{Hostname: "my.address.io"},
 			}))
 		})
 
@@ -702,7 +780,7 @@ func createTestUpstream(usptreamName, svcName string, tags, dataCenters []string
 }
 func createTestFilteredUpstream(usptreamName, svcName string, tags, instancetags, dataCenters []string) *v1.Upstream {
 	return &v1.Upstream{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      "consul-svc:" + usptreamName,
 			Namespace: "",
 		},
@@ -736,7 +814,7 @@ func createExpectedEndpoint(name, usname, hostname, ipAddress, version, ns strin
 	}
 
 	ep := &v1.Endpoint{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Namespace:       ns,
 			Name:            name,
 			Labels:          labels,

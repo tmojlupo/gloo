@@ -2,18 +2,15 @@ package upstreamconn
 
 import (
 	"math"
-	"time"
 
-	"github.com/rotisserie/eris"
-
-	envoyapi "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	envoycore "github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	"github.com/golang/protobuf/ptypes/duration"
 	"github.com/golang/protobuf/ptypes/wrappers"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
-
-	types "github.com/gogo/protobuf/types"
+	"github.com/rotisserie/eris"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
+	"github.com/solo-io/solo-kit/pkg/utils/prototime"
 )
 
 var _ plugins.Plugin = new(Plugin)
@@ -29,7 +26,7 @@ func (p *Plugin) Init(params plugins.InitParams) error {
 	return nil
 }
 
-func (p *Plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoyapi.Cluster) error {
+func (p *Plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 
 	cfg := in.GetConnectionConfig()
 	if cfg == nil {
@@ -43,17 +40,17 @@ func (p *Plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	}
 
 	if cfg.ConnectTimeout != nil {
-		out.ConnectTimeout = gogoutils.DurationStdToProto(cfg.ConnectTimeout)
+		out.ConnectTimeout = cfg.ConnectTimeout
 	}
 
 	if cfg.TcpKeepalive != nil {
-		out.UpstreamConnectionOptions = &envoyapi.UpstreamConnectionOptions{
+		out.UpstreamConnectionOptions = &envoy_config_cluster_v3.UpstreamConnectionOptions{
 			TcpKeepalive: convertTcpKeepAlive(cfg.TcpKeepalive),
 		}
 	}
 
 	if cfg.PerConnectionBufferLimitBytes != nil {
-		out.PerConnectionBufferLimitBytes = gogoutils.UInt32GogoToProto(cfg.PerConnectionBufferLimitBytes)
+		out.PerConnectionBufferLimitBytes = cfg.PerConnectionBufferLimitBytes
 	}
 
 	if cfg.CommonHttpProtocolOptions != nil {
@@ -67,25 +64,25 @@ func (p *Plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	return nil
 }
 
-func convertTcpKeepAlive(tcp *v1.ConnectionConfig_TcpKeepAlive) *envoycore.TcpKeepalive {
-	var probes *types.UInt32Value
+func convertTcpKeepAlive(tcp *v1.ConnectionConfig_TcpKeepAlive) *envoy_config_core_v3.TcpKeepalive {
+	var probes *wrappers.UInt32Value
 	if tcp.KeepaliveProbes > 0 {
-		probes = &types.UInt32Value{
+		probes = &wrappers.UInt32Value{
 			Value: tcp.KeepaliveProbes,
 		}
 	}
-	return &envoycore.TcpKeepalive{
-		KeepaliveInterval: gogoutils.UInt32GogoToProto(roundToSecond(tcp.KeepaliveInterval)),
-		KeepaliveTime:     gogoutils.UInt32GogoToProto(roundToSecond(tcp.KeepaliveTime)),
-		KeepaliveProbes:   gogoutils.UInt32GogoToProto(probes),
+	return &envoy_config_core_v3.TcpKeepalive{
+		KeepaliveInterval: roundToSecond(tcp.KeepaliveInterval),
+		KeepaliveTime:     roundToSecond(tcp.KeepaliveTime),
+		KeepaliveProbes:   probes,
 	}
 }
 
-func convertHttpProtocolOptions(hpo *v1.ConnectionConfig_HttpProtocolOptions) (*envoycore.HttpProtocolOptions, error) {
-	out := &envoycore.HttpProtocolOptions{}
+func convertHttpProtocolOptions(hpo *v1.ConnectionConfig_HttpProtocolOptions) (*envoy_config_core_v3.HttpProtocolOptions, error) {
+	out := &envoy_config_core_v3.HttpProtocolOptions{}
 
 	if hpo.IdleTimeout != nil {
-		out.IdleTimeout = gogoutils.DurationStdToProto(hpo.IdleTimeout)
+		out.IdleTimeout = hpo.IdleTimeout
 	}
 
 	if hpo.MaxHeadersCount > 0 { // Envoy requires this to be >= 1
@@ -93,32 +90,32 @@ func convertHttpProtocolOptions(hpo *v1.ConnectionConfig_HttpProtocolOptions) (*
 	}
 
 	if hpo.MaxStreamDuration != nil {
-		out.MaxStreamDuration = gogoutils.DurationStdToProto(hpo.MaxStreamDuration)
+		out.MaxStreamDuration = hpo.MaxStreamDuration
 	}
 
 	switch hpo.HeadersWithUnderscoresAction {
 	case v1.ConnectionConfig_HttpProtocolOptions_ALLOW:
-		out.HeadersWithUnderscoresAction = envoycore.HttpProtocolOptions_ALLOW
+		out.HeadersWithUnderscoresAction = envoy_config_core_v3.HttpProtocolOptions_ALLOW
 	case v1.ConnectionConfig_HttpProtocolOptions_REJECT_REQUEST:
-		out.HeadersWithUnderscoresAction = envoycore.HttpProtocolOptions_REJECT_REQUEST
+		out.HeadersWithUnderscoresAction = envoy_config_core_v3.HttpProtocolOptions_REJECT_REQUEST
 	case v1.ConnectionConfig_HttpProtocolOptions_DROP_HEADER:
-		out.HeadersWithUnderscoresAction = envoycore.HttpProtocolOptions_DROP_HEADER
+		out.HeadersWithUnderscoresAction = envoy_config_core_v3.HttpProtocolOptions_DROP_HEADER
 	default:
-		return &envoycore.HttpProtocolOptions{},
+		return &envoy_config_core_v3.HttpProtocolOptions{},
 			eris.Errorf("invalid HeadersWithUnderscoresAction %v in CommonHttpProtocolOptions", hpo.HeadersWithUnderscoresAction)
 	}
 
 	return out, nil
 }
 
-func roundToSecond(d *time.Duration) *types.UInt32Value {
+func roundToSecond(d *duration.Duration) *wrappers.UInt32Value {
 	if d == nil {
 		return nil
 	}
 
 	// round up
-	seconds := math.Round(d.Seconds() + 0.4999)
-	return &types.UInt32Value{
+	seconds := math.Round(prototime.DurationFromProto(d).Seconds() + 0.4999)
+	return &wrappers.UInt32Value{
 		Value: uint32(seconds),
 	}
 

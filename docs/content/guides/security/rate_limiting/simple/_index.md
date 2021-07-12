@@ -1,14 +1,14 @@
 ---
-title: Gloo API (Enterprise)
+title: Gloo Edge API (Enterprise)
 weight: 30
 description: Simplified rate-limit API that covers most use cases.
 ---
 
 ## Overview
 
-Gloo includes a simplified rate limiting model that allows you to specify the number of requests per configurable unit of time that can be made against all routes defined within a virtual host or individual routes. You can set different limits for both authorized and anonymous users. An authorized user is one that the Gloo external authentication server has validated and their user token is included with the request. Authorized users are rate limited on a per user basis. Anonymous users are rate limited on a calling IP basis, i.e., all requests from that incoming IP count towards the requests per time limits.
+Gloo Edge includes a simplified rate limiting model that allows you to specify the number of requests per configurable unit of time that can be made against all routes defined within a virtual host or individual routes. You can set different limits for both authorized and anonymous users. An authorized user is one that the Gloo Edge external authentication server has validated and their user token is included with the request. Authorized users are rate limited on a per user basis. Anonymous users are rate limited on a calling IP basis, i.e., all requests from that incoming IP count towards the requests per time limits.
 
-For a more fine grained approach, take a look at using Gloo with [Envoy's native rate limiting model]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}})
+For a more fine grained approach, take a look at using Gloo Edge with [Envoy's native rate limiting model]({{% versioned_link_path fromRoot="/guides/security/rate_limiting/envoy/" %}})
 
 ## Rate Limit
 
@@ -25,7 +25,7 @@ ratelimitBasic:
 ```
 
 - Rate limits can be set for anonymous requests, authorized requests, both, or neither.
-- `authorized_requests` represent the rate limits imposed on requests that are associated with a known user id
+- `authorized_requests` represent the rate limits imposed on requests that are associated with a known user id. Note that this user id is included in the [external auth service's]({{% versioned_link_path fromRoot="/guides/security/auth/extauth" %}}) [AuthorizationResponse]({{% versioned_link_path fromRoot="/guides/dev/writing_auth_plugins/#header-propagation" %}}) in the `UserInfo.UserID` field.
 - `anonymous_requests` represent the rate limits imposed on requests that are not associated with a known user id. In this case, the limit is applied to the request's remote address.
 - `requests_per_unit` takes an integer value
 - `unit` must be one of these strings: `SECOND`, `MINUTE`, `HOUR`, `DAY`
@@ -41,7 +41,7 @@ kubectl apply \
   --filename https://raw.githubusercontent.com/solo-io/gloo/v1.2.9/example/petclinic/petclinic.yaml
 ```
 
-Refer to the [Gloo external authentication]({{% versioned_link_path fromRoot="/guides/security/auth" %}}) documentation on how to configure Gloo to authenticate users.
+Refer to the [Gloo Edge external authentication]({{% versioned_link_path fromRoot="/guides/security/auth" %}}) documentation on how to configure Gloo Edge to authenticate users.
 
 In this example, we restrict authorized users to 200 requests per minute and anonymous users to 1000 requests per hour.
 

@@ -5,9 +5,7 @@ import (
 	envoygrpccredential "github.com/envoyproxy/go-control-plane/envoy/config/grpc_credential/v3"
 	envoyauth "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 	envoymatcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
-	gogo_types "github.com/gogo/protobuf/types"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
-
+	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/rotisserie/eris"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
@@ -29,7 +27,7 @@ var (
 		return eris.Wrapf(err, "SSL secret not found")
 	}
 
-	NotTlsSecretError = func(ref core.ResourceRef) error {
+	NotTlsSecretError = func(ref *core.ResourceRef) error {
 		return eris.Errorf("%v is not a TLS secret", ref)
 	}
 
@@ -44,6 +42,7 @@ type SslConfigTranslator interface {
 	ResolveUpstreamSslConfig(secrets v1.SecretList, uc *v1.UpstreamSslConfig) (*envoyauth.UpstreamTlsContext, error)
 	ResolveDownstreamSslConfig(secrets v1.SecretList, dc *v1.SslConfig) (*envoyauth.DownstreamTlsContext, error)
 	ResolveCommonSslConfig(cs CertSource, secrets v1.SecretList, mustHaveCert bool) (*envoyauth.CommonTlsContext, error)
+	ResolveSslParamsConfig(params *v1.SslParameters) (*envoyauth.TlsParameters, error)
 }
 
 type sslConfigTranslator struct {
@@ -68,9 +67,9 @@ func (s *sslConfigTranslator) ResolveDownstreamSslConfig(secrets v1.SecretList, 
 	if err != nil {
 		return nil, err
 	}
-	var requireClientCert *gogo_types.BoolValue
+	var requireClientCert *wrappers.BoolValue
 	if common.ValidationContextType != nil {
-		requireClientCert = &gogo_types.BoolValue{Value: true}
+		requireClientCert = &wrappers.BoolValue{Value: !dc.GetOneWayTls()}
 	}
 	// default alpn for downstreams.
 	if len(common.AlpnProtocols) == 0 {
@@ -78,7 +77,7 @@ func (s *sslConfigTranslator) ResolveDownstreamSslConfig(secrets v1.SecretList, 
 	}
 	return &envoyauth.DownstreamTlsContext{
 		CommonTlsContext:         common,
-		RequireClientCertificate: gogoutils.BoolGogoToProto(requireClientCert),
+		RequireClientCertificate: requireClientCert,
 	}, nil
 }
 
@@ -123,9 +122,11 @@ func buildSds(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSecretConfig 
 	return &envoyauth.SdsSecretConfig{
 		Name: name,
 		SdsConfig: &envoycore.ConfigSource{
+			ResourceApiVersion: envoycore.ApiVersion_V3,
 			ConfigSourceSpecifier: &envoycore.ConfigSource_ApiConfigSource{
 				ApiConfigSource: &envoycore.ApiConfigSource{
-					ApiType: envoycore.ApiConfigSource_GRPC,
+					ApiType:             envoycore.ApiConfigSource_GRPC,
+					TransportApiVersion: envoycore.ApiVersion_V3,
 					GrpcServices: []*envoycore.GrpcService{
 						{
 							TargetSpecifier: &envoycore.GrpcService_EnvoyGrpc_{
@@ -162,7 +163,7 @@ func buildDeprecatedSDS(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSec
 		},
 		CredentialsFactoryName: MetadataPluginName,
 		CallCredentials: []*envoycore.GrpcService_GoogleGrpc_CallCredentials{
-			&envoycore.GrpcService_GoogleGrpc_CallCredentials{
+			{
 				CredentialSpecifier: &envoycore.GrpcService_GoogleGrpc_CallCredentials_FromPlugin{
 					FromPlugin: &envoycore.GrpcService_GoogleGrpc_CallCredentials_MetadataCredentialsFromPlugin{
 						Name: MetadataPluginName,
@@ -176,9 +177,11 @@ func buildDeprecatedSDS(name string, sslSecrets *v1.SDSConfig) *envoyauth.SdsSec
 	return &envoyauth.SdsSecretConfig{
 		Name: name,
 		SdsConfig: &envoycore.ConfigSource{
+			ResourceApiVersion: envoycore.ApiVersion_V3,
 			ConfigSourceSpecifier: &envoycore.ConfigSource_ApiConfigSource{
 				ApiConfigSource: &envoycore.ApiConfigSource{
-					ApiType: envoycore.ApiConfigSource_GRPC,
+					ApiType:             envoycore.ApiConfigSource_GRPC,
+					TransportApiVersion: envoycore.ApiVersion_V3,
 					GrpcServices: []*envoycore.GrpcService{
 						{
 							TargetSpecifier: &envoycore.GrpcService_GoogleGrpc_{
@@ -244,7 +247,12 @@ func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.S
 	} else if sslSecrets := cs.GetSslFiles(); sslSecrets != nil {
 		certChain, privateKey, rootCa = sslSecrets.TlsCert, sslSecrets.TlsKey, sslSecrets.RootCa
 	} else if sslSecrets := cs.GetSds(); sslSecrets != nil {
-		return s.handleSds(sslSecrets, verifySanListToMatchSanList(cs.GetVerifySubjectAltName()))
+		tlsContext, err := s.handleSds(sslSecrets, verifySanListToMatchSanList(cs.GetVerifySubjectAltName()))
+		if err != nil {
+			return nil, err
+		}
+		tlsContext.AlpnProtocols = cs.GetAlpnProtocols()
+		return tlsContext, err
 	} else {
 		if mustHaveCert {
 			return nil, NoCertificateFoundError
@@ -306,7 +314,7 @@ func (s *sslConfigTranslator) ResolveCommonSslConfig(cs CertSource, secrets v1.S
 	}
 
 	var err error
-	tlsContext.TlsParams, err = convertTlsParams(cs)
+	tlsContext.TlsParams, err = s.ResolveSslParamsConfig(cs.GetParameters())
 
 	tlsContext.AlpnProtocols = cs.GetAlpnProtocols()
 	return tlsContext, err
@@ -329,8 +337,7 @@ func getSslSecrets(ref core.ResourceRef, secrets v1.SecretList) (string, string,
 	return certChain, privateKey, rootCa, nil
 }
 
-func convertTlsParams(cs CertSource) (*envoyauth.TlsParameters, error) {
-	params := cs.GetParameters()
+func (s *sslConfigTranslator) ResolveSslParamsConfig(params *v1.SslParameters) (*envoyauth.TlsParameters, error) {
 	if params == nil {
 		return nil, nil
 	}

@@ -16,18 +16,18 @@ import (
 
 func NewRouteTable(namespace, name string) *RouteTable {
 	routetable := &RouteTable{}
-	routetable.SetMetadata(core.Metadata{
+	routetable.SetMetadata(&core.Metadata{
 		Name:      name,
 		Namespace: namespace,
 	})
 	return routetable
 }
 
-func (r *RouteTable) SetMetadata(meta core.Metadata) {
+func (r *RouteTable) SetMetadata(meta *core.Metadata) {
 	r.Metadata = meta
 }
 
-func (r *RouteTable) SetStatus(status core.Status) {
+func (r *RouteTable) SetStatus(status *core.Status) {
 	r.Status = status
 }
 
@@ -147,12 +147,6 @@ var (
 		false,
 		&RouteTable{})
 )
-
-func init() {
-	if err := crd.AddCrd(RouteTableCrd); err != nil {
-		log.Fatalf("could not add crd to global registry")
-	}
-}
 
 var (
 	RouteTableGVK = schema.GroupVersionKind{

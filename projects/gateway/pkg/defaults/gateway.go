@@ -1,7 +1,7 @@
 package defaults
 
 import (
-	"github.com/gogo/protobuf/types"
+	"github.com/golang/protobuf/ptypes/wrappers"
 	v1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/core/matchers"
@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	GatewayProxyName   = "gateway-proxy"
-	GatewayBindAddress = "::"
+	GatewayProxyName        = "gateway-proxy"
+	GatewayBindAddress      = "::"
+	ConfigDumpServiceSuffix = "-config-dump-service"
 )
 
 func DefaultGateway(writeNamespace string) *v1.Gateway {
 	return &v1.Gateway{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:        GatewayProxyName,
 			Namespace:   writeNamespace,
 			Annotations: map[string]string{defaults.OriginKey: defaults.DefaultValue},
@@ -27,7 +28,7 @@ func DefaultGateway(writeNamespace string) *v1.Gateway {
 		},
 		BindAddress:   GatewayBindAddress,
 		BindPort:      defaults.HttpPort,
-		UseProxyProto: &types.BoolValue{Value: false},
+		UseProxyProto: &wrappers.BoolValue{Value: false},
 	}
 }
 
@@ -44,7 +45,7 @@ func DefaultSslGateway(writeNamespace string) *v1.Gateway {
 // but could be included later if we decide they should be.
 func DefaultTcpGateway(writeNamespace string) *v1.Gateway {
 	return &v1.Gateway{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:        "gateway-tcp",
 			Namespace:   writeNamespace,
 			Annotations: map[string]string{defaults.OriginKey: defaults.DefaultValue},
@@ -55,7 +56,7 @@ func DefaultTcpGateway(writeNamespace string) *v1.Gateway {
 		ProxyNames:    []string{GatewayProxyName},
 		BindAddress:   GatewayBindAddress,
 		BindPort:      defaults.TcpPort,
-		UseProxyProto: &types.BoolValue{Value: false},
+		UseProxyProto: &wrappers.BoolValue{Value: false},
 	}
 }
 
@@ -70,7 +71,7 @@ func DefaultTcpSslGateway(writeNamespace string) *v1.Gateway {
 
 func DefaultVirtualService(namespace, name string) *v1.VirtualService {
 	return &v1.VirtualService{
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      name,
 			Namespace: namespace,
 		},
@@ -92,4 +93,8 @@ Delete the '` + name + ` Virtual Service to get started.
 
 func DefaultMatcher() *matchers.Matcher {
 	return &matchers.Matcher{PathSpecifier: &matchers.Matcher_Prefix{Prefix: "/"}}
+}
+
+func GatewayProxyConfigDumpServiceName(name string) string {
+	return name + ConfigDumpServiceSuffix
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
@@ -26,6 +26,7 @@ var _ = Describe("polling", func() {
 	var (
 		epw            *edsWatcher
 		ctx            context.Context
+		cancel         context.CancelFunc
 		writeNamespace string
 		secretClient   v1.SecretClient
 		refreshRate    time.Duration
@@ -33,7 +34,7 @@ var _ = Describe("polling", func() {
 	)
 
 	BeforeEach(func() {
-		ctx = context.Background()
+		ctx, cancel = context.WithCancel(context.Background())
 		writeNamespace = "default"
 		secretClient = getSecretClient(ctx)
 		refreshRate = time.Second
@@ -42,16 +43,18 @@ var _ = Describe("polling", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	AfterEach(func() { cancel() })
+
 	It("should poll, one key filter upstream", func() {
 		upstreams := v1.UpstreamList{&testUpstream1}
 		epw = testEndpointsWatcher(ctx, writeNamespace, upstreams, secretClient, refreshRate, responses)
 		ref1 := testUpstream1.Metadata.Ref()
 		matchPollResponse(epw, v1.EndpointList{{
-			Upstreams: []*core.ResourceRef{&ref1},
+			Upstreams: []*core.ResourceRef{ref1},
 			Address:   testPrivateIp1,
 			Port:      testPort1,
-			Metadata: core.Metadata{
-				Name:        "ec2-name-u1-namespace-default--111-111-111-111",
+			Metadata: &core.Metadata{
+				Name:        "ec2-name-u1-namespace-default-111-111-111-111",
 				Namespace:   "default",
 				Annotations: map[string]string{InstanceIdAnnotationKey: "instanceIdA"},
 			},
@@ -62,11 +65,11 @@ var _ = Describe("polling", func() {
 		epw = testEndpointsWatcher(ctx, writeNamespace, upstreams, secretClient, refreshRate, responses)
 		ref2 := testUpstream2.Metadata.Ref()
 		matchPollResponse(epw, v1.EndpointList{{
-			Upstreams: []*core.ResourceRef{&ref2},
+			Upstreams: []*core.ResourceRef{ref2},
 			Address:   testPublicIp1,
 			Port:      testPort1,
-			Metadata: core.Metadata{
-				Name:        "ec2-name-u2-namespace-default--222-222-222-222",
+			Metadata: &core.Metadata{
+				Name:        "ec2-name-u2-namespace-default-222-222-222-222",
 				Namespace:   "default",
 				Annotations: map[string]string{InstanceIdAnnotationKey: "instanceIdB"},
 			},
@@ -75,7 +78,7 @@ var _ = Describe("polling", func() {
 })
 
 func matchPollResponse(epw *edsWatcher, expectedList v1.EndpointList) {
-	Eventually(func() error {
+	EventuallyWithOffset(1, func() error {
 		endpointChan, eChan, err := epw.poll()
 		if err != nil {
 			return err
@@ -151,7 +154,7 @@ func getSecretClient(ctx context.Context) v1.SecretClient {
 	settings := &v1.Settings{}
 	secretFactory, err := bootstrap.SecretFactoryForSettings(ctx, settings, mc, &config, nil, &kubeCoreCache, nil, v1.SecretCrd.Plural)
 	Expect(err).NotTo(HaveOccurred())
-	secretClient, err := v1.NewSecretClient(secretFactory)
+	secretClient, err := v1.NewSecretClient(ctx, secretFactory)
 	Expect(err).NotTo(HaveOccurred())
 	return secretClient
 
@@ -204,7 +207,7 @@ func primeSecretClient(secretClient v1.SecretClient, secretRefs []*core.Resource
 					SecretKey: "secret",
 				},
 			},
-			Metadata: core.Metadata{
+			Metadata: &core.Metadata{
 				Name:      ref.Name,
 				Namespace: ref.Namespace,
 			},
@@ -235,7 +238,7 @@ var (
 				Port:     testPort1,
 			},
 		},
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      "u1",
 			Namespace: "default",
 		},
@@ -257,7 +260,7 @@ var (
 				Port:     testPort1,
 			},
 		},
-		Metadata: core.Metadata{
+		Metadata: &core.Metadata{
 			Name:      "u2",
 			Namespace: "default",
 		},

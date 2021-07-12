@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"os"
 
-	"github.com/solo-io/envoy-operator/pkg/downward"
+	_ "github.com/solo-io/gloo/hack/filter_types"
+	"github.com/solo-io/gloo/projects/envoyinit/pkg/downward"
 )
 
 func GetConfig(inputFile string) (string, error) {

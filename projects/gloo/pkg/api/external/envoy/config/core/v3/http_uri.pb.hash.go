@@ -34,7 +34,7 @@ func (m *HttpUri) Hash(hasher hash.Hash64) (uint64, error) {
 		hasher = fnv.New64()
 	}
 	var err error
-	if _, err = hasher.Write([]byte("envoy.config.core.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/core/v3.HttpUri")); err != nil {
+	if _, err = hasher.Write([]byte("solo.io.envoy.config.core.v3.github.com/solo-io/gloo/projects/gloo/pkg/api/external/envoy/config/core/v3.HttpUri")); err != nil {
 		return 0, err
 	}
 
@@ -43,14 +43,20 @@ func (m *HttpUri) Hash(hasher hash.Hash64) (uint64, error) {
 	}
 
 	if h, ok := interface{}(m.GetTimeout()).(safe_hasher.SafeHasher); ok {
+		if _, err = hasher.Write([]byte("Timeout")); err != nil {
+			return 0, err
+		}
 		if _, err = h.Hash(hasher); err != nil {
 			return 0, err
 		}
 	} else {
-		if val, err := hashstructure.Hash(m.GetTimeout(), nil); err != nil {
+		if fieldValue, err := hashstructure.Hash(m.GetTimeout(), nil); err != nil {
 			return 0, err
 		} else {
-			if err := binary.Write(hasher, binary.LittleEndian, val); err != nil {
+			if _, err = hasher.Write([]byte("Timeout")); err != nil {
+				return 0, err
+			}
+			if err := binary.Write(hasher, binary.LittleEndian, fieldValue); err != nil {
 				return 0, err
 			}
 		}

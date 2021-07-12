@@ -1,15 +1,17 @@
 package version
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/ghodss/yaml"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/olekukonko/tablewriter"
 	"github.com/rotisserie/eris"
+	"github.com/solo-io/gloo/pkg/utils/protoutils"
 	linkedversion "github.com/solo-io/gloo/pkg/version"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/options"
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/constants"
@@ -17,7 +19,6 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/cli/pkg/printers"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/version"
 	"github.com/solo-io/go-utils/cliutils"
-	"github.com/solo-io/go-utils/protoutils"
 	"github.com/spf13/cobra"
 )
 
@@ -58,11 +59,11 @@ func RootCmd(opts *options.Options, optionsFunc ...cliutils.OptionsFunc) *cobra.
 	return cmd
 }
 
-func GetClientServerVersions(sv ServerVersion) (*version.Version, error) {
+func GetClientServerVersions(ctx context.Context, sv ServerVersion) (*version.Version, error) {
 	v := &version.Version{
 		Client: getClientVersion(),
 	}
-	serverVersion, err := sv.Get()
+	serverVersion, err := sv.Get(ctx)
 	if err != nil {
 		return v, err
 	}
@@ -77,7 +78,7 @@ func getClientVersion() *version.ClientVersion {
 }
 
 func printVersion(sv ServerVersion, w io.Writer, opts *options.Options) error {
-	vrs, _ := GetClientServerVersions(sv)
+	vrs, _ := GetClientServerVersions(opts.Top.Ctx, sv)
 	// ignoring error so we still print client version even if we can't get server versions (e.g., not deployed, no rbac)
 	switch opts.Top.Output {
 	case printers.JSON:

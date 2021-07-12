@@ -7,6 +7,7 @@ import (
 	"time"
 
 	utils2 "github.com/solo-io/gloo/pkg/utils"
+	gloo_translator "github.com/solo-io/gloo/projects/gloo/pkg/translator"
 
 	"github.com/hashicorp/go-multierror"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -16,7 +17,6 @@ import (
 	skprotoutils "github.com/solo-io/solo-kit/pkg/utils/protoutils"
 
 	"github.com/avast/retry-go"
-	"github.com/solo-io/go-utils/protoutils"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
 
 	"go.uber.org/multierr"
@@ -37,10 +37,10 @@ type ProxyReports map[*gloov1.Proxy]*validation.ProxyReport
 var (
 	NotReadyErr = errors.Errorf("validation is not yet available. Waiting for first snapshot")
 
-	RouteTableDeleteErr = func(parentVirtualServices, parentRouteTables []core.ResourceRef) error {
+	RouteTableDeleteErr = func(parentVirtualServices, parentRouteTables []*core.ResourceRef) error {
 		return errors.Errorf("Deletion blocked because active Routes delegate to this Route Table. Remove delegate actions to this route table from the virtual services: %v and the route tables: %v, then try again", parentVirtualServices, parentRouteTables)
 	}
-	VirtualServiceDeleteErr = func(parentGateways []core.ResourceRef) error {
+	VirtualServiceDeleteErr = func(parentGateways []*core.ResourceRef) error {
 		return errors.Errorf("Deletion blocked because active Gateways reference this Virtual Service. Remove refs to this virtual service from the gateways: %v, then try again", parentGateways)
 	}
 	unmarshalErrMsg     = "could not unmarshal raw object"
@@ -56,14 +56,16 @@ const (
 		"Please correct any Rejected resources to re-enable validation."
 )
 
+var _ Validator = &validator{}
+
 type Validator interface {
 	v1.ApiSyncer
-	ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (ProxyReports, error)
+	ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (ProxyReports, *multierror.Error)
 	ValidateGateway(ctx context.Context, gw *v1.Gateway, dryRun bool) (ProxyReports, error)
 	ValidateVirtualService(ctx context.Context, vs *v1.VirtualService, dryRun bool) (ProxyReports, error)
-	ValidateDeleteVirtualService(ctx context.Context, vs core.ResourceRef, dryRun bool) error
+	ValidateDeleteVirtualService(ctx context.Context, vs *core.ResourceRef, dryRun bool) error
 	ValidateRouteTable(ctx context.Context, rt *v1.RouteTable, dryRun bool) (ProxyReports, error)
-	ValidateDeleteRouteTable(ctx context.Context, rt core.ResourceRef, dryRun bool) error
+	ValidateDeleteRouteTable(ctx context.Context, rt *core.ResourceRef, dryRun bool) error
 }
 
 type validator struct {
@@ -135,7 +137,7 @@ func (v *validator) Sync(ctx context.Context, snap *v1.ApiSnapshot) error {
 	return nil
 }
 
-type applyResource func(snap *v1.ApiSnapshot) (proxyNames []string, resource resources.Resource, ref core.ResourceRef)
+type applyResource func(snap *v1.ApiSnapshot) (proxyNames []string, resource resources.Resource, ref *core.ResourceRef)
 
 // update internal snapshot to handle race where a lot of resources may be deleted at once, before syncer updates
 // should be called within a lock
@@ -144,14 +146,14 @@ func (v *validator) deleteFromLocalSnapshot(resource resources.Resource) {
 	switch resource.(type) {
 	case *v1.VirtualService:
 		for i, rt := range v.latestSnapshot.VirtualServices {
-			if rt.Metadata.Ref() == ref {
+			if rt.Metadata.Ref().Equal(ref) {
 				v.latestSnapshot.VirtualServices = append(v.latestSnapshot.VirtualServices[:i], v.latestSnapshot.VirtualServices[i+1:]...)
 				break
 			}
 		}
 	case *v1.RouteTable:
 		for i, rt := range v.latestSnapshot.RouteTables {
-			if rt.Metadata.Ref() == ref {
+			if rt.Metadata.Ref().Equal(ref) {
 				v.latestSnapshot.RouteTables = append(v.latestSnapshot.RouteTables[:i], v.latestSnapshot.RouteTables[i+1:]...)
 				break
 			}
@@ -159,14 +161,33 @@ func (v *validator) deleteFromLocalSnapshot(resource resources.Resource) {
 	}
 }
 
-func (v *validator) validateSnapshot(ctx context.Context, apply applyResource, dryRun, acquireLock bool) (ProxyReports, error) {
+func (v *validator) validateSnapshotThreadSafe(ctx context.Context, apply applyResource, dryRun bool) (ProxyReports, error) {
+	// thread-safe implementation of validateSnapshot
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
+	return v.validateSnapshot(ctx, apply, dryRun)
+}
+
+func (v *validator) validateSnapshot(ctx context.Context, apply applyResource, dryRun bool) (ProxyReports, error) {
+	// validate that a snapshot can be modified
+	// should be called within a lock
+	//
+	// validation occurs by the following steps:
+	//	1. Clone the most recent snapshot
+	//	2. Apply the changes to that snapshot clone
+	//	3. Validate the generated proxy of that snapshot clone by making a gRPC call to Gloo.
+	//	4. If the proxy is valid, we know that the requested mutation is valid. If this request happens
+	//		during a dry run, we don't want to actually apply the change, since this will modify the internal
+	//		state of the validator, which is shared across requests. Therefore, only if we are not in a dry run,
+	//		we apply the mutation.
 	if !v.ready() {
 		return nil, NotReadyErr
 	}
 
 	ctx = contextutils.WithLogger(ctx, "gateway-validator")
 
-	snap := v.latestSnapshot.Clone()
+	snapshotClone := v.latestSnapshot.Clone()
 
 	if v.latestSnapshotErr != nil {
 		utils2.MeasureZero(ctx, mValidConfig)
@@ -176,9 +197,11 @@ func (v *validator) validateSnapshot(ctx context.Context, apply applyResource, d
 	}
 
 	utils2.MeasureOne(ctx, mValidConfig)
-	proxyNames, resource, ref := apply(&snap)
 
-	gatewaysByProxy := utils.GatewaysByProxyName(snap.Gateways)
+	// verify the mutation against a snapshot clone first, only apply the change to the actual snapshot if this passes
+	proxyNames, resource, ref := apply(&snapshotClone)
+
+	gatewaysByProxy := utils.GatewaysByProxyName(snapshotClone.Gateways)
 
 	var (
 		errs         error
@@ -186,7 +209,7 @@ func (v *validator) validateSnapshot(ctx context.Context, apply applyResource, d
 	)
 	for _, proxyName := range proxyNames {
 		gatewayList := gatewaysByProxy[proxyName]
-		proxy, reports := v.translator.Translate(ctx, proxyName, v.writeNamespace, &snap, gatewayList)
+		proxy, reports := v.translator.Translate(ctx, proxyName, v.writeNamespace, &snapshotClone, gatewayList)
 		validate := reports.ValidateStrict
 		if v.allowWarnings {
 			validate = reports.Validate
@@ -230,11 +253,13 @@ func (v *validator) validateSnapshot(ctx context.Context, apply applyResource, d
 
 		proxyReports[proxy] = proxyReport.ProxyReport
 		if err := validationutils.GetProxyError(proxyReport.ProxyReport); err != nil {
-
-			if reportData, marshalErr := protoutils.MarshalBytes(proxyReport); marshalErr == nil {
-				err = errors.Wrapf(err, "%s", reportData)
-			}
 			errs = multierr.Append(errs, errors.Wrapf(err, "failed to validate Proxy with Gloo validation server"))
+			continue
+		}
+		if warnings := validationutils.GetProxyWarning(proxyReport.ProxyReport); !v.allowWarnings && len(warnings) > 0 {
+			for _, warning := range warnings {
+				errs = multierr.Append(errs, errors.New(warning))
+			}
 			continue
 		}
 	}
@@ -248,19 +273,13 @@ func (v *validator) validateSnapshot(ctx context.Context, apply applyResource, d
 
 	if !dryRun {
 		// update internal snapshot to handle race where a lot of resources may be applied at once, before syncer updates
-		if acquireLock {
-			v.lock.Lock()
-		}
 		apply(v.latestSnapshot)
-		if acquireLock {
-			v.lock.Unlock()
-		}
 	}
 
 	return proxyReports, nil
 }
 
-func (v *validator) ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (ProxyReports, error) {
+func (v *validator) ValidateList(ctx context.Context, ul *unstructured.UnstructuredList, dryRun bool) (ProxyReports, *multierror.Error) {
 	var (
 		proxyReports = ProxyReports{}
 		errs         = &multierror.Error{}
@@ -268,53 +287,11 @@ func (v *validator) ValidateList(ctx context.Context, ul *unstructured.Unstructu
 
 	v.lock.Lock()
 	defer v.lock.Unlock()
-	snap := v.latestSnapshot.Clone()
+	originalSnapshot := v.latestSnapshot.Clone()
 
 	for _, item := range ul.Items {
 
-		gv, err := schema.ParseGroupVersion(item.GetAPIVersion())
-		if err != nil {
-			return ProxyReports{}, err
-		}
-
-		itemGvk := schema.GroupVersionKind{
-			Version: gv.Version,
-			Group:   gv.Group,
-			Kind:    item.GetKind(),
-		}
-
-		jsonBytes, err := item.MarshalJSON()
-		if err != nil {
-			return ProxyReports{}, err
-		}
-
-		var itemProxyReports ProxyReports
-		switch itemGvk {
-		case v1.GatewayGVK:
-			var (
-				gw v1.Gateway
-			)
-			if err := skprotoutils.UnmarshalResource(jsonBytes, &gw); err != nil {
-				return nil, WrappedUnmarshalErr(err)
-			}
-			itemProxyReports, err = v.validateGatewayInternal(ctx, &gw, false, false)
-		case v1.VirtualServiceGVK:
-			var (
-				vs v1.VirtualService
-			)
-			if err := skprotoutils.UnmarshalResource(jsonBytes, &vs); err != nil {
-				return nil, WrappedUnmarshalErr(err)
-			}
-			itemProxyReports, err = v.validateVirtualServiceInternal(ctx, &vs, false, false)
-		case v1.RouteTableGVK:
-			var (
-				rt v1.RouteTable
-			)
-			if err := skprotoutils.UnmarshalResource(jsonBytes, &rt); err != nil {
-				return nil, WrappedUnmarshalErr(err)
-			}
-			itemProxyReports, err = v.validateRouteTableInternal(ctx, &rt, false, false)
-		}
+		var itemProxyReports, err = v.processItem(ctx, item)
 
 		errs = multierror.Append(errs, err)
 		for proxy, report := range itemProxyReports {
@@ -325,10 +302,64 @@ func (v *validator) ValidateList(ctx context.Context, ul *unstructured.Unstructu
 	}
 
 	if dryRun {
-		v.latestSnapshot = &snap
+		// to validate the entire list of changes against one another, each item was applied to the latestSnapshot
+		// if this is a dry run, latestSnapshot needs to be reset back to it's original value without any of the changes
+		v.latestSnapshot = &originalSnapshot
 	}
 
-	return proxyReports, errs.ErrorOrNil()
+	return proxyReports, errs
+}
+
+func (v *validator) processItem(ctx context.Context, item unstructured.Unstructured) (ProxyReports, error) {
+	// process a single change in a list of changes
+	//
+	// when calling the specific internal validate method, dryRun and acquireLock are always false:
+	// 	dryRun=false: this enables items to be validated against other items in the list
+	// 	acquireLock=false: the entire list of changes are called within a single lock
+	gv, err := schema.ParseGroupVersion(item.GetAPIVersion())
+	if err != nil {
+		return ProxyReports{}, err
+	}
+
+	itemGvk := schema.GroupVersionKind{
+		Version: gv.Version,
+		Group:   gv.Group,
+		Kind:    item.GetKind(),
+	}
+
+	jsonBytes, err := item.MarshalJSON()
+	if err != nil {
+		return ProxyReports{}, err
+	}
+
+	switch itemGvk {
+	case v1.GatewayGVK:
+		var (
+			gw v1.Gateway
+		)
+		if unmarshalErr := skprotoutils.UnmarshalResource(jsonBytes, &gw); unmarshalErr != nil {
+			return ProxyReports{}, WrappedUnmarshalErr(unmarshalErr)
+		}
+		return v.validateGatewayInternal(ctx, &gw, false, false)
+	case v1.VirtualServiceGVK:
+		var (
+			vs v1.VirtualService
+		)
+		if unmarshalErr := skprotoutils.UnmarshalResource(jsonBytes, &vs); unmarshalErr != nil {
+			return ProxyReports{}, WrappedUnmarshalErr(unmarshalErr)
+		}
+		return v.validateVirtualServiceInternal(ctx, &vs, false, false)
+	case v1.RouteTableGVK:
+		var (
+			rt v1.RouteTable
+		)
+		if unmarshalErr := skprotoutils.UnmarshalResource(jsonBytes, &rt); unmarshalErr != nil {
+			return ProxyReports{}, WrappedUnmarshalErr(unmarshalErr)
+		}
+		return v.validateRouteTableInternal(ctx, &rt, false, false)
+	}
+	// should not happen
+	return ProxyReports{}, errors.Errorf("Unknown group/version/kind, %v", itemGvk)
 }
 
 func (v *validator) ValidateVirtualService(ctx context.Context, vs *v1.VirtualService, dryRun bool) (ProxyReports, error) {
@@ -336,13 +367,13 @@ func (v *validator) ValidateVirtualService(ctx context.Context, vs *v1.VirtualSe
 }
 
 func (v *validator) validateVirtualServiceInternal(ctx context.Context, vs *v1.VirtualService, dryRun, acquireLock bool) (ProxyReports, error) {
-	apply := func(snap *v1.ApiSnapshot) ([]string, resources.Resource, core.ResourceRef) {
+	apply := func(snap *v1.ApiSnapshot) ([]string, resources.Resource, *core.ResourceRef) {
 		vsRef := vs.GetMetadata().Ref()
 
 		// TODO: move this to a function when generics become a thing
 		var isUpdate bool
 		for i, existingVs := range snap.VirtualServices {
-			if vsRef == existingVs.GetMetadata().Ref() {
+			if existingVs.GetMetadata().Ref().Equal(vsRef) {
 				// replace the existing virtual service in the snapshot
 				snap.VirtualServices[i] = vs
 				isUpdate = true
@@ -357,10 +388,14 @@ func (v *validator) validateVirtualServiceInternal(ctx context.Context, vs *v1.V
 		return proxiesForVirtualService(snap.Gateways, vs), vs, vsRef
 	}
 
-	return v.validateSnapshot(ctx, apply, dryRun, acquireLock)
+	if acquireLock {
+		return v.validateSnapshotThreadSafe(ctx, apply, dryRun)
+	} else {
+		return v.validateSnapshot(ctx, apply, dryRun)
+	}
 }
 
-func (v *validator) ValidateDeleteVirtualService(ctx context.Context, vsRef core.ResourceRef, dryRun bool) error {
+func (v *validator) ValidateDeleteVirtualService(ctx context.Context, vsRef *core.ResourceRef, dryRun bool) error {
 	if !v.ready() {
 		return errors.Errorf("Gateway validation is yet not available. Waiting for first snapshot")
 	}
@@ -374,14 +409,14 @@ func (v *validator) ValidateDeleteVirtualService(ctx context.Context, vsRef core
 		return nil
 	}
 
-	var parentGateways []core.ResourceRef
+	var parentGateways []*core.ResourceRef
 	snap.Gateways.Each(func(element *v1.Gateway) {
 		http, ok := element.GatewayType.(*v1.Gateway_HttpGateway)
 		if !ok {
 			return
 		}
 		for _, ref := range http.HttpGateway.GetVirtualServices() {
-			if ref == vsRef {
+			if ref.Equal(vsRef) {
 				// this gateway points at this virtual service
 				parentGateways = append(parentGateways, element.Metadata.Ref())
 
@@ -412,13 +447,13 @@ func (v *validator) ValidateRouteTable(ctx context.Context, rt *v1.RouteTable, d
 }
 
 func (v *validator) validateRouteTableInternal(ctx context.Context, rt *v1.RouteTable, dryRun, acquireLock bool) (ProxyReports, error) {
-	apply := func(snap *v1.ApiSnapshot) ([]string, resources.Resource, core.ResourceRef) {
+	apply := func(snap *v1.ApiSnapshot) ([]string, resources.Resource, *core.ResourceRef) {
 		rtRef := rt.GetMetadata().Ref()
 
 		// TODO: move this to a function when generics become a thing
 		var isUpdate bool
 		for i, existingRt := range snap.RouteTables {
-			if rtRef == existingRt.GetMetadata().Ref() {
+			if existingRt.GetMetadata().Ref().Equal(rtRef) {
 				// replace the existing route table in the snapshot
 				snap.RouteTables[i] = rt
 				isUpdate = true
@@ -435,16 +470,20 @@ func (v *validator) validateRouteTableInternal(ctx context.Context, rt *v1.Route
 		return proxiesToConsider, rt, rtRef
 	}
 
-	return v.validateSnapshot(ctx, apply, dryRun, acquireLock)
+	if acquireLock {
+		return v.validateSnapshotThreadSafe(ctx, apply, dryRun)
+	} else {
+		return v.validateSnapshot(ctx, apply, dryRun)
+	}
 }
 
-func (v *validator) ValidateDeleteRouteTable(ctx context.Context, rtRef core.ResourceRef, dryRun bool) error {
+func (v *validator) ValidateDeleteRouteTable(ctx context.Context, rtRef *core.ResourceRef, dryRun bool) error {
 	if !v.ready() {
 		return errors.Errorf("Gateway validation is yet not available. Waiting for first snapshot")
 	}
 	v.lock.Lock()
-	snap := v.latestSnapshot.Clone()
 	defer v.lock.Unlock()
+	snap := v.latestSnapshot.Clone()
 
 	rt, err := snap.RouteTables.Find(rtRef.Strings())
 	if err != nil {
@@ -452,16 +491,16 @@ func (v *validator) ValidateDeleteRouteTable(ctx context.Context, rtRef core.Res
 		return nil
 	}
 
-	refsToDelete := refSet{rtRef: struct{}{}}
+	refsToDelete := refSet{gloo_translator.UpstreamToClusterName(rtRef): rtRef}
 
-	var parentVirtualServices []core.ResourceRef
+	var parentVirtualServices []*core.ResourceRef
 	snap.VirtualServices.Each(func(element *v1.VirtualService) {
 		if routesContainRefs(element.GetVirtualHost().GetRoutes(), refsToDelete) {
 			parentVirtualServices = append(parentVirtualServices, element.Metadata.Ref())
 		}
 	})
 
-	var parentRouteTables []core.ResourceRef
+	var parentRouteTables []*core.ResourceRef
 	snap.RouteTables.Each(func(element *v1.RouteTable) {
 		if routesContainRefs(element.GetRoutes(), refsToDelete) {
 			parentRouteTables = append(parentRouteTables, element.Metadata.Ref())
@@ -490,13 +529,13 @@ func (v *validator) ValidateGateway(ctx context.Context, gw *v1.Gateway, dryRun 
 }
 
 func (v *validator) validateGatewayInternal(ctx context.Context, gw *v1.Gateway, dryRun, acquireLock bool) (ProxyReports, error) {
-	apply := func(snap *v1.ApiSnapshot) ([]string, resources.Resource, core.ResourceRef) {
+	apply := func(snap *v1.ApiSnapshot) ([]string, resources.Resource, *core.ResourceRef) {
 		gwRef := gw.GetMetadata().Ref()
 
 		// TODO: move this to a function when generics become a thing
 		var isUpdate bool
 		for i, existingGw := range snap.Gateways {
-			if gwRef == existingGw.GetMetadata().Ref() {
+			if existingGw.GetMetadata().Ref().Equal(gwRef) {
 				// replace the existing gateway in the snapshot
 				snap.Gateways[i] = gw
 				isUpdate = true
@@ -513,7 +552,11 @@ func (v *validator) validateGatewayInternal(ctx context.Context, gw *v1.Gateway,
 		return proxiesToConsider, gw, gwRef
 	}
 
-	return v.validateSnapshot(ctx, apply, dryRun, acquireLock)
+	if acquireLock {
+		return v.validateSnapshotThreadSafe(ctx, apply, dryRun)
+	} else {
+		return v.validateSnapshot(ctx, apply, dryRun)
+	}
 }
 
 func proxiesForVirtualService(gwList v1.GatewayList, vs *v1.VirtualService) []string {
@@ -554,18 +597,18 @@ func proxiesForRouteTable(gwList v1.GatewayList, vsList v1.VirtualServiceList, r
 	return proxiesToConsider
 }
 
-type refSet map[core.ResourceRef]struct{}
+type refSet map[string]*core.ResourceRef
 
 func virtualServicesForRouteTable(rt *v1.RouteTable, allVirtualServices v1.VirtualServiceList, allRoutes v1.RouteTableList) v1.VirtualServiceList {
 	// this route table + its parents
-	refsContainingRouteTable := refSet{rt.Metadata.Ref(): struct{}{}}
+	refsContainingRouteTable := refSet{gloo_translator.UpstreamToClusterName(rt.Metadata.Ref()): rt.GetMetadata().Ref()}
 
 	// keep going until the ref list stops expanding
 	for countedRefs := 0; countedRefs != len(refsContainingRouteTable); {
 		countedRefs = len(refsContainingRouteTable)
-		for _, rt := range allRoutes {
-			if routesContainRefs(rt.GetRoutes(), refsContainingRouteTable) {
-				refsContainingRouteTable[rt.Metadata.Ref()] = struct{}{}
+		for _, route := range allRoutes {
+			if routesContainRefs(route.GetRoutes(), refsContainingRouteTable) {
+				refsContainingRouteTable[gloo_translator.UpstreamToClusterName(route.GetMetadata().Ref())] = route.GetMetadata().Ref()
 			}
 		}
 	}
@@ -611,7 +654,7 @@ func routesContainRefs(list []*v1.Route, refs refSet) bool {
 			continue
 		}
 
-		if _, ok := refs[*routeTableRef]; ok {
+		if _, ok := refs[gloo_translator.UpstreamToClusterName(routeTableRef)]; ok {
 			return true
 		}
 	}

@@ -1,12 +1,11 @@
 package faultinjection
 
 import (
-	envoyroute "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
+	envoy_config_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	envoyfault "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/fault/v3"
 	envoyhttpfault "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/fault/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
-	"github.com/gogo/protobuf/proto"
-	"github.com/solo-io/gloo/pkg/utils/gogoutils"
+	"github.com/golang/protobuf/proto"
 	fault "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/faultinjection"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/internal/common"
 
@@ -16,6 +15,10 @@ import (
 )
 
 var pluginStage = plugins.DuringStage(plugins.FaultStage)
+
+var _ plugins.Plugin = &Plugin{}
+var _ plugins.HttpFilterPlugin = &Plugin{}
+var _ plugins.RoutePlugin = &Plugin{}
 
 type Plugin struct {
 }
@@ -35,7 +38,7 @@ func (p *Plugin) HttpFilters(params plugins.Params, listener *v1.HttpListener) (
 	}, nil
 }
 
-func (p *Plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoyroute.Route) error {
+func (p *Plugin) ProcessRoute(params plugins.RouteParams, in *v1.Route, out *envoy_config_route_v3.Route) error {
 	markFilterConfigFunc := func(spec *v1.Destination) (proto.Message, error) {
 		if in.Options == nil {
 			return nil, nil
@@ -74,7 +77,7 @@ func toEnvoyDelay(delay *fault.RouteDelay) *envoyfault.FaultDelay {
 	}
 	percentage := common.ToEnvoyPercentage(delay.Percentage)
 	delaySpec := &envoyfault.FaultDelay_FixedDelay{
-		FixedDelay: gogoutils.DurationStdToProto(delay.FixedDelay),
+		FixedDelay: delay.FixedDelay,
 	}
 	return &envoyfault.FaultDelay{
 		Percentage:         percentage,

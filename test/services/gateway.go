@@ -1,8 +1,14 @@
 package services
 
 import (
+	"fmt"
 	"net"
 	"time"
+
+	"github.com/solo-io/gloo/projects/gloo/pkg/syncer"
+	extauthExt "github.com/solo-io/gloo/projects/gloo/pkg/syncer/extauth"
+	ratelimitExt "github.com/solo-io/gloo/projects/gloo/pkg/syncer/ratelimit"
+	"github.com/solo-io/gloo/projects/gloo/pkg/syncer/setup"
 
 	gatewaysyncer "github.com/solo-io/gloo/projects/gateway/pkg/syncer"
 
@@ -45,8 +51,6 @@ import (
 	fds_syncer "github.com/solo-io/gloo/projects/discovery/pkg/fds/syncer"
 	uds_syncer "github.com/solo-io/gloo/projects/discovery/pkg/uds/syncer"
 	"github.com/solo-io/gloo/projects/gloo/pkg/defaults"
-	"github.com/solo-io/gloo/projects/gloo/pkg/syncer"
-
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -58,6 +62,7 @@ type TestClients struct {
 	SecretClient         gloov1.SecretClient
 	ServiceClient        skkube.ServiceClient
 	GlooPort             int
+	RestXdsPort          int
 }
 
 var glooPortBase = int32(30400)
@@ -91,8 +96,9 @@ type RunOptions struct {
 	WhatToRun        What
 	GlooPort         int32
 	ValidationPort   int32
+	RestXdsPort      int32
 	Settings         *gloov1.Settings
-	Extensions       syncer.Extensions
+	Extensions       setup.Extensions
 	Cache            memory.InMemoryResourceCache
 	KubeClient       kubernetes.Interface
 	ConsulClient     consul.ConsulWatcher
@@ -107,6 +113,9 @@ func RunGlooGatewayUdsFds(ctx context.Context, runOptions *RunOptions) TestClien
 	if runOptions.ValidationPort == 0 {
 		runOptions.ValidationPort = AllocateGlooPort()
 	}
+	if runOptions.RestXdsPort == 0 {
+		runOptions.RestXdsPort = AllocateGlooPort()
+	}
 
 	if runOptions.Cache == nil {
 		runOptions.Cache = memory.NewInMemoryResourceCache()
@@ -116,6 +125,7 @@ func RunGlooGatewayUdsFds(ctx context.Context, runOptions *RunOptions) TestClien
 		WatchNamespaces:    runOptions.NsToWatch,
 		DiscoveryNamespace: runOptions.NsToWrite,
 	}
+
 	ctx = settingsutil.WithSettings(ctx, settings)
 
 	glooOpts := defaultGlooOpts(ctx, runOptions)
@@ -127,10 +137,21 @@ func RunGlooGatewayUdsFds(ctx context.Context, runOptions *RunOptions) TestClien
 	if glooOpts.Settings == nil {
 		glooOpts.Settings = &gloov1.Settings{}
 	}
+	if glooOpts.Settings.Gloo == nil {
+		glooOpts.Settings.Gloo = &gloov1.GlooOptions{}
+	}
+	if glooOpts.Settings.Gloo.RestXdsBindAddr == "" {
+		glooOpts.Settings.Gloo.RestXdsBindAddr = fmt.Sprintf("0.0.0.0:%v", int(runOptions.RestXdsPort))
+	}
+
+	runOptions.Extensions.SyncerExtensions = []syncer.TranslatorSyncerExtensionFactory{
+		ratelimitExt.NewTranslatorSyncerExtension,
+		extauthExt.NewTranslatorSyncerExtension,
+	}
 
 	glooOpts.ControlPlane.StartGrpcServer = true
 	glooOpts.ValidationServer.StartGrpcServer = true
-	go syncer.RunGlooWithExtensions(glooOpts, runOptions.Extensions)
+	go setup.RunGlooWithExtensions(glooOpts, runOptions.Extensions, make(chan struct{}))
 
 	// gloo is dependency of gateway, needs to run second if we want to test validation
 	if !runOptions.WhatToRun.DisableGateway {
@@ -151,27 +172,28 @@ func RunGlooGatewayUdsFds(ctx context.Context, runOptions *RunOptions) TestClien
 		}()
 	}
 
-	testClients := getTestClients(runOptions.Cache, glooOpts.KubeServiceClient)
+	testClients := getTestClients(ctx, runOptions.Cache, glooOpts.KubeServiceClient)
 	testClients.GlooPort = int(runOptions.GlooPort)
+	testClients.RestXdsPort = int(runOptions.RestXdsPort)
 	return testClients
 }
 
-func getTestClients(cache memory.InMemoryResourceCache, serviceClient skkube.ServiceClient) TestClients {
+func getTestClients(ctx context.Context, cache memory.InMemoryResourceCache, serviceClient skkube.ServiceClient) TestClients {
 
 	// construct our own resources:
 	memFactory := &factory.MemoryResourceClientFactory{
 		Cache: cache,
 	}
 
-	gatewayClient, err := gatewayv1.NewGatewayClient(memFactory)
+	gatewayClient, err := gatewayv1.NewGatewayClient(ctx, memFactory)
 	Expect(err).NotTo(HaveOccurred())
-	virtualServiceClient, err := gatewayv1.NewVirtualServiceClient(memFactory)
+	virtualServiceClient, err := gatewayv1.NewVirtualServiceClient(ctx, memFactory)
 	Expect(err).NotTo(HaveOccurred())
-	upstreamClient, err := gloov1.NewUpstreamClient(memFactory)
+	upstreamClient, err := gloov1.NewUpstreamClient(ctx, memFactory)
 	Expect(err).NotTo(HaveOccurred())
-	secretClient, err := gloov1.NewSecretClient(memFactory)
+	secretClient, err := gloov1.NewSecretClient(ctx, memFactory)
 	Expect(err).NotTo(HaveOccurred())
-	proxyClient, err := gloov1.NewProxyClient(memFactory)
+	proxyClient, err := gloov1.NewProxyClient(ctx, memFactory)
 	Expect(err).NotTo(HaveOccurred())
 
 	return TestClients{
@@ -191,19 +213,39 @@ func defaultTestConstructOpts(ctx context.Context, runOptions *RunOptions) trans
 	}
 
 	meta := runOptions.Settings.GetMetadata()
+
+	var validation *translator.ValidationOpts
+	if runOptions.Settings != nil && runOptions.Settings.Gateway != nil && runOptions.Settings.Gateway.Validation != nil {
+		validation = &translator.ValidationOpts{}
+		if runOptions.Settings.Gateway.Validation.ProxyValidationServerAddr != "" {
+			validation.ProxyValidationServerAddress = runOptions.Settings.Gateway.Validation.ProxyValidationServerAddr
+		}
+		if runOptions.Settings.Gateway.Validation.AllowWarnings != nil {
+			validation.AllowWarnings = runOptions.Settings.Gateway.Validation.AllowWarnings.Value
+
+		}
+		if runOptions.Settings.Gateway.Validation.AlwaysAccept != nil {
+			validation.AlwaysAcceptResources = runOptions.Settings.Gateway.Validation.AlwaysAccept.Value
+		}
+
+	}
+
 	return translator.Opts{
-		GlooNamespace:   meta.GetNamespace(),
-		WriteNamespace:  runOptions.NsToWrite,
-		WatchNamespaces: runOptions.NsToWatch,
-		Gateways:        f,
-		VirtualServices: f,
-		RouteTables:     f,
-		Proxies:         f,
+		GlooNamespace:      meta.GetNamespace(),
+		WriteNamespace:     runOptions.NsToWrite,
+		WatchNamespaces:    runOptions.NsToWatch,
+		Gateways:           f,
+		VirtualServices:    f,
+		RouteTables:        f,
+		VirtualHostOptions: f,
+		RouteOptions:       f,
+		Proxies:            f,
 		WatchOpts: clients.WatchOpts{
 			Ctx:         ctx,
 			RefreshRate: time.Minute,
 		},
-		DevMode: false,
+		Validation: validation,
+		DevMode:    false,
 	}
 }
 
@@ -241,6 +283,7 @@ func defaultGlooOpts(ctx context.Context, runOptions *RunOptions) bootstrap.Opts
 	}
 
 	return bootstrap.Opts{
+		Settings:          runOptions.Settings,
 		WriteNamespace:    runOptions.NsToWrite,
 		Upstreams:         f,
 		UpstreamGroups:    f,
@@ -255,11 +298,11 @@ func defaultGlooOpts(ctx context.Context, runOptions *RunOptions) bootstrap.Opts
 			Ctx:         ctx,
 			RefreshRate: time.Second / 10,
 		},
-		ControlPlane: syncer.NewControlPlane(ctx, grpcServer, &net.TCPAddr{
+		ControlPlane: setup.NewControlPlane(ctx, grpcServer, &net.TCPAddr{
 			IP:   net.ParseIP("0.0.0.0"),
 			Port: 8081,
 		}, nil, true),
-		ValidationServer: syncer.NewValidationServer(ctx, grpcServerValidation, &net.TCPAddr{
+		ValidationServer: setup.NewValidationServer(ctx, grpcServerValidation, &net.TCPAddr{
 			IP:   net.ParseIP("0.0.0.0"),
 			Port: 8081,
 		}, true),
@@ -287,7 +330,7 @@ func newServiceClient(ctx context.Context, memFactory *factory.MemoryResourceCli
 	}
 
 	// Else return in-memory client
-	client, err := skkube.NewServiceClient(memFactory)
+	client, err := skkube.NewServiceClient(ctx, memFactory)
 	if err != nil {
 		panic(err)
 	}

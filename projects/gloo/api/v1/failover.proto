@@ -2,12 +2,11 @@ syntax = "proto3";
 package gloo.solo.io;
 option go_package = "github.com/solo-io/gloo/projects/gloo/pkg/api/v1";
 
-import "gogoproto/gogo.proto";
-option (gogoproto.equal_all) = true;
 import "extproto/ext.proto";
+option (extproto.equal_all) = true;
 option (extproto.hash_all) = true;
 import "google/protobuf/wrappers.proto";
-import "gloo/projects/gloo/api/v1/ssl.proto";
+import "github.com/solo-io/gloo/projects/gloo/api/v1/ssl.proto";
 
 /*
 
@@ -53,6 +52,7 @@ message LocalityLbEndpoints {
     // balancing weight for a locality is divided by the sum of the weights of all
     // localities at the same priority level to produce the effective percentage
     // of traffic for the locality.
+    // To enable locality weighted load balancing, load_balancer_config.locality_weighted_lb_config must be set as well
     google.protobuf.UInt32Value load_balancing_weight = 3;
 }
 
@@ -84,6 +84,12 @@ message LbEndpoint {
         // By default, the host header for L7 health checks is controlled by cluster level configuration. Setting this
         // to a non-empty value allows overriding the cluster level configuration for a specific endpoint.
         string hostname = 2;
+
+        // Path to use when health checking this failover endpoint.
+        // Default is empty path.
+        string path = 3;
+        // Method to use when health checking this failover endpoint. Defaults to `GET`.
+        string method = 4;
     }
 
     .gloo.solo.io.UpstreamSslConfig upstream_ssl_config = 4;
